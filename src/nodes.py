@@ -1,5 +1,6 @@
 import os
 import json
+import base64
 import pandas as pd
 import ollama
 from playwright.sync_api import sync_playwright
@@ -11,7 +12,7 @@ def node_capture_chart(state: TradingState) -> dict:
     ticker = state["ticker"]
     print(f"[{ticker}] Capturing TradingView chart...")
     
-    chart_path = f"{ticker}_chart.png"
+    b64_image = None
     
     # Use playwright to capture the chart
     with sync_playwright() as p:
@@ -23,15 +24,15 @@ def node_capture_chart(state: TradingState) -> dict:
             page.goto(url, wait_until="networkidle", timeout=30000)
             # Wait a few seconds for the actual canvas to render fully
             page.wait_for_timeout(5000)
-            page.screenshot(path=chart_path)
-            print(f"[{ticker}] Chart captured and saved to {chart_path}")
+            screenshot_bytes = page.screenshot()
+            b64_image = base64.b64encode(screenshot_bytes).decode('utf-8')
+            print(f"[{ticker}] Chart captured successfully as base64 string.")
         except Exception as e:
             print(f"[{ticker}] Failed to capture chart: {e}")
-            chart_path = None
         finally:
             browser.close()
-        
-    return {"chart_image_path": chart_path}
+            
+    return {"chart_image_base64": b64_image}
 
 def node_run_nse_scraper(state: TradingState) -> dict:
     ticker = state["ticker"]
@@ -40,12 +41,13 @@ def node_run_nse_scraper(state: TradingState) -> dict:
 
 def node_vision_analysis(state: TradingState) -> dict:
     ticker = state["ticker"]
-    chart_path = state.get("chart_image_path")
-    print(f"[{ticker}] Running vision feature extraction on {chart_path}...")
+    chart_image_base64 = state.get("chart_image_base64")
     
-    if not chart_path or not os.path.exists(chart_path):
-        err = {"error": "Chart image not found or not captured."}
-        return {"vision_features": err, "vision_analysis": json.dumps(err)}
+    if not chart_image_base64:
+        print(f"[{ticker}] No chart image found. Skipping vision analysis.")
+        return {"vision_features": None, "vision_analysis": None}
+
+    print(f"[{ticker}] Running vision feature extraction (interpreting base64 image)...")
 
     prompt = f"""
     You are a computer vision model performing feature extraction on a TradingView chart.
@@ -196,7 +198,7 @@ def node_vision_analysis(state: TradingState) -> dict:
             messages=[{
                 'role': 'user',
                 'content': prompt,
-                'images': [chart_path]
+                'images': [chart_image_base64]
             }]
         )
         raw_analysis = response['message']['content']
