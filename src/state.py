@@ -11,5 +11,7 @@ class TradingState(TypedDict):
     vision_features: Optional[dict]
     technical_indicators: Optional[dict]
     confluence_analysis: Optional[dict]
+    risk_analysis: Optional[dict]
     validation_result: Any
+    decision: Optional[dict]
     final_decision: Optional[str]

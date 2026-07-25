@@ -387,29 +387,132 @@ def node_confluence_engine(state: TradingState) -> dict:
         "validation_result": json.dumps(parsed_json, indent=2)
     }
 
-def node_decision_agent(state: TradingState) -> dict:
+from src.risk_calculations import calculate_risk_parameters
+
+def node_risk_management(state: TradingState) -> dict:
     ticker = state["ticker"]
-    validation_result = state.get("validation_result", "")
+    tech_ind = state.get("technical_indicators", {})
+    confluence = state.get("confluence_analysis", {})
+    scraped = state.get("scraped_data", {})
     
-    print(f"[{ticker}] Running decision and risk agent...")
+    print(f"[{ticker}] Running risk management calculations...")
+    
+    risk_params = calculate_risk_parameters(tech_ind, confluence, scraped)
+    
+    print(f"[{ticker}] Risk management complete.")
+    return {"risk_analysis": risk_params}
+
+def node_decision_engine(state: TradingState) -> dict:
+    ticker = state["ticker"]
+    vision_features = state.get("vision_features", {})
+    technical_indicators = state.get("technical_indicators", {})
+    confluence_analysis = state.get("confluence_analysis", {})
+    risk_analysis = state.get("risk_analysis", {})
+    
+    print(f"[{ticker}] Running decision engine...")
     
     prompt = f"""
-    You are an expert trading AI Decision & Risk Agent. Based on the following validated data for {ticker}:
+    You are the final institutional trading decision engine for {ticker}.
+    Your responsibility is to review completed analyses.
     
-    {validation_result}
+    Do not perform calculations.
+    Do not generate numerical estimates.
+    Do not invent missing information.
+    Base every conclusion only on the supplied structured JSON.
+    If evidence is contradictory, prefer HOLD over speculative recommendations.
+    Confidence must reflect the quality and consistency of the supplied evidence.
+
+    Available Vision Features:
+    {json.dumps(vision_features)}
     
-    Formulate a final trading decision (e.g., STRONG BUY, BUY, HOLD, SELL, STRONG SELL).
-    Include risk metrics and a short, decisive rationale.
+    Available Technical Indicators:
+    {json.dumps(technical_indicators)}
+    
+    Confluence Analysis:
+    {json.dumps(confluence_analysis)}
+    
+    Risk Management Profile:
+    {json.dumps(risk_analysis)}
+    
+    Decision Philosophy:
+    1. Confluence
+    2. Risk
+    3. Trend
+    4. Momentum
+    5. Volume
+    If confluence is weak OR risk is high, become more conservative.
+    If evidence is insufficient, recommend HOLD instead of guessing.
+
+    RETURN EXACTLY THIS JSON SCHEMA:
+    {{
+        "decision": {{
+            "recommendation": "STRONG BUY | BUY | HOLD | SELL | STRONG SELL",
+            "confidence": 0,
+            "strength": "High | Medium | Low",
+            "summary": "...",
+            "supporting_factors": [
+                "..."
+            ],
+            "risk_factors": [
+                "..."
+            ],
+            "execution": {{
+                "entry": 0,
+                "stop_loss": 0,
+                "targets": {{
+                    "target_1": 0,
+                    "target_2": 0,
+                    "target_3": 0
+                }},
+                "position_size": "..."
+            }}
+        }}
+    }}
+    
+    NOTE: For the "execution" block, strictly copy the values from the provided Risk Management Profile JSON. Do NOT calculate them yourself.
     """
     
-    response = ollama.chat(
-        model='qwen2.5vl:7b',
-        messages=[{
-            'role': 'user',
-            'content': prompt
-        }]
-    )
-    decision = response['message']['content']
+    parsed_json = None
+    raw_analysis = ""
+    
+    for attempt in range(2):
+        response = ollama.chat(
+            model='qwen2.5vl:7b',
+            messages=[{
+                'role': 'user',
+                'content': prompt
+            }]
+        )
+        raw_analysis = response['message']['content']
         
-    print(f"[{ticker}] Final decision generated.")
-    return {"final_decision": decision}
+        # Robust parsing
+        cleaned_str = raw_analysis.strip()
+        if cleaned_str.startswith("```json"):
+            cleaned_str = cleaned_str[7:]
+        elif cleaned_str.startswith("```"):
+            cleaned_str = cleaned_str[3:]
+            
+        if cleaned_str.endswith("```"):
+            cleaned_str = cleaned_str[:-3]
+            
+        cleaned_str = cleaned_str.strip()
+        
+        try:
+            parsed_json = json.loads(cleaned_str)
+            break
+        except json.JSONDecodeError:
+            print(f"[{ticker}] Warning: Failed to parse decision JSON on attempt {attempt+1}. Retrying...")
+            continue
+            
+    if parsed_json is None:
+        parsed_json = {
+            "error": "Failed to parse JSON output after retries.",
+            "raw_output": raw_analysis
+        }
+        
+    print(f"[{ticker}] Decision engine complete.")
+    
+    return {
+        "decision": parsed_json,
+        "final_decision": json.dumps(parsed_json, indent=2) # Backward compatibility
+    }
