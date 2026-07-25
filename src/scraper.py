@@ -1,23 +1,27 @@
-import random
-import time
+from datetime import date
+from src.nse_fetcher import fetch_daily_candles
 
 def fetch_nse_data(ticker: str) -> dict:
     """
-    Mock function representing live market data fetch.
-    Replace or extend this with logic from nse_fetcher.py later.
+    Fetches the most recent daily market data for the given ticker using nse_fetcher.
     """
     print(f"[{ticker}] Scraping live NSE data...")
-    time.sleep(1) # simulate network latency
     
-    # Mock data representing a typical stock's live metrics
-    base_price = random.uniform(100.0, 3000.0)
-    mock_data = {
-        "ticker": ticker,
-        "last_price": round(base_price, 2),
-        "vwap": round(base_price * random.uniform(0.98, 1.02), 2),
-        "volume": random.randint(100000, 5000000),
-        "day_high": round(base_price * random.uniform(1.0, 1.05), 2),
-        "day_low": round(base_price * random.uniform(0.95, 1.0), 2),
-    }
-    print(f"[{ticker}] Scraping complete: {mock_data}")
-    return mock_data
+    # We fetch the last 20 days to ensure we get enough data ignoring weekends/holidays
+    df = fetch_daily_candles(ticker, date.today(), lookback_days=20)
+    
+    if df is not None and not df.empty:
+        latest = df.iloc[-1]
+        data = {
+            "ticker": ticker,
+            "last_price": round(latest["Close"], 2),
+            "vwap": round((latest["High"] + latest["Low"] + latest["Close"]) / 3, 2), # simple approximation
+            "volume": int(latest["Volume"]),
+            "day_high": round(latest["High"], 2),
+            "day_low": round(latest["Low"], 2),
+        }
+    else:
+        raise ValueError(f"Failed to fetch actual data from NSE for ticker {ticker}")
+        
+    print(f"[{ticker}] Scraping complete: {data}")
+    return data

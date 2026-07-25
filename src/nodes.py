@@ -50,31 +50,28 @@ def node_vision_analysis(state: TradingState) -> dict:
         "Provide a concise technical summary."
     )
     
-    try:
-        response = ollama.chat(
-            model='qwen2.5-vl:7b',
-            messages=[{
-                'role': 'user',
-                'content': prompt,
-                'images': [chart_path]
-            }]
-        )
-        analysis = response['message']['content']
-    except Exception as e:
-        analysis = f"Error during vision analysis: {e}"
+    response = ollama.chat(
+        model='qwen2.5vl:7b',
+        messages=[{
+            'role': 'user',
+            'content': prompt,
+            'images': [chart_path]
+        }]
+    )
+    analysis = response['message']['content']
         
     print(f"[{ticker}] Vision analysis complete.")
     return {"vision_analysis": analysis}
 
-def node_validation_and_decision(state: TradingState) -> dict:
+def node_validation_engine(state: TradingState) -> dict:
     ticker = state["ticker"]
     vision_analysis = state.get("vision_analysis", "")
     scraped_data = state.get("scraped_data", {})
     
-    print(f"[{ticker}] Running final validation and decision...")
+    print(f"[{ticker}] Running validation engine (cross-checking data)...")
     
     prompt = f"""
-    You are an expert trading AI. Cross-verify the visual price action analysis with the scraped quantitative data for {ticker}.
+    You are an expert trading AI validator. Cross-verify the visual price action analysis with the scraped quantitative data for {ticker}.
     
     Vision Analysis (from chart):
     {vision_analysis}
@@ -82,21 +79,45 @@ def node_validation_and_decision(state: TradingState) -> dict:
     Scraped Quantitative Data:
     {scraped_data}
     
-    Based on this combined information, formulate a final trading decision (e.g., STRONG BUY, BUY, HOLD, SELL, STRONG SELL) and a short rationale.
+    Highlight any confluences or contradictions between the visual chart patterns and the quantitative data.
+    Output a structured validation result.
     """
     
-    try:
-        # Using qwen2.5-vl:7b for consistency, although a non-vision model could also work here
-        response = ollama.chat(
-            model='qwen2.5-vl:7b',
-            messages=[{
-                'role': 'user',
-                'content': prompt
-            }]
-        )
-        decision = response['message']['content']
-    except Exception as e:
-        decision = f"Error during decision making: {e}"
+    response = ollama.chat(
+        model='qwen2.5vl:7b',
+        messages=[{
+            'role': 'user',
+            'content': prompt
+        }]
+    )
+    validation_result = response['message']['content']
+        
+    print(f"[{ticker}] Validation complete.")
+    return {"validation_result": validation_result}
+
+def node_decision_agent(state: TradingState) -> dict:
+    ticker = state["ticker"]
+    validation_result = state.get("validation_result", "")
+    
+    print(f"[{ticker}] Running decision and risk agent...")
+    
+    prompt = f"""
+    You are an expert trading AI Decision & Risk Agent. Based on the following validated data for {ticker}:
+    
+    {validation_result}
+    
+    Formulate a final trading decision (e.g., STRONG BUY, BUY, HOLD, SELL, STRONG SELL).
+    Include risk metrics and a short, decisive rationale.
+    """
+    
+    response = ollama.chat(
+        model='qwen2.5vl:7b',
+        messages=[{
+            'role': 'user',
+            'content': prompt
+        }]
+    )
+    decision = response['message']['content']
         
     print(f"[{ticker}] Final decision generated.")
     return {"final_decision": decision}

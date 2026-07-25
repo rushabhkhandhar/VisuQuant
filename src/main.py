@@ -1,7 +1,49 @@
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from src.graph import build_graph
+import subprocess
+import time
+import urllib.request
+import urllib.error
+
+def ensure_ollama_running():
+    print("Checking if Ollama is running...")
+    try:
+        urllib.request.urlopen("http://127.0.0.1:11434/", timeout=2)
+        print("Ollama is already running!")
+        return
+    except urllib.error.URLError:
+        pass
+
+    print("Starting Ollama server automatically...")
+    # Start Ollama in the background
+    subprocess.Popen(["ollama", "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    
+    # Wait for it to become available
+    for i in range(15):
+        time.sleep(1)
+        try:
+            urllib.request.urlopen("http://127.0.0.1:11434/", timeout=2)
+            print("Ollama server started successfully!")
+            return
+        except urllib.error.URLError:
+            pass
+            
+    raise RuntimeError("Failed to start Ollama server within 15 seconds. Please ensure it is installed.")
 
 def main():
-    ticker = "RELIANCE"
+    ensure_ollama_running()
+
+    if len(sys.argv) > 1:
+        ticker = sys.argv[1].upper()
+    else:
+        # Fallback for IDE runners that don't pass args
+        ticker = input("Enter ticker symbol (e.g. RELIANCE): ").strip().upper()
+        if not ticker:
+            raise ValueError("Ticker symbol cannot be empty!")
+            
     print(f"Initializing automated trading pipeline for {ticker}...")
     
     # Build the graph
