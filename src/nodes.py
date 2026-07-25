@@ -1,4 +1,5 @@
 import os
+import json
 import ollama
 from playwright.sync_api import sync_playwright
 
@@ -39,29 +40,197 @@ def node_run_nse_scraper(state: TradingState) -> dict:
 def node_vision_analysis(state: TradingState) -> dict:
     ticker = state["ticker"]
     chart_path = state.get("chart_image_path")
-    print(f"[{ticker}] Running vision analysis on {chart_path}...")
+    print(f"[{ticker}] Running vision feature extraction on {chart_path}...")
     
     if not chart_path or not os.path.exists(chart_path):
-        return {"vision_analysis": "Error: Chart image not found or not captured."}
+        err = {"error": "Chart image not found or not captured."}
+        return {"vision_features": err, "vision_analysis": json.dumps(err)}
 
-    prompt = (
-        f"Analyze the technical chart for {ticker}. "
-        "Identify key chart patterns, support and resistance levels, and the overall trend. "
-        "Provide a concise technical summary."
-    )
+    prompt = f"""
+    You are a computer vision model performing feature extraction on a TradingView chart.
+
+    Your task is NOT to perform trading analysis.
+
+    Your task is ONLY to extract observable visual information.
+
+    Rules:
+
+    - Return VALID JSON only.
+    - No markdown.
+    - No explanations.
+    - No BUY/SELL/HOLD recommendation.
+    - Do not estimate indicators that are not visibly plotted.
+    - If something is not visible, return null.
+    - Never invent values.
+
+    Extract:
+
+    1. Trend
+    - Direction
+    - Visual confidence (0-100)
+
+    2. Price Structure
+    - Higher Highs
+    - Higher Lows
+    - Lower Highs
+    - Lower Lows
+
+    3. Support Zones
+    - Approximate price
+    - Strength
+
+    4. Resistance Zones
+    - Approximate price
+    - Strength
+
+    5. Chart Patterns
+
+    6. Candlestick Patterns
+
+    7. Trendlines
+    - Type
+    - Number of touches
+    - Broken or not
+
+    8. Channels
+
+    9. Visible Indicators
+    - EMA20
+    - EMA50
+    - EMA200
+    - VWAP
+    - Bollinger Bands
+    - RSI
+    - MACD
+    - Volume
+
+    10. Events
+    - Breakout
+    - Breakdown
+    - Retest
+    - Gap Up
+    - Gap Down
+
+    11. Volume
+    - Increasing
+    - Decreasing
+    - Spike
+
+    If any field cannot be determined from the image,
+    return null instead of guessing.
+
+    RETURN EXACTLY THIS JSON SCHEMA:
+    {{
+      "trend": {{
+        "direction": "Uptrend | Downtrend | Sideways | Unknown",
+        "confidence": 0
+      }},
+      "price_structure": {{
+        "higher_highs": true,
+        "higher_lows": true,
+        "lower_highs": false,
+        "lower_lows": false
+      }},
+      "support_zones": [
+        {{
+          "approx_price": 0,
+          "strength": "Strong | Medium | Weak"
+        }}
+      ],
+      "resistance_zones": [
+        {{
+          "approx_price": 0,
+          "strength": "Strong | Medium | Weak"
+        }}
+      ],
+      "patterns": {{
+        "chart": [],
+        "candlestick": []
+      }},
+      "trendlines": [
+        {{
+          "type": "Ascending | Descending | Horizontal",
+          "touches": 0,
+          "broken": false
+        }}
+      ],
+      "channels": [
+        {{
+          "type": "Rising | Falling | Horizontal"
+        }}
+      ],
+      "visible_indicators": {{
+        "ema20": false,
+        "ema50": false,
+        "ema100": false,
+        "ema200": false,
+        "vwap": false,
+        "bollinger_bands": false,
+        "rsi": false,
+        "macd": false,
+        "volume": false,
+        "fibonacci_overlay": false
+      }},
+      "events": {{
+        "breakout": false,
+        "breakdown": false,
+        "retest": false,
+        "gap_up": false,
+        "gap_down": false
+      }},
+      "volume": {{
+        "trend": "Increasing | Decreasing | Neutral | Unknown",
+        "spike": false
+      }}
+    }}
+    """
     
-    response = ollama.chat(
-        model='qwen2.5vl:7b',
-        messages=[{
-            'role': 'user',
-            'content': prompt,
-            'images': [chart_path]
-        }]
-    )
-    analysis = response['message']['content']
+    parsed_json = None
+    raw_analysis = ""
+    
+    # Try up to 2 times to get valid JSON
+    for attempt in range(2):
+        response = ollama.chat(
+            model='qwen2.5vl:7b',
+            messages=[{
+                'role': 'user',
+                'content': prompt,
+                'images': [chart_path]
+            }]
+        )
+        raw_analysis = response['message']['content']
         
-    print(f"[{ticker}] Vision analysis complete.")
-    return {"vision_analysis": analysis}
+        # Robust parsing (strip markdown tags if model ignored instructions)
+        cleaned_str = raw_analysis.strip()
+        if cleaned_str.startswith("```json"):
+            cleaned_str = cleaned_str[7:]
+        elif cleaned_str.startswith("```"):
+            cleaned_str = cleaned_str[3:]
+            
+        if cleaned_str.endswith("```"):
+            cleaned_str = cleaned_str[:-3]
+            
+        cleaned_str = cleaned_str.strip()
+        
+        try:
+            parsed_json = json.loads(cleaned_str)
+            break
+        except json.JSONDecodeError:
+            print(f"[{ticker}] Warning: Failed to parse JSON on attempt {attempt+1}. Retrying...")
+            continue
+            
+    if parsed_json is None:
+        parsed_json = {
+            "error": "Failed to parse JSON output after retries.",
+            "raw_output": raw_analysis
+        }
+        
+    print(f"[{ticker}] Vision feature extraction complete.")
+    
+    return {
+        "vision_features": parsed_json,
+        "vision_analysis": json.dumps(parsed_json, indent=2) # Backward compatibility for downstream nodes
+    }
 
 def node_validation_engine(state: TradingState) -> dict:
     ticker = state["ticker"]

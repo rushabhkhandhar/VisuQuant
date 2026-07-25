@@ -8,5 +8,6 @@ class TradingState(TypedDict):
     chart_image_path: Optional[str]
     scraped_data: Optional[dict]
     vision_analysis: Optional[str]
+    vision_features: Optional[dict]
     validation_result: Optional[str]
     final_decision: Optional[str]
