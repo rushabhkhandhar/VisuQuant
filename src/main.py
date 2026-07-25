@@ -1,8 +1,14 @@
 import sys
 import os
+from dotenv import load_dotenv
+
+# Load environment variables (e.g. HF_TOKEN)
+load_dotenv()
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.graph import build_graph
+
 import subprocess
 import time
 import urllib.request
@@ -62,13 +68,8 @@ def main():
     print(f"FINAL PIPELINE OUTPUT FOR {ticker}")
     print("="*50)
     print("Ticker:", final_state.get("ticker"))
-    print("Chart Image Path:", final_state.get("chart_image_path"))
-    print("\n--- Scraped Data ---")
-    print(final_state.get("scraped_data"))
-    print("\n--- Vision Analysis ---")
-    print(final_state.get("vision_analysis"))
-    print("\n--- Final Decision ---")
-    print(final_state.get("final_decision"))
+    print("\n--- Final Report ---")
+    print(final_state.get("final_report"))
     print("="*50 + "\n")
 
 if __name__ == "__main__":

@@ -4,8 +4,12 @@ from src.nodes import (
     node_capture_chart,
     node_run_nse_scraper,
     node_vision_analysis,
-    node_validation_engine,
-    node_decision_agent
+    node_quantitative_analysis,
+    node_confluence_engine,
+    node_risk_management,
+    node_decision_engine,
+    node_trade_validator,
+    node_report_generator
 )
 
 def build_graph() -> StateGraph:
@@ -19,8 +23,12 @@ def build_graph() -> StateGraph:
     builder.add_node("capture_chart", node_capture_chart)
     builder.add_node("run_scraper", node_run_nse_scraper)
     builder.add_node("vision_analysis", node_vision_analysis)
-    builder.add_node("validation_engine", node_validation_engine)
-    builder.add_node("decision_agent", node_decision_agent)
+    builder.add_node("quantitative_analysis", node_quantitative_analysis)
+    builder.add_node("confluence_engine", node_confluence_engine)
+    builder.add_node("risk_management", node_risk_management)
+    builder.add_node("decision_engine", node_decision_engine)
+    builder.add_node("trade_validator", node_trade_validator)
+    builder.add_node("report_generator", node_report_generator)
     
     # Define the execution flow
     # 1. START fans out to capture_chart AND run_scraper in parallel
@@ -30,15 +38,27 @@ def build_graph() -> StateGraph:
     # 2. capture_chart feeds into vision_analysis
     builder.add_edge("capture_chart", "vision_analysis")
     
-    # 3. Both vision_analysis and run_scraper fan-in to validation_engine
-    builder.add_edge("vision_analysis", "validation_engine")
-    builder.add_edge("run_scraper", "validation_engine")
+    # 3. run_scraper feeds into quantitative_analysis
+    builder.add_edge("run_scraper", "quantitative_analysis")
     
-    # 4. validation_engine feeds into decision_agent
-    builder.add_edge("validation_engine", "decision_agent")
+    # 4. Both vision_analysis and quantitative_analysis fan-in to confluence_engine
+    builder.add_edge("vision_analysis", "confluence_engine")
+    builder.add_edge("quantitative_analysis", "confluence_engine")
+    
+    # 5. confluence_engine feeds into risk_management
+    builder.add_edge("confluence_engine", "risk_management")
 
-    # 5. decision_agent feeds into END
-    builder.add_edge("decision_agent", END)
+    # 6. risk_management feeds into decision_engine
+    builder.add_edge("risk_management", "decision_engine")
+    
+    # 7. decision_engine feeds into trade_validator
+    builder.add_edge("decision_engine", "trade_validator")
+    
+    # 8. trade_validator feeds into report_generator
+    builder.add_edge("trade_validator", "report_generator")
+
+    # 9. report_generator feeds into END
+    builder.add_edge("report_generator", END)
     
     # Compile the graph
     return builder.compile()

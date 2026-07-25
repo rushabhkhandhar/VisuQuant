@@ -21,7 +21,7 @@ def node_capture_chart(state: TradingState) -> dict:
         # Navigate to TradingView for the given ticker
         url = f"https://in.tradingview.com/chart/?symbol=NSE%3A{ticker}"
         try:
-            page.goto(url, wait_until="networkidle", timeout=30000)
+            page.goto(url, wait_until="domcontentloaded", timeout=30000)
             # Wait a few seconds for the actual canvas to render fully
             page.wait_for_timeout(5000)
             screenshot_bytes = page.screenshot()
@@ -628,8 +628,12 @@ def node_report_generator(state: TradingState) -> dict:
             continue
             
     if parsed_json is None:
-        print(f"[{ticker}] ERROR: Failed to generate report JSON.")
-        return {}
+        print(f"[{ticker}] ERROR: Failed to generate report JSON. Returning raw output as fallback.")
+        return {
+            "analysis_report": {"error": "Failed to parse JSON."},
+            "analysis_report_markdown": raw_analysis,
+            "final_report": raw_analysis
+        }
         
     analysis_report = parsed_json.get("analysis_report", {})
     markdown = parsed_json.get("analysis_report_markdown", "")
