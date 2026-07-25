@@ -1,0 +1,5 @@
+langgraph
+ollama
+playwright
+pandas
+langchain-core
