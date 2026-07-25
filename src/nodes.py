@@ -1,5 +1,6 @@
 import os
 import json
+import pandas as pd
 import ollama
 from playwright.sync_api import sync_playwright
 
@@ -232,37 +233,159 @@ def node_vision_analysis(state: TradingState) -> dict:
         "vision_analysis": json.dumps(parsed_json, indent=2) # Backward compatibility for downstream nodes
     }
 
-def node_validation_engine(state: TradingState) -> dict:
+from src.quant_calculations import calculate_technical_indicators
+
+def node_quantitative_analysis(state: TradingState) -> dict:
     ticker = state["ticker"]
-    vision_analysis = state.get("vision_analysis", "")
     scraped_data = state.get("scraped_data", {})
     
-    print(f"[{ticker}] Running validation engine (cross-checking data)...")
+    print(f"[{ticker}] Running quantitative analysis...")
+    
+    # Assumption: scraped_data contains a key 'history' or 'historical_data' 
+    # which is a list of OHLCV dictionaries.
+    df = pd.DataFrame()
+    if isinstance(scraped_data, dict):
+        if "history" in scraped_data:
+            df = pd.DataFrame(scraped_data["history"])
+        elif "historical_data" in scraped_data:
+            df = pd.DataFrame(scraped_data["historical_data"])
+        elif "data" in scraped_data:
+            df = pd.DataFrame(scraped_data["data"])
+    elif isinstance(scraped_data, list):
+        df = pd.DataFrame(scraped_data)
+        
+    indicators = calculate_technical_indicators(df)
+    
+    print(f"[{ticker}] Quantitative analysis complete.")
+    return {"technical_indicators": indicators}
+
+def node_confluence_engine(state: TradingState) -> dict:
+    ticker = state["ticker"]
+    vision_features = state.get("vision_features", {})
+    technical_indicators = state.get("technical_indicators", {})
+    
+    print(f"[{ticker}] Running confluence engine (evidence synthesis)...")
     
     prompt = f"""
-    You are an expert trading AI validator. Cross-verify the visual price action analysis with the scraped quantitative data for {ticker}.
+    You are a Confluence Engine for {ticker}. 
+    Your task is to compare evidence from visual chart analysis with quantitative market data.
+
+    Your task is ONLY to identify agreements, contradictions, and missing evidence.
+
+    Rules:
+    - Return VALID JSON only.
+    - No markdown.
+    - No explanations outside JSON.
+    - No BUY/SELL/HOLD recommendation.
+    - No stop-loss or target prices.
+    - Do not calculate indicators.
+    - Do not estimate missing values.
+    - If a field does not exist inside technical indicators or vision features, explicitly list it inside the missing_data field.
+    - Never invent values or hallucinate missing information.
+
+    Available Vision Features (from chart):
+    {json.dumps(vision_features)}
     
-    Vision Analysis (from chart):
-    {vision_analysis}
-    
-    Scraped Quantitative Data:
-    {scraped_data}
-    
-    Highlight any confluences or contradictions between the visual chart patterns and the quantitative data.
-    Output a structured validation result.
+    Available Technical Indicators (Quantitative):
+    {json.dumps(technical_indicators)}
+
+    Compare the following whenever available:
+    - Trend (Vision vs EMA/SMA/ADX)
+    - Momentum (RSI/MACD/Momentum)
+    - Volume (Relative Volume/OBV/VWAP)
+    - Support & Resistance (Vision vs Pivot Points/Swing High/Low/Fibonacci)
+    - Patterns (Chart/Candlestick)
+    - Events (Breakout/Breakdown/Retest/Gap)
+    - Market Structure (Higher Highs/Lows)
+
+    RETURN EXACTLY THIS JSON SCHEMA:
+    {{
+        "trend": {{
+            "status": "Confirmed | Contradiction | Partially Confirmed | Unknown",
+            "confidence": 0,
+            "reason": "..."
+        }},
+        "momentum": {{
+            "status": "Confirmed | Contradiction | Partially Confirmed | Unknown | Bullish | Bearish",
+            "confidence": 0,
+            "reason": "..."
+        }},
+        "volume": {{
+            "status": "Confirmed | Contradiction | Partially Confirmed | Unknown",
+            "confidence": 0,
+            "reason": "..."
+        }},
+        "support_resistance": {{
+            "status": "Confirmed | Contradiction | Partially Confirmed | Unknown",
+            "confidence": 0,
+            "reason": "..."
+        }},
+        "patterns": {{
+            "status": "Confirmed | Contradiction | Partially Confirmed | Unknown",
+            "confidence": 0,
+            "reason": "..."
+        }},
+        "contradictions": [
+            {{
+                "category": "...",
+                "reason": "..."
+            }}
+        ],
+        "missing_data": [
+            "..."
+        ],
+        "overall_confluence": {{
+            "score": 0,
+            "strength": "Strong | Moderate | Weak | Unknown"
+        }}
+    }}
     """
     
-    response = ollama.chat(
-        model='qwen2.5vl:7b',
-        messages=[{
-            'role': 'user',
-            'content': prompt
-        }]
-    )
-    validation_result = response['message']['content']
+    parsed_json = None
+    raw_analysis = ""
+    
+    for attempt in range(2):
+        response = ollama.chat(
+            model='qwen2.5vl:7b',
+            messages=[{
+                'role': 'user',
+                'content': prompt
+            }]
+        )
+        raw_analysis = response['message']['content']
         
-    print(f"[{ticker}] Validation complete.")
-    return {"validation_result": validation_result}
+        # Robust parsing
+        cleaned_str = raw_analysis.strip()
+        if cleaned_str.startswith("```json"):
+            cleaned_str = cleaned_str[7:]
+        elif cleaned_str.startswith("```"):
+            cleaned_str = cleaned_str[3:]
+            
+        if cleaned_str.endswith("```"):
+            cleaned_str = cleaned_str[:-3]
+            
+        cleaned_str = cleaned_str.strip()
+        
+        try:
+            parsed_json = json.loads(cleaned_str)
+            break
+        except json.JSONDecodeError:
+            print(f"[{ticker}] Warning: Failed to parse confluence JSON on attempt {attempt+1}. Retrying...")
+            continue
+            
+    if parsed_json is None:
+        parsed_json = {
+            "error": "Failed to parse JSON output after retries.",
+            "raw_output": raw_analysis
+        }
+        
+    print(f"[{ticker}] Confluence analysis complete.")
+    
+    # Return confluence_analysis, and keep validation_result populated to preserve backward compatibility for Decision node
+    return {
+        "confluence_analysis": parsed_json,
+        "validation_result": json.dumps(parsed_json, indent=2)
+    }
 
 def node_decision_agent(state: TradingState) -> dict:
     ticker = state["ticker"]

@@ -1,4 +1,4 @@
-from typing import TypedDict, Optional
+from typing import TypedDict, Optional, Any
 
 class TradingState(TypedDict):
     """
@@ -9,5 +9,7 @@ class TradingState(TypedDict):
     scraped_data: Optional[dict]
     vision_analysis: Optional[str]
     vision_features: Optional[dict]
-    validation_result: Optional[str]
+    technical_indicators: Optional[dict]
+    confluence_analysis: Optional[dict]
+    validation_result: Any
     final_decision: Optional[str]
