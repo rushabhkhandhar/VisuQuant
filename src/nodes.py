@@ -516,3 +516,29 @@ def node_decision_engine(state: TradingState) -> dict:
         "decision": parsed_json,
         "final_decision": json.dumps(parsed_json, indent=2) # Backward compatibility
     }
+
+from src.trade_validation import validate_trade_parameters
+
+def node_trade_validator(state: TradingState) -> dict:
+    ticker = state["ticker"]
+    tech_ind = state.get("technical_indicators", {})
+    confluence = state.get("confluence_analysis", {})
+    risk = state.get("risk_analysis", {})
+    decision = state.get("decision", {})
+    
+    print(f"[{ticker}] Running trade validator...")
+    
+    validation_results = validate_trade_parameters(tech_ind, confluence, risk, decision)
+    
+    if not validation_results["valid"]:
+        print(f"[{ticker}] WARNING: Trade validation failed with {len(validation_results['errors'])} errors.")
+        for err in validation_results['errors']:
+            print(f"  - {err}")
+            
+    if validation_results["warnings"]:
+        for warn in validation_results["warnings"]:
+            print(f"[{ticker}] Validation Warning: {warn}")
+    
+    print(f"[{ticker}] Trade validation complete.")
+    
+    return {"trade_validation": validation_results}
