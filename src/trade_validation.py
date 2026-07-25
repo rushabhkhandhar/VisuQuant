@@ -62,7 +62,7 @@ def validate_trade_parameters(tech_ind: dict, confluence: dict, risk: dict, deci
     # 3, 4, 5. Execution & Targets Validation
     execution = decision.get("execution", {})
     if rec == "HOLD":
-        if execution and any(execution.values()):
+        if execution.get("entry") is not None or execution.get("stop_loss") is not None or execution.get("targets"):
             warnings.append("HOLD recommendation contains active execution plan.")
         checks["execution"] = True
         checks["targets"] = True

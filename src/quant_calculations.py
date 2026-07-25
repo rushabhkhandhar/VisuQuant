@@ -100,7 +100,32 @@ def calculate_technical_indicators(df: pd.DataFrame) -> dict:
         ind["macd"] = UNAVAILABLE
 
     # ADX (14)
-    ind["adx"] = UNAVAILABLE # ADX calculation is complex to do purely in pandas compactly, placeholder for future
+    if len(c) >= 15:
+        prev_c = c.shift(1)
+        prev_h = h.shift(1)
+        prev_l = l.shift(1)
+        
+        tr1 = h - l
+        tr2 = (h - prev_c).abs()
+        tr3 = (l - prev_c).abs()
+        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+        
+        up_move = h - prev_h
+        down_move = prev_l - l
+        
+        plus_dm = pd.Series(np.where((up_move > down_move) & (up_move > 0), up_move, 0.0), index=c.index)
+        minus_dm = pd.Series(np.where((down_move > up_move) & (down_move > 0), down_move, 0.0), index=c.index)
+        
+        atr_14 = tr.ewm(alpha=1/14, adjust=False).mean()
+        plus_di = 100 * (plus_dm.ewm(alpha=1/14, adjust=False).mean() / atr_14)
+        minus_di = 100 * (minus_dm.ewm(alpha=1/14, adjust=False).mean() / atr_14)
+        
+        dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di)
+        adx = dx.ewm(alpha=1/14, adjust=False).mean()
+        
+        ind["adx"] = safe_get(adx)
+    else:
+        ind["adx"] = UNAVAILABLE
     
     # Volatility: ATR (14)
     if len(c) >= 2:
@@ -213,5 +238,54 @@ def calculate_technical_indicators(df: pd.DataFrame) -> dict:
         ind["statistics"]["20_day_low"] = UNAVAILABLE
         ind["statistics"]["52_week_high"] = UNAVAILABLE
         ind["statistics"]["52_week_low"] = UNAVAILABLE
+
+    # Interpretations (Deterministic String Logic)
+    interpretations = {
+        "ema_trend": "Unknown",
+        "rsi_condition": "Unknown",
+        "macd_condition": "Unknown"
+    }
+
+    # EMA interpretation
+    e20, e50, e100, e200 = ind["ema"].get("20"), ind["ema"].get("50"), ind["ema"].get("100"), ind["ema"].get("200")
+    if all(x != UNAVAILABLE for x in [e20, e50, e100, e200]):
+        if e20 > e50 and e50 > e100 and e100 > e200:
+            interpretations["ema_trend"] = "Bullish Uptrend (EMA20 > EMA50 > EMA100 > EMA200)"
+        elif e20 < e50 and e50 < e100 and e100 < e200:
+            interpretations["ema_trend"] = "Bearish Downtrend (EMA20 < EMA50 < EMA100 < EMA200)"
+        else:
+            interpretations["ema_trend"] = "Mixed / Consolidating (Moving averages are crossing or out of strict order)"
+
+    # RSI interpretation
+    rsi = ind.get("rsi")
+    if rsi != UNAVAILABLE:
+        if rsi >= 70:
+            interpretations["rsi_condition"] = f"Overbought ({rsi})"
+        elif rsi <= 30:
+            interpretations["rsi_condition"] = f"Oversold ({rsi})"
+        elif 50 < rsi < 70:
+            interpretations["rsi_condition"] = f"Bullish Momentum ({rsi})"
+        else:
+            interpretations["rsi_condition"] = f"Bearish Momentum ({rsi})"
+
+    # MACD interpretation
+    macd = ind.get("macd")
+    if macd != UNAVAILABLE and isinstance(macd, dict):
+        m_line, s_line = macd.get("line"), macd.get("signal")
+        if m_line != UNAVAILABLE and s_line != UNAVAILABLE:
+            if m_line > s_line:
+                if m_line > 0:
+                    interpretations["macd_condition"] = "Strong Bullish (Line > Signal, both > 0)"
+                else:
+                    interpretations["macd_condition"] = "Bullish Crossover (Line > Signal, below 0)"
+            elif m_line < s_line:
+                if m_line < 0:
+                    interpretations["macd_condition"] = "Strong Bearish (Line < Signal, both < 0)"
+                else:
+                    interpretations["macd_condition"] = "Bearish Crossover (Line < Signal, above 0)"
+            else:
+                interpretations["macd_condition"] = "Neutral (Line == Signal)"
+
+    ind["interpretations"] = interpretations
 
     return ind

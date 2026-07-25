@@ -15,6 +15,16 @@ _BHAVCOPY_CACHE: Dict[str, Optional[pd.DataFrame]] = {}
 _CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bhavcopy_cache")
 os.makedirs(_CACHE_DIR, exist_ok=True)
 
+def cleanup_cache():
+    """Delete the disk cache to free up space after execution."""
+    import shutil
+    try:
+        if os.path.exists(_CACHE_DIR):
+            shutil.rmtree(_CACHE_DIR)
+            print("Successfully deleted NSE bhavcopy cache to save space.")
+    except Exception as e:
+        print(f"Failed to clear cache: {e}")
+
 def _download_bhavcopy_for_date(trade_date: date) -> Optional[pd.DataFrame]:
     """Download one NSE full bhavcopy day (or load from disk/in-memory cache)."""
     key = trade_date.strftime("%Y-%m-%d")

@@ -18,19 +18,25 @@ def node_capture_chart(state: TradingState) -> dict:
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
-        # Navigate to TradingView for the given ticker
-        url = f"https://in.tradingview.com/chart/?symbol=NSE%3A{ticker}"
-        try:
-            page.goto(url, wait_until="domcontentloaded", timeout=30000)
-            # Wait a few seconds for the actual canvas to render fully
-            page.wait_for_timeout(5000)
-            screenshot_bytes = page.screenshot()
-            b64_image = base64.b64encode(screenshot_bytes).decode('utf-8')
-            print(f"[{ticker}] Chart captured successfully as base64 string.")
-        except Exception as e:
-            print(f"[{ticker}] Failed to capture chart: {e}")
-        finally:
-            browser.close()
+        
+        urls_to_try = [
+            f"https://in.tradingview.com/chart/?symbol=NSE%3A{ticker}",
+            f"https://www.google.com/finance/quote/{ticker}:NSE"
+        ]
+        
+        for url in urls_to_try:
+            try:
+                print(f"[{ticker}] Attempting to capture chart from {url}...")
+                page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                page.wait_for_timeout(5000)
+                screenshot_bytes = page.screenshot()
+                b64_image = base64.b64encode(screenshot_bytes).decode('utf-8')
+                print(f"[{ticker}] Chart captured successfully as base64 string.")
+                break
+            except Exception as e:
+                print(f"[{ticker}] Failed to capture chart from {url}: {e}")
+                
+        browser.close()
             
     return {"chart_image_base64": b64_image}
 
@@ -173,7 +179,8 @@ def node_vision_analysis(state: TradingState) -> dict:
                 'role': 'user',
                 'content': prompt,
                 'images': [chart_image_base64]
-            }]
+            }],
+            options={'temperature': 0.0}
         )
         raw_analysis = response['message']['content']
         
@@ -242,6 +249,12 @@ def node_confluence_engine(state: TradingState) -> dict:
     
     print(f"[{ticker}] Running confluence engine (evidence synthesis)...")
     
+    # Strip raw numerical noise to prevent LLM hallucinations
+    simplified_quantitative = {
+        "interpretations": technical_indicators.get("interpretations", {}),
+        "pivot_points": technical_indicators.get("pivot_points", {})
+    }
+    
     prompt = f"""
     You are a Confluence Engine for {ticker}. 
     Your task is to compare evidence from visual chart analysis with quantitative market data.
@@ -256,6 +269,7 @@ def node_confluence_engine(state: TradingState) -> dict:
     - No stop-loss or target prices.
     - Do not calculate indicators.
     - Do not estimate missing values.
+    - Numerical fields (like confidence or scores) MUST be single numbers (e.g. 0.8), never mathematical expressions (like 40/50).
     - If a field does not exist inside technical indicators or vision features, explicitly list it inside the missing_data field.
     - Never invent values or hallucinate missing information.
     
@@ -270,15 +284,15 @@ def node_confluence_engine(state: TradingState) -> dict:
     If an entire category is unavailable (e.g. Volume is unavailable), you MUST reduce confidence and heavily penalize the score for that category. Do NOT assign full marks for missing data.
     Explain your calculation for each category within its respective "reason" field.
 
-    Available Vision Features (from chart):
+    Available Visual Features:
     {json.dumps(vision_features)}
-    
-    Available Technical Indicators (Quantitative):
-    {json.dumps(technical_indicators)}
 
-    Compare the following whenever available:
-    - Trend (Vision vs EMA/SMA/ADX)
-    - Momentum (RSI/MACD/Momentum)
+    Available Technical Indicators (Quantitative):
+    {json.dumps(simplified_quantitative)}
+
+    Compare the following whenever available. CRITICAL: For technical indicators, do NOT interpret raw numbers. You MUST use the deterministic string values provided in the `interpretations` object inside the quantitative JSON!
+    - Trend (Vision vs Quantitative `ema_trend`)
+    - Momentum (Quantitative `rsi_condition` and `macd_condition`)
     - Volume (Relative Volume/OBV/VWAP)
     - Support & Resistance (Vision vs Pivot Points/Swing High/Low/Fibonacci)
     - Patterns (Chart/Candlestick)
@@ -345,7 +359,8 @@ def node_confluence_engine(state: TradingState) -> dict:
             messages=[{
                 'role': 'user',
                 'content': prompt
-            }]
+            }],
+            options={'temperature': 0.0}
         )
         raw_analysis = response['message']['content']
         
@@ -404,6 +419,12 @@ def node_decision_engine(state: TradingState) -> dict:
     confluence_analysis = state.get("confluence_analysis", {})
     risk_analysis = state.get("risk_analysis", {})
     
+    # Strip raw numerical noise to prevent LLM hallucinations
+    simplified_quantitative = {
+        "interpretations": technical_indicators.get("interpretations", {}),
+        "pivot_points": technical_indicators.get("pivot_points", {})
+    }
+    
     print(f"[{ticker}] Running decision engine...")
     
     min_risk_reward = 1.5
@@ -412,18 +433,11 @@ def node_decision_engine(state: TradingState) -> dict:
     You are the final institutional trading decision engine for {ticker}.
     Your responsibility is to review completed analyses.
     
-    Do not perform calculations.
-    Do not generate numerical estimates.
-    Do not invent missing information.
-    Base every conclusion only on the supplied structured JSON.
-    If evidence is contradictory, prefer HOLD over speculative recommendations.
-    Confidence must reflect the quality and consistency of the supplied evidence.
-
-    Available Vision Features:
+    Available Visual Features:
     {json.dumps(vision_features)}
     
-    Available Technical Indicators:
-    {json.dumps(technical_indicators)}
+    Available Technical Indicators (Quantitative):
+    {json.dumps(simplified_quantitative)}
     
     Confluence Analysis:
     {json.dumps(confluence_analysis)}
@@ -431,19 +445,24 @@ def node_decision_engine(state: TradingState) -> dict:
     Risk Management Profile:
     {json.dumps(risk_analysis)}
     
-    Decision Philosophy:
-    1. Confluence
-    2. Risk
-    3. Trend
-    4. Momentum
-    5. Volume
+    Do not perform calculations.
+    Do not generate numerical estimates.
+    Do not invent missing information.
+    Base every conclusion only on the supplied structured JSON.
+    If evidence is contradictory, prefer HOLD over speculative recommendations.
+    Confidence must reflect the quality and consistency of the supplied evidence.
+    
     If confluence is weak OR risk is high, become more conservative.
-    If evidence is insufficient, recommend HOLD instead of guessing.
+    If evidence is contradictory, prefer HOLD over speculative recommendations.
+    If you recommend HOLD due to contradictory evidence, your "why_chosen" MUST explicitly state: "HOLD recommended due to contradictory evidence between vision and quantitative metrics", NOT because of risk/reward.
+    
+    REASONING ARRAY RULE (CRITICAL):
+    For your "reasoning" array, you MUST directly copy the category, status, and reasons from the supplied Confluence Analysis.
+    Do NOT re-evaluate the trend yourself. Do NOT hallucinate mathematical comparisons (like EMA20 > SMA20) if they contradict the Confluence Engine.
     
     RISK REWARD THRESHOLD (CRITICAL):
-    The minimum acceptable Risk/Reward ratio is {min_risk_reward}.
-    You must read the "risk_reward" values from the Risk Management Profile.
-    If the best available Risk Reward ratio is less than {min_risk_reward}, you MUST NEVER recommend BUY, SELL, STRONG BUY, or STRONG SELL.
+    You MUST read the "metrics" -> "meets_min_rr_threshold" boolean value from the Risk Management Profile.
+    If "meets_min_rr_threshold" is false, you MUST NEVER recommend BUY, SELL, STRONG BUY, or STRONG SELL.
     Instead, you MUST recommend "HOLD" and your "why_chosen" field MUST explicitly state: "Risk Reward below acceptable threshold."
     
     HOLD RULE (CRITICAL):
@@ -509,7 +528,8 @@ def node_decision_engine(state: TradingState) -> dict:
             messages=[{
                 'role': 'user',
                 'content': prompt
-            }]
+            }],
+            options={'temperature': 0.0}
         )
         raw_analysis = response['message']['content']
         
@@ -585,6 +605,12 @@ def node_trade_validator(state: TradingState) -> dict:
     return {"trade_validation": validation_results}
 
 def build_report_prompt(ticker, vision_features, technical_indicators, confluence_analysis, risk_analysis, decision, trade_validation) -> str:
+    # Strip raw numerical noise to prevent LLM hallucinations
+    simplified_quantitative = {
+        "interpretations": technical_indicators.get("interpretations", {}),
+        "pivot_points": technical_indicators.get("pivot_points", {})
+    }
+
     return f"""
     You are the final Report Generator for VisuQuant for {ticker}.
     Your responsibility is to transform the structured outputs from previous nodes into a professional, institutional-quality report.
@@ -593,96 +619,95 @@ def build_report_prompt(ticker, vision_features, technical_indicators, confluenc
     - You MUST NEVER modify Recommendation, Confidence, Entry, Stop Loss, Targets, Position Size, Risk Level, Confluence, Technical Indicators, Vision Analysis, or Validation Results.
     - NEVER generate new indicators, calculations, or recommendations.
     - ONLY use the supplied JSON. Do not infer missing values. Do not invent missing information.
-    - NEVER expose internal JSON structures, raw machine objects, or booleans in the final text (e.g., do NOT output "EMA20 = False" or "EMA20 = {{'status': 'Unavailable'}}").
-    - If an indicator or value is unavailable, translate it into professional analyst language (e.g., "EMA20: Unavailable. Reason: Insufficient historical candles.").
+    - NEVER expose internal JSON structures, raw machine objects, or booleans in the final text.
+    - Provide exact numerical values where available.
+    - CRITICAL: For EMA, RSI, and MACD, you MUST exactly copy the text from the `interpretations` object inside Technical Indicators. Do NOT invent your own interpretation of the raw numbers.
+    - If unavailable, generate exactly: "Unavailable. Reason: Insufficient historical candles."
     - If data is unavailable, explicitly state that it is unavailable using the rule above.
     - Do NOT simply list every quantitative value. Explain what the indicators collectively suggest.
     - Style: Professional, Institutional, Evidence-based, Objective, Concise, Readable. No emojis, no sensational language, no speculation, no repetition.
     
     SUPPLIED DATA:
     Vision Features: {json.dumps(vision_features)}
-    Technical Indicators: {json.dumps(technical_indicators)}
+    Technical Indicators: {json.dumps(simplified_quantitative)}
     Confluence Analysis: {json.dumps(confluence_analysis)}
     Risk Analysis: {json.dumps(risk_analysis)}
     Decision Engine: {json.dumps(decision)}
     Trade Validation: {json.dumps(trade_validation)}
     
-    RETURN EXACTLY THIS JSON SCHEMA:
-    {{
-        "analysis_report": {{
-            "executive_summary": "Include Stock Symbol, Current Market Trend, Final Recommendation, Decision Confidence, Overall Confluence, and Trade Validation Status.",
-            "vision_analysis": "Summarize Vision findings (Trend, Market Structure, Support, Resistance, Patterns, etc). Do not invent observations.",
-            "quantitative_analysis": "Summarize numerical findings. Highlight observations (EMA alignment, RSI condition, MACD, etc). Explain what they collectively suggest. Do NOT simply list every value.",
-            "confluence_analysis": "Explain areas of agreement/contradiction, missing data, and WHY the confluence score reached its value.",
-            "risk_analysis": "Present Entry, Stop Loss, Target 1, Target 2, Target 3, Risk/Reward, Position Size, Volatility, Risk Level, Warnings exactly as received.",
-            "decision_summary": "Present Recommendation, Confidence, Supporting Factors, Risk Factors. Copy Execution Plan directly from Decision Engine.",
-            "validation_summary": "If passed: state it passed all deterministic validation checks. If failed: explain Errors, Warnings, Failed Checks.",
-            "overall_conclusion": "Provide closing summary discussing market condition, overall trade quality, primary strengths/risks, and final recommendation.",
-            "disclaimer": "This report is generated using AI-assisted technical analysis together with deterministic quantitative models. It is intended for research and educational purposes only and should not be interpreted as financial advice."
-        }},
-        "analysis_report_markdown": "COMPLETE MARKDOWN FORMATTED REPORT USING THE 9 SECTIONS LISTED ABOVE"
-    }}
+    RETURN YOUR REPORT AS PURE MARKDOWN. Do NOT wrap it in JSON.
+    Use the following 9 sections as headers:
+    1. Executive Summary: Include Stock Symbol, Current Market Trend, Final Recommendation, Decision Confidence, Overall Confluence, and Trade Validation Status.
+    2. Vision Analysis: Summarize ONLY the `Vision Features` JSON (Trend, Market Structure, Support, Resistance, Patterns, etc).
+    3. Quantitative Analysis: Summarize ONLY the `Technical Indicators` JSON. You MUST read the `interpretations` (EMA alignment, RSI condition, MACD condition). Explain what they collectively suggest. Do NOT mention visual features here.
+    4. Confluence Analysis: Explain areas of agreement/contradiction, missing data, and WHY the confluence score reached its value.
+    5. Risk Analysis: Present Entry, Stop Loss, Target 1, Target 2, Target 3, Risk/Reward, Position Size, Volatility, Risk Level, Warnings exactly as received.
+    6. Decision Summary: Present Recommendation, Confidence, Supporting Factors, Risk Factors. Copy Execution Plan directly from Decision Engine.
+    7. Validation Summary: If passed: state it passed all deterministic validation checks. If failed: explain Errors, Warnings, Failed Checks.
+    8. Overall Conclusion: Provide closing summary discussing market condition, overall trade quality, primary strengths/risks, and final recommendation.
+    9. Disclaimer: "This report is generated using AI-assisted technical analysis together with deterministic quantitative models. It is intended for research and educational purposes only and should not be interpreted as financial advice."
     """
 
 def node_report_generator(state: TradingState) -> dict:
     ticker = state["ticker"]
-    vision_features = state.get("vision_features", {})
-    technical_indicators = state.get("technical_indicators", {})
-    confluence_analysis = state.get("confluence_analysis", {})
-    risk_analysis = state.get("risk_analysis", {})
+    vision = state.get("vision_features", {})
+    tech = state.get("technical_indicators", {})
+    confluence = state.get("confluence_analysis", {})
+    risk = state.get("risk_analysis", {})
     decision = state.get("decision", {})
-    trade_validation = state.get("trade_validation", {})
+    validation = state.get("trade_validation", {})
+    
+    # Strip raw numerical noise to prevent LLM hallucinations
+    simplified_quantitative = {
+        "interpretations": tech.get("interpretations", {}),
+        "pivot_points": tech.get("pivot_points", {})
+    }
     
     print(f"[{ticker}] Generating final institutional report...")
     
-    prompt = build_report_prompt(ticker, vision_features, technical_indicators, confluence_analysis, risk_analysis, decision, trade_validation)
+    prompt = f"""
+    You are an expert institutional quantitative analyst. 
+    Write a final summary report for {ticker}.
     
-    parsed_json = None
+    Inputs (STRICTLY USE THESE):
+    Vision: {json.dumps(vision)}
+    Technical: {json.dumps(simplified_quantitative)}
+    Confluence: {json.dumps(confluence)}
+    Risk: {json.dumps(risk)}
+    Decision: {json.dumps(decision)}
+    Validation: {json.dumps(validation)}
+    
+    RETURN YOUR REPORT AS PURE MARKDOWN.
+    Use these 9 sections:
+    1. Executive Summary, 2. Vision Analysis, 3. Quantitative Analysis, 4. Confluence Analysis, 5. Risk Analysis, 6. Decision Summary, 7. Validation Summary, 8. Overall Conclusion, 9. Disclaimer.
+    """
+    
     raw_analysis = ""
     
     for attempt in range(2):
-        response = ollama.chat(
-            model='qwen2.5vl:7b',
-            messages=[{
-                'role': 'user',
-                'content': prompt
-            }]
-        )
-        raw_analysis = response['message']['content']
-        
-        cleaned_str = raw_analysis.strip()
-        if cleaned_str.startswith("```json"):
-            cleaned_str = cleaned_str[7:]
-        elif cleaned_str.startswith("```"):
-            cleaned_str = cleaned_str[3:]
-            
-        if cleaned_str.endswith("```"):
-            cleaned_str = cleaned_str[:-3]
-            
-        cleaned_str = cleaned_str.strip()
-        
         try:
-            parsed_json = json.loads(cleaned_str)
+            response = ollama.chat(
+                model='qwen2.5vl:7b',
+                messages=[{
+                    'role': 'user',
+                    'content': prompt
+                }],
+                options={'temperature': 0.0}
+            )
+            raw_analysis = response['message']['content']
             break
-        except json.JSONDecodeError:
-            print(f"[{ticker}] Warning: Failed to parse report JSON on attempt {attempt+1}. Retrying...")
+        except Exception as e:
+            print(f"[{ticker}] Warning: Failed to generate report on attempt {attempt+1}. Retrying...")
             continue
             
-    if parsed_json is None:
-        print(f"[{ticker}] ERROR: Failed to generate report JSON. Returning raw output as fallback.")
-        return {
-            "analysis_report": {"error": "Failed to parse JSON."},
-            "analysis_report_markdown": raw_analysis,
-            "final_report": raw_analysis
-        }
+    if not raw_analysis:
+        print(f"[{ticker}] ERROR: Failed to generate report. Returning fallback.")
+        raw_analysis = "Report generation failed due to an LLM error."
         
-    analysis_report = parsed_json.get("analysis_report", {})
-    markdown = parsed_json.get("analysis_report_markdown", "")
-    
     print(f"[{ticker}] Report generation complete.")
     
     return {
-        "analysis_report": analysis_report,
-        "analysis_report_markdown": markdown,
-        "final_report": markdown
+        "analysis_report": {"status": "Generated as Markdown"},
+        "analysis_report_markdown": raw_analysis,
+        "final_report": raw_analysis
     }

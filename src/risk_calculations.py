@@ -101,6 +101,11 @@ def calculate_risk_parameters(tech_ind: dict, confluence: dict, scraped: dict) -
     elif volatility == "Low" and confidence > 70:
         risk_level = "Low"
         
+    # 9. Minimum Risk Reward Validation
+    valid_rrs = [rr for rr in [rr1, rr2, rr3] if rr is not None]
+    best_rr = max(valid_rrs) if valid_rrs else 0
+    meets_rr = bool(best_rr >= 1.5)
+        
     return {
         "entry": entry,
         "stop_loss": stop_loss,
@@ -113,6 +118,10 @@ def calculate_risk_parameters(tech_ind: dict, confluence: dict, scraped: dict) -
             "target_1": rr1,
             "target_2": rr2,
             "target_3": rr3
+        },
+        "metrics": {
+            "best_risk_reward": best_rr,
+            "meets_min_rr_threshold": meets_rr
         },
         "position_size": position_size,
         "trade_confidence": confidence,

@@ -77,6 +77,9 @@ def main():
     
     # Persist all data
     persist_pipeline_results(final_state, start_time, end_time)
+    
+    from src.nse_fetcher import cleanup_cache
+    cleanup_cache()
 
 if __name__ == "__main__":
     main()
