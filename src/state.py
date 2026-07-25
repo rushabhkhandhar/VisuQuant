@@ -16,3 +16,6 @@ class TradingState(TypedDict):
     decision: Optional[dict]
     trade_validation: Optional[dict]
     final_decision: Optional[str]
+    analysis_report: Optional[dict]
+    analysis_report_markdown: Optional[str]
+    final_report: Optional[str]

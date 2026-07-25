@@ -542,3 +542,107 @@ def node_trade_validator(state: TradingState) -> dict:
     print(f"[{ticker}] Trade validation complete.")
     
     return {"trade_validation": validation_results}
+
+def node_report_generator(state: TradingState) -> dict:
+    ticker = state["ticker"]
+    vision_features = state.get("vision_features", {})
+    technical_indicators = state.get("technical_indicators", {})
+    confluence_analysis = state.get("confluence_analysis", {})
+    risk_analysis = state.get("risk_analysis", {})
+    decision = state.get("decision", {})
+    trade_validation = state.get("trade_validation", {})
+    
+    print(f"[{ticker}] Generating final institutional report...")
+    
+    prompt = f"""
+    You are the final Report Generator for VisuQuant.
+    Your responsibility is to transform the structured outputs produced by previous nodes into a professional institutional-quality report.
+    
+    CRITICAL RULES:
+    1. You MUST NEVER modify any upstream value (Recommendation, Entry, Targets, Scores, etc.).
+    2. Only reference supplied data. Do not infer missing values. Do not invent indicators.
+    3. If data is missing, state that it is unavailable.
+    4. Style: Professional, Institutional, Evidence-driven, Objective, Concise. No emojis, no marketing language.
+    
+    SUPPLIED DATA:
+    Vision Features:
+    {json.dumps(vision_features)}
+    
+    Technical Indicators:
+    {json.dumps(technical_indicators)}
+    
+    Confluence Analysis:
+    {json.dumps(confluence_analysis)}
+    
+    Risk Analysis:
+    {json.dumps(risk_analysis)}
+    
+    Decision Engine:
+    {json.dumps(decision)}
+    
+    Trade Validation:
+    {json.dumps(trade_validation)}
+    
+    RETURN EXACTLY THIS JSON SCHEMA:
+    {{
+        "analysis_report": {{
+            "executive_summary": "...",
+            "vision_analysis": "...",
+            "quantitative_analysis": "...",
+            "confluence_analysis": "...",
+            "risk_analysis": "...",
+            "decision_summary": "...",
+            "validation_summary": "...",
+            "overall_conclusion": "...",
+            "disclaimer": "This report is generated using AI-assisted technical analysis and deterministic quantitative models. It is intended for educational and research purposes only and should not be interpreted as financial advice."
+        }},
+        "analysis_report_markdown": "COMPLETE MARKDOWN STRING OF THE ENTIRE REPORT USING THE EXACT 9 SECTIONS LISTED IN INSTRUCTIONS"
+    }}
+    
+    Make sure `analysis_report_markdown` is a single valid JSON string containing the full formatted markdown document with all 9 sections properly styled with headers.
+    """
+    
+    parsed_json = None
+    
+    for attempt in range(2):
+        response = ollama.chat(
+            model='qwen2.5vl:7b',
+            messages=[{
+                'role': 'user',
+                'content': prompt
+            }]
+        )
+        raw_analysis = response['message']['content']
+        
+        cleaned_str = raw_analysis.strip()
+        if cleaned_str.startswith("```json"):
+            cleaned_str = cleaned_str[7:]
+        elif cleaned_str.startswith("```"):
+            cleaned_str = cleaned_str[3:]
+            
+        if cleaned_str.endswith("```"):
+            cleaned_str = cleaned_str[:-3]
+            
+        cleaned_str = cleaned_str.strip()
+        
+        try:
+            parsed_json = json.loads(cleaned_str)
+            break
+        except json.JSONDecodeError:
+            print(f"[{ticker}] Warning: Failed to parse report JSON on attempt {attempt+1}. Retrying...")
+            continue
+            
+    if parsed_json is None:
+        print(f"[{ticker}] ERROR: Failed to generate report JSON.")
+        return {{}}
+        
+    analysis_report = parsed_json.get("analysis_report", {})
+    markdown = parsed_json.get("analysis_report_markdown", "")
+    
+    print(f"[{ticker}] Report generation complete.")
+    
+    return {
+        "analysis_report": analysis_report,
+        "analysis_report_markdown": markdown,
+        "final_report": markdown
+    }
