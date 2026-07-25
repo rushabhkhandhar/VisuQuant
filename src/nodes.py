@@ -53,77 +53,43 @@ def node_vision_analysis(state: TradingState) -> dict:
     You are a computer vision model performing feature extraction on a TradingView chart.
 
     Your task is NOT to perform trading analysis.
-
     Your task is ONLY to extract observable visual information.
 
     Rules:
-
-    - Return VALID JSON only.
-    - No markdown.
-    - No explanations.
+    - Return VALID JSON only. No markdown. No explanations.
     - No BUY/SELL/HOLD recommendation.
     - Do not estimate indicators that are not visibly plotted.
     - If something is not visible, return null.
-    - Never invent values.
+    - Never invent values. Never hallucinate certainty. If confidence is low, state uncertainty (lower the confidence score).
+
+    NUMERICAL VALUES RULE (CRITICAL):
+    Every numerical value extracted from the chart (like support and resistance prices) MUST include `confidence`, `source`, and `visibility`. 
+    Only output exact prices when clearly visible on the y-axis or explicitly labeled. 
+    Otherwise, return `null` for the price, provide a description (e.g., 'Approximate support zone'), and lower the confidence. Never hallucinate exact numbers.
+
+    INTERNAL CONSISTENCY VALIDATION (CRITICAL):
+    You must validate the relationships between: Trend, Market Structure, Swing Highs/Lows, Trendlines, and Channels.
+    - A "Downtrend" MUST be logically compatible with Lower Highs and Lower Lows.
+    - An "Uptrend" MUST be logically compatible with Higher Highs and Higher Lows.
+    - A "Sideways" trend must not claim aggressively trending structures.
+    If you detect contradictions in your own visual assessment (e.g. you see a Downtrend but the structure is Higher Highs), you MUST set "consistency_status" to "FAILED", populate the "warnings" array explaining the visual contradiction, and drastically reduce your confidence score.
 
     Extract:
-
-    1. Trend
-    - Direction
-    - Visual confidence (0-100)
-
-    2. Price Structure
-    - Higher Highs
-    - Higher Lows
-    - Lower Highs
-    - Lower Lows
-
-    3. Support Zones
-    - Approximate price
-    - Strength
-
-    4. Resistance Zones
-    - Approximate price
-    - Strength
-
-    5. Chart Patterns
-
-    6. Candlestick Patterns
-
-    7. Trendlines
-    - Type
-    - Number of touches
-    - Broken or not
-
-    8. Channels
-
-    9. Visible Indicators
-    - EMA20
-    - EMA50
-    - EMA200
-    - VWAP
-    - Bollinger Bands
-    - RSI
-    - MACD
-    - Volume
-
-    10. Events
-    - Breakout
-    - Breakdown
-    - Retest
-    - Gap Up
-    - Gap Down
-
-    11. Volume
-    - Increasing
-    - Decreasing
-    - Spike
-
-    If any field cannot be determined from the image,
-    return null instead of guessing.
+    1. Trend (Direction and Visual confidence 0-100)
+    2. Price Structure (Higher Highs, Higher Lows, Lower Highs, Lower Lows)
+    3. Support Zones (Approximate price, Strength)
+    4. Resistance Zones (Approximate price, Strength)
+    5. Chart Patterns & Candlestick Patterns
+    6. Trendlines (Type, touches, broken)
+    7. Channels
+    8. Visible Indicators (EMA, VWAP, Bollinger, RSI, MACD, Volume)
+    9. Events (Breakout, Breakdown, Retest, Gap Up, Gap Down)
+    10. Volume (Increasing, Decreasing, Spike)
 
     RETURN EXACTLY THIS JSON SCHEMA:
     {{
+      "consistency_status": "PASSED | FAILED",
+      "warnings": [],
       "trend": {{
         "direction": "Uptrend | Downtrend | Sideways | Unknown",
         "confidence": 0
@@ -136,13 +102,21 @@ def node_vision_analysis(state: TradingState) -> dict:
       }},
       "support_zones": [
         {{
-          "approx_price": 0,
+          "price": null,
+          "description": "Approximate support zone",
+          "confidence": 0.0,
+          "source": "Chart label | Visual estimation | Indicator",
+          "visibility": "Clear | Obscured | Implied",
           "strength": "Strong | Medium | Weak"
         }}
       ],
       "resistance_zones": [
         {{
-          "approx_price": 0,
+          "price": null,
+          "description": "Approximate resistance zone",
+          "confidence": 0.0,
+          "source": "Chart label | Visual estimation | Indicator",
+          "visibility": "Clear | Obscured | Implied",
           "strength": "Strong | Medium | Weak"
         }}
       ],
@@ -284,6 +258,17 @@ def node_confluence_engine(state: TradingState) -> dict:
     - Do not estimate missing values.
     - If a field does not exist inside technical indicators or vision features, explicitly list it inside the missing_data field.
     - Never invent values or hallucinate missing information.
+    
+    WEIGHTED SCORING (CRITICAL):
+    You must calculate an overall confluence score strictly based on these maximum weights (Total = 100):
+    - Trend = 30
+    - Momentum = 20
+    - Support & Resistance = 20
+    - Volume = 15
+    - Patterns = 15
+    
+    If an entire category is unavailable (e.g. Volume is unavailable), you MUST reduce confidence and heavily penalize the score for that category. Do NOT assign full marks for missing data.
+    Explain your calculation for each category within its respective "reason" field.
 
     Available Vision Features (from chart):
     {json.dumps(vision_features)}
@@ -336,6 +321,14 @@ def node_confluence_engine(state: TradingState) -> dict:
         "missing_data": [
             "..."
         ],
+        "scores": {{
+            "trend": 0,
+            "momentum": 0,
+            "support_resistance": 0,
+            "volume": 0,
+            "patterns": 0
+        }},
+        "overall_score": 0,
         "overall_confluence": {{
             "score": 0,
             "strength": "Strong | Moderate | Weak | Unknown"
@@ -413,6 +406,8 @@ def node_decision_engine(state: TradingState) -> dict:
     
     print(f"[{ticker}] Running decision engine...")
     
+    min_risk_reward = 1.5
+    
     prompt = f"""
     You are the final institutional trading decision engine for {ticker}.
     Your responsibility is to review completed analyses.
@@ -444,6 +439,23 @@ def node_decision_engine(state: TradingState) -> dict:
     5. Volume
     If confluence is weak OR risk is high, become more conservative.
     If evidence is insufficient, recommend HOLD instead of guessing.
+    
+    RISK REWARD THRESHOLD (CRITICAL):
+    The minimum acceptable Risk/Reward ratio is {min_risk_reward}.
+    You must read the "risk_reward" values from the Risk Management Profile.
+    If the best available Risk Reward ratio is less than {min_risk_reward}, you MUST NEVER recommend BUY, SELL, STRONG BUY, or STRONG SELL.
+    Instead, you MUST recommend "HOLD" and your "why_chosen" field MUST explicitly state: "Risk Reward below acceptable threshold."
+    
+    HOLD RULE (CRITICAL):
+    If your recommendation is "HOLD", you MUST NOT provide trading execution parameters.
+    For a HOLD recommendation, your execution block MUST exactly match this:
+    "execution": {{
+        "status": "Inactive",
+        "entry": null,
+        "stop_loss": null,
+        "targets": [],
+        "reason": "No actionable trade."
+    }}
 
     RETURN EXACTLY THIS JSON SCHEMA:
     {{
@@ -451,7 +463,19 @@ def node_decision_engine(state: TradingState) -> dict:
             "recommendation": "STRONG BUY | BUY | HOLD | SELL | STRONG SELL",
             "confidence": 0,
             "strength": "High | Medium | Low",
-            "summary": "...",
+            "why_chosen": "...",
+            "alternatives_rejected": "...",
+            "reasoning": [
+                {{
+                    "category": "Trend | Momentum | Support Resistance | Volume | Patterns | Risk",
+                    "weight": 0,
+                    "status": "Confirmed | Contradiction | Partially Confirmed | Unavailable",
+                    "evidence": [
+                        "..."
+                    ],
+                    "reason": "..."
+                }}
+            ],
             "supporting_factors": [
                 "..."
             ],
@@ -459,6 +483,7 @@ def node_decision_engine(state: TradingState) -> dict:
                 "..."
             ],
             "execution": {{
+                "status": "Active | Inactive",
                 "entry": 0,
                 "stop_loss": 0,
                 "targets": {{
@@ -466,12 +491,13 @@ def node_decision_engine(state: TradingState) -> dict:
                     "target_2": 0,
                     "target_3": 0
                 }},
-                "position_size": "..."
+                "position_size": "...",
+                "reason": "..."
             }}
         }}
     }}
     
-    NOTE: For the "execution" block, strictly copy the values from the provided Risk Management Profile JSON. Do NOT calculate them yourself.
+    NOTE: For the "execution" block (if not HOLD), strictly copy the values from the provided Risk Management Profile JSON. Do NOT calculate them yourself.
     """
     
     parsed_json = None
@@ -501,6 +527,19 @@ def node_decision_engine(state: TradingState) -> dict:
         
         try:
             parsed_json = json.loads(cleaned_str)
+            
+            # Strictly enforce HOLD logic in post-processing to guarantee valid schema
+            if parsed_json and "decision" in parsed_json:
+                decision = parsed_json["decision"]
+                if decision.get("recommendation") == "HOLD":
+                    decision["execution"] = {
+                        "status": "Inactive",
+                        "entry": None,
+                        "stop_loss": None,
+                        "targets": [],
+                        "reason": "No actionable trade."
+                    }
+                    
             break
         except json.JSONDecodeError:
             print(f"[{ticker}] Warning: Failed to parse decision JSON on attempt {attempt+1}. Retrying...")
@@ -554,7 +593,9 @@ def build_report_prompt(ticker, vision_features, technical_indicators, confluenc
     - You MUST NEVER modify Recommendation, Confidence, Entry, Stop Loss, Targets, Position Size, Risk Level, Confluence, Technical Indicators, Vision Analysis, or Validation Results.
     - NEVER generate new indicators, calculations, or recommendations.
     - ONLY use the supplied JSON. Do not infer missing values. Do not invent missing information.
-    - If data is unavailable, explicitly state that it is unavailable.
+    - NEVER expose internal JSON structures, raw machine objects, or booleans in the final text (e.g., do NOT output "EMA20 = False" or "EMA20 = {{'status': 'Unavailable'}}").
+    - If an indicator or value is unavailable, translate it into professional analyst language (e.g., "EMA20: Unavailable. Reason: Insufficient historical candles.").
+    - If data is unavailable, explicitly state that it is unavailable using the rule above.
     - Do NOT simply list every quantitative value. Explain what the indicators collectively suggest.
     - Style: Professional, Institutional, Evidence-based, Objective, Concise, Readable. No emojis, no sensational language, no speculation, no repetition.
     

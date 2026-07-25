@@ -2,15 +2,31 @@ import pandas as pd
 import numpy as np
 import math
 
-def safe_get(series):
-    if len(series) == 0 or pd.isna(series.iloc[-1]):
-        return None
-    val = series.iloc[-1]
-    if isinstance(val, (np.float64, np.int64)):
+UNAVAILABLE = {"status": "Unavailable", "reason": "Insufficient historical candles"}
+
+def safe_get(val):
+    if val is None:
+        return UNAVAILABLE
+        
+    if isinstance(val, pd.Series):
+        if len(val) == 0:
+            return UNAVAILABLE
+        val = val.iloc[-1]
+        
+    if pd.isna(val):
+        return UNAVAILABLE
+        
+    if isinstance(val, (np.float64, np.int64, np.float32, np.int32)):
         val = val.item()
-    if math.isnan(val) or math.isinf(val):
-        return None
-    return round(val, 4)
+        
+    if isinstance(val, float):
+        if math.isnan(val) or math.isinf(val):
+            return UNAVAILABLE
+            
+    try:
+        return round(float(val), 4)
+    except (ValueError, TypeError):
+        return UNAVAILABLE
 
 def calculate_technical_indicators(df: pd.DataFrame) -> dict:
     if df is None or df.empty or len(df) < 2:
@@ -44,8 +60,8 @@ def calculate_technical_indicators(df: pd.DataFrame) -> dict:
         "macd": {},
         "bollinger_bands": {},
         "statistics": {},
-        "pivot_points": {},
-        "fibonacci": {}
+        "pivot_points": UNAVAILABLE,
+        "fibonacci": UNAVAILABLE
     }
 
     # Trend: EMA & SMA
@@ -54,8 +70,8 @@ def calculate_technical_indicators(df: pd.DataFrame) -> dict:
             ind["ema"][str(period)] = safe_get(c.ewm(span=period, adjust=False).mean())
             ind["sma"][str(period)] = safe_get(c.rolling(window=period).mean())
         else:
-            ind["ema"][str(period)] = None
-            ind["sma"][str(period)] = None
+            ind["ema"][str(period)] = UNAVAILABLE
+            ind["sma"][str(period)] = UNAVAILABLE
 
     # Momentum: RSI (14)
     if len(c) >= 15:
@@ -66,7 +82,7 @@ def calculate_technical_indicators(df: pd.DataFrame) -> dict:
         rsi = 100 - (100 / (1 + rs))
         ind["rsi"] = safe_get(rsi)
     else:
-        ind["rsi"] = None
+        ind["rsi"] = UNAVAILABLE
 
     # Momentum: MACD
     if len(c) >= 26:
@@ -81,10 +97,10 @@ def calculate_technical_indicators(df: pd.DataFrame) -> dict:
             "histogram": safe_get(hist)
         }
     else:
-        ind["macd"] = {"line": None, "signal": None, "histogram": None}
+        ind["macd"] = UNAVAILABLE
 
     # ADX (14)
-    ind["adx"] = None # ADX calculation is complex to do purely in pandas compactly, placeholder for future
+    ind["adx"] = UNAVAILABLE # ADX calculation is complex to do purely in pandas compactly, placeholder for future
     
     # Volatility: ATR (14)
     if len(c) >= 2:
@@ -96,7 +112,7 @@ def calculate_technical_indicators(df: pd.DataFrame) -> dict:
         atr = tr.ewm(alpha=1/14, adjust=False).mean()
         ind["atr"] = safe_get(atr)
     else:
-        ind["atr"] = None
+        ind["atr"] = UNAVAILABLE
 
     # Bollinger Bands (20)
     if len(c) >= 20:
@@ -108,18 +124,24 @@ def calculate_technical_indicators(df: pd.DataFrame) -> dict:
             "lower": safe_get(sma20 - 2*std20)
         }
     else:
-        ind["bollinger_bands"] = {"middle": None, "upper": None, "lower": None}
+        ind["bollinger_bands"] = UNAVAILABLE
 
     # VWAP (Cumulative for the loaded period)
-    typical_price = (h + l + c) / 3
-    vwap = (typical_price * v).cumsum() / v.cumsum()
-    ind["vwap"] = safe_get(vwap)
+    if len(c) > 0:
+        typical_price = (h + l + c) / 3
+        vwap = (typical_price * v).cumsum() / v.cumsum()
+        ind["vwap"] = safe_get(vwap)
+    else:
+        ind["vwap"] = UNAVAILABLE
 
     # OBV
-    direction = np.sign(c.diff())
-    direction.iloc[0] = 1
-    obv = (direction * v).cumsum()
-    ind["obv"] = safe_get(obv)
+    if len(c) > 0:
+        direction = np.sign(c.diff())
+        direction.iloc[0] = 1
+        obv = (direction * v).cumsum()
+        ind["obv"] = safe_get(obv)
+    else:
+        ind["obv"] = UNAVAILABLE
 
     # Relative Volume (Ratio of current volume to 20-day SMA of volume)
     if len(v) >= 20:
@@ -127,7 +149,7 @@ def calculate_technical_indicators(df: pd.DataFrame) -> dict:
         rel_vol = v / vol_sma20
         ind["relative_volume"] = safe_get(rel_vol)
     else:
-        ind["relative_volume"] = None
+        ind["relative_volume"] = UNAVAILABLE
 
     # Pivot Points (Standard Daily based on previous day)
     if len(c) >= 2:
@@ -143,7 +165,7 @@ def calculate_technical_indicators(df: pd.DataFrame) -> dict:
             "S2": round(p - (prev_h - prev_l), 2)
         }
     else:
-        ind["pivot_points"] = None
+        ind["pivot_points"] = UNAVAILABLE
 
     # Swing High / Low (Local extrema over last 20 days)
     if len(c) >= 20:
@@ -152,11 +174,11 @@ def calculate_technical_indicators(df: pd.DataFrame) -> dict:
         ind["swing_high"] = float(last20_h)
         ind["swing_low"] = float(last20_l)
     else:
-        ind["swing_high"] = None
-        ind["swing_low"] = None
+        ind["swing_high"] = UNAVAILABLE
+        ind["swing_low"] = UNAVAILABLE
 
     # Fibonacci (Recent swing high/low)
-    if ind["swing_high"] and ind["swing_low"]:
+    if ind["swing_high"] != UNAVAILABLE and ind["swing_low"] != UNAVAILABLE:
         diff = ind["swing_high"] - ind["swing_low"]
         ind["fibonacci"] = {
             "0.0": ind["swing_low"],
@@ -167,7 +189,7 @@ def calculate_technical_indicators(df: pd.DataFrame) -> dict:
             "1.0": ind["swing_high"]
         }
     else:
-        ind["fibonacci"] = None
+        ind["fibonacci"] = UNAVAILABLE
 
     # Statistics
     if len(c) > 0:
@@ -176,14 +198,20 @@ def calculate_technical_indicators(df: pd.DataFrame) -> dict:
             ind["statistics"]["20_day_high"] = float(h.tail(20).max())
             ind["statistics"]["20_day_low"] = float(l.tail(20).min())
         else:
-            ind["statistics"]["20_day_high"] = None
-            ind["statistics"]["20_day_low"] = None
+            ind["statistics"]["20_day_high"] = UNAVAILABLE
+            ind["statistics"]["20_day_low"] = UNAVAILABLE
             
         if len(c) >= 252: # Approx 52 weeks
             ind["statistics"]["52_week_high"] = float(h.tail(252).max())
             ind["statistics"]["52_week_low"] = float(l.tail(252).min())
         else:
-            ind["statistics"]["52_week_high"] = None
-            ind["statistics"]["52_week_low"] = None
+            ind["statistics"]["52_week_high"] = UNAVAILABLE
+            ind["statistics"]["52_week_low"] = UNAVAILABLE
+    else:
+        ind["statistics"]["average_volume"] = UNAVAILABLE
+        ind["statistics"]["20_day_high"] = UNAVAILABLE
+        ind["statistics"]["20_day_low"] = UNAVAILABLE
+        ind["statistics"]["52_week_high"] = UNAVAILABLE
+        ind["statistics"]["52_week_low"] = UNAVAILABLE
 
     return ind

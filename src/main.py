@@ -8,6 +8,7 @@ load_dotenv()
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.graph import build_graph
+from src.storage import persist_pipeline_results
 
 import subprocess
 import time
@@ -62,7 +63,9 @@ def main():
     
     # Run the graph
     print("Invoking graph execution...")
+    start_time = time.time()
     final_state = app.invoke(initial_state)
+    end_time = time.time()
     
     print("\n" + "="*50)
     print(f"FINAL PIPELINE OUTPUT FOR {ticker}")
@@ -71,6 +74,9 @@ def main():
     print("\n--- Final Report ---")
     print(final_state.get("final_report"))
     print("="*50 + "\n")
+    
+    # Persist all data
+    persist_pipeline_results(final_state, start_time, end_time)
 
 if __name__ == "__main__":
     main()

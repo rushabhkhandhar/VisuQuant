@@ -126,8 +126,19 @@ def validate_trade_parameters(tech_ind: dict, confluence: dict, risk: dict, deci
 
     is_valid = len(errors) == 0
 
+    passed_check_names = [k for k, v in checks.items() if v]
+    failed_check_names = [k for k, v in checks.items() if not v]
+
     return {
         "valid": is_valid,
+        "summary": {
+            "passed_checks": len(passed_check_names),
+            "failed_checks": len(failed_check_names),
+            "warnings": len(warnings),
+            "errors": len(errors),
+            "passed_check_names": passed_check_names,
+            "failed_check_names": failed_check_names
+        },
         "errors": errors,
         "warnings": warnings,
         "checks": checks
