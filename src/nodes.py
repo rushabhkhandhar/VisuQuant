@@ -466,17 +466,22 @@ def node_decision_engine(state: TradingState) -> dict:
     
     SCORING RULES (CRITICAL):
     You must assign a numerical score to each category based on its bullish or bearish nature. 
-    Contradictions (where vision and math disagree) should result in a score of 0 for that category, effectively neutralizing it.
     
-    1. Trend (Max ±15): +15 if strongly Bullish, -15 if strongly Bearish. 0 if contradictory. ADX RULE: High ADX (>25) should increase confidence and maximize the trend score. Low ADX (<20) should reduce the trend score.
-    2. Momentum (Max ±10): +10 if strongly Bullish, -10 if strongly Bearish. 0 if contradictory. ADX RULE: High ADX (>40) indicates a very strong trend, which should reduce the penalty applied by contrary/bearish momentum (e.g. temporary pullbacks).
+    1. Trend (Max ±15): +15 if strongly Bullish, -15 if strongly Bearish. ADX RULE: High ADX (>25) should increase confidence and maximize the trend score. Low ADX (<20) should reduce the trend score.
+    2. Momentum (Max ±10): +10 if strongly Bullish, -10 if strongly Bearish. ADX RULE: High ADX (>40) indicates a very strong trend, which should reduce the penalty applied by contrary/bearish momentum (e.g. temporary pullbacks).
     3. Volume (Max ±7.5): +7.5 if supportive of a Bullish trend, -7.5 if supportive of a Bearish trend. 0 if neutral.
     4. Candlestick Patterns (Max ±5): +5 if Bullish patterns exist, -5 if Bearish. 0 if none/mixed.
     5. Chart Patterns (Max ±5): +5 if Bullish (e.g. Ascending triangle), -5 if Bearish. 0 if none.
     6. Support/Resistance (Max ±5): +5 if price is near strong support, -5 if near strong resistance. 0 if neutral.
     7. Risk Management (Max ±2.5): +2.5 if Risk/Reward is highly favorable (meets min threshold), -2.5 if poor.
 
-    Do not calculate the total score yourself. Only output the individual scores.
+    CONTRADICTION RULES (CRITICAL):
+    Instead of zeroing out scores, classify any contradictions between the different metrics. 
+    - Minor Contradiction (e.g. Trend Bullish, RSI Weak): Apply a small penalty (e.g. 2 to 5 points).
+    - Moderate Contradiction (e.g. Trend Bullish, MACD Bearish): Apply a medium penalty (e.g. 5 to 10 points).
+    - Major Contradiction (e.g. Trend Bullish, Price below EMA200, Volume decreasing, Bearish pattern): Apply a large penalty (e.g. 10 to 20 points).
+    
+    Do not calculate the total score yourself. Only output the individual scores and the contradiction penalties (as positive integers, they will be subtracted automatically).
     
     HOLD RULE (CRITICAL):
     If the Risk/Reward threshold (meets_min_rr_threshold) is false, you MUST set Risk Management score to -2.5.
@@ -493,6 +498,13 @@ def node_decision_engine(state: TradingState) -> dict:
                 "support_resistance": 0,
                 "risk": 0
             }},
+            "contradictions": [
+                {{
+                    "severity": "Minor | Moderate | Major",
+                    "penalty": 0,
+                    "reason": "..."
+                }}
+            ],
             "reasoning": [
                 {{
                     "category": "Trend | Momentum | Support Resistance | Volume | Patterns | Risk",
@@ -558,6 +570,16 @@ def node_decision_engine(state: TradingState) -> dict:
                 
                 # Base score is 50. Add all bullish/bearish contributions.
                 total_score = 50 + trend_score + momentum_score + volume_score + candle_score + chart_score + sr_score + risk_score
+                
+                # Apply contradiction penalties
+                contradictions = decision.get("contradictions", [])
+                total_penalty = 0
+                if isinstance(contradictions, list):
+                    for c in contradictions:
+                        # Ensure penalty is positive before subtracting
+                        total_penalty += abs(float(c.get("penalty", 0)))
+                        
+                total_score -= total_penalty
                 
                 # Clamp score between 0 and 100
                 total_score = max(0, min(100, total_score))
