@@ -166,54 +166,64 @@
             </td>
         </tr>
         <tr>
-            <td><strong>Total Score (0-100)</strong></td>
+            <td><strong>Overall Score (0-100)</strong></td>
             <td class="value-cell">{{ dec_obj.get('total_score', 'N/A') }}</td>
         </tr>
         <tr>
-            <td><strong>Score Breakdown</strong></td>
+            <td><strong>Confidence & Strength</strong></td>
             <td>
-                {% set sc = dec_obj.get('scores', {}) %}
-                <span class="value-cell">Trend: {{ sc.get('trend', '0') }}/30</span> | 
-                <span class="value-cell">Momentum: {{ sc.get('momentum', '0') }}/20</span> | 
-                <span class="value-cell">Volume: {{ sc.get('volume', '0') }}/15</span><br>
-                <span class="value-cell">Candlestick: {{ sc.get('candlestick', '0') }}/10</span> | 
-                <span class="value-cell">Chart Patterns: {{ sc.get('chart', '0') }}/10</span> | 
-                <span class="value-cell">S/R: {{ sc.get('support_resistance', '0') }}/10</span> | 
-                <span class="value-cell">Risk: {{ sc.get('risk', '0') }}/5</span>
+                Confidence: <span class="value-cell">{{ dec_obj.get('confidence', 'N/A') }}</span> |
+                Strength: <strong>{{ dec_obj.get('strength', 'N/A') }}</strong>
             </td>
         </tr>
         <tr>
-            <td><strong>Contradictions</strong></td>
+            <td><strong>Primary Reason</strong></td>
+            <td>{{ dec_obj.get('primary_reason', 'N/A') }}</td>
+        </tr>
+        <tr>
+            <td><strong>Score Breakdown (Weighted)</strong></td>
             <td>
-                {% set contradictions = dec_obj.get('contradictions', []) %}
-                {% if contradictions %}
-                    <ul style="margin: 0; padding-left: 15px;">
-                    {% for c in contradictions %}
-                        <li style="margin-bottom: 5px;">
-                            <strong class="{% if c.get('severity') == 'Major' %}severity-major{% elif c.get('severity') == 'Moderate' %}severity-moderate{% else %}severity-minor{% endif %}">{{ c.get('severity', 'Minor') }}</strong> 
-                            <span style="font-size: 12px; color: #64748b;">(Penalty: -{{ c.get('penalty', 0) }})</span><br>
-                            {{ c.get('reason', '') }}
-                        </li>
-                    {% endfor %}
-                    </ul>
-                {% else %}
-                    None detected.
-                {% endif %}
+                {% set c_scores = dec_obj.get('component_scores', {}) %}
+                <span class="value-cell">Trend (15%): {{ c_scores.get('trend_strength', {}).get('score', 0) }}</span> | 
+                <span class="value-cell">Momentum (15%): {{ c_scores.get('momentum', {}).get('score', 0) }}</span> | 
+                <span class="value-cell">Structure (15%): {{ c_scores.get('market_structure', {}).get('score', 0) }}</span><br>
+                <span class="value-cell">Volume (10%): {{ c_scores.get('volume_confirmation', {}).get('score', 0) }}</span> | 
+                <span class="value-cell">S/R (10%): {{ c_scores.get('support_resistance', {}).get('score', 0) }}</span> | 
+                <span class="value-cell">Risk/Reward (10%): {{ c_scores.get('risk_reward', {}).get('score', 0) }}</span> |
+                <span class="value-cell">Multi-TF (10%): {{ c_scores.get('multi_timeframe_alignment', {}).get('score', 0) }}</span><br>
+                <span class="value-cell">Candles (5%): {{ c_scores.get('candlestick_patterns', {}).get('score', 0) }}</span> | 
+                <span class="value-cell">Chart Patterns (5%): {{ c_scores.get('chart_patterns', {}).get('score', 0) }}</span> | 
+                <span class="value-cell">Volatility (5%): {{ c_scores.get('volatility', {}).get('score', 0) }}</span>
             </td>
         </tr>
         <tr>
-            <td><strong>Reasoning</strong></td>
+            <td><strong>Top 3 Bullish Factors</strong></td>
             <td>
-                {% set reasons = dec_obj.get('reasoning', []) %}
-                {% if reasons %}
-                    <ul style="margin: 0; padding-left: 15px;">
-                    {% for r in reasons %}
-                        <li><strong>{{ r.get('category', '') }}:</strong> {{ r.get('reason', '') }}</li>
-                    {% endfor %}
-                    </ul>
-                {% else %}
-                    N/A
-                {% endif %}
+                <ul style="margin: 0; padding-left: 15px;">
+                {% for factor in dec_obj.get('top_3_bullish_factors', []) %}
+                    <li>{{ factor }}</li>
+                {% endfor %}
+                </ul>
+            </td>
+        </tr>
+        <tr>
+            <td><strong>Top 3 Bearish Factors</strong></td>
+            <td>
+                <ul style="margin: 0; padding-left: 15px;">
+                {% for factor in dec_obj.get('top_3_bearish_factors', []) %}
+                    <li>{{ factor }}</li>
+                {% endfor %}
+                </ul>
+            </td>
+        </tr>
+        <tr>
+            <td><strong>Key Risks</strong></td>
+            <td>
+                <ul style="margin: 0; padding-left: 15px; color: #991b1b;">
+                {% for r in dec_obj.get('key_risks', []) %}
+                    <li>{{ r }}</li>
+                {% endfor %}
+                </ul>
             </td>
         </tr>
     </table>

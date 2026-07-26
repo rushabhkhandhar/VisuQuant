@@ -446,11 +446,9 @@ def node_decision_engine(state: TradingState) -> dict:
     
     print(f"[{ticker}] Running decision engine...")
     
-    min_risk_reward = 1.5
-    
     prompt = f"""
-    You are the final institutional trading decision engine for {ticker}.
-    Your responsibility is to review the following analyses and assign a mathematical score for each category.
+    You are an expert institutional technical analyst for {ticker}.
+    Your responsibility is to review the following analyses and provide a highly structured, objective evaluation.
     
     Available Visual Features:
     {json.dumps(vision_features)}
@@ -464,53 +462,45 @@ def node_decision_engine(state: TradingState) -> dict:
     Risk Management Profile:
     {json.dumps(risk_analysis)}
     
-    SCORING RULES (CRITICAL):
-    You must assign a numerical score to each category based on its bullish or bearish nature. 
+    INSTRUCTIONS (CRITICAL):
+    1. You must evaluate 10 distinct technical components.
+    2. For each component, assign a mathematical score between -1.0 (Maximally Bearish) and 1.0 (Maximally Bullish). 0.0 means neutral or unavailable.
+    3. Provide a brief 1-sentence reason for each score.
+    4. Provide the top 3 bullish factors and top 3 bearish factors overall.
+    5. Summarize the primary reason for your recommendation.
+    6. Identify key risks that could invalidate the trade.
     
-    1. Trend (Max ±15): +15 if strongly Bullish, -15 if strongly Bearish. ADX RULE: High ADX (>25) should increase confidence and maximize the trend score. Low ADX (<20) should reduce the trend score.
-    2. Momentum (Max ±10): +10 if strongly Bullish, -10 if strongly Bearish. ADX RULE: High ADX (>40) indicates a very strong trend, which should reduce the penalty applied by contrary/bearish momentum (e.g. temporary pullbacks).
-    3. Volume (Max ±7.5): +7.5 if supportive of a Bullish trend, -7.5 if supportive of a Bearish trend. 0 if neutral.
-    4. Candlestick Patterns (Max ±5): +5 if Bullish patterns exist, -5 if Bearish. 0 if none/mixed.
-    5. Chart Patterns (Max ±5): +5 if Bullish (e.g. Ascending triangle), -5 if Bearish. 0 if none.
-    6. Support/Resistance (Max ±5): +5 if price is near strong support, -5 if near strong resistance. 0 if neutral.
-    7. Risk Management (Max ±2.5): +2.5 if Risk/Reward is highly favorable (meets min threshold), -2.5 if poor.
-
-    CONTRADICTION RULES (CRITICAL):
-    Instead of zeroing out scores, classify any contradictions between the different metrics. 
-    - Minor Contradiction (e.g. Trend Bullish, RSI Weak): Apply a small penalty (e.g. 2 to 5 points).
-    - Moderate Contradiction (e.g. Trend Bullish, MACD Bearish): Apply a medium penalty (e.g. 5 to 10 points).
-    - Major Contradiction (e.g. Trend Bullish, Price below EMA200, Volume decreasing, Bearish pattern): Apply a large penalty (e.g. 10 to 20 points).
+    COMPONENTS TO EVALUATE:
+    1. trend_strength
+    2. momentum
+    3. market_structure
+    4. volume_confirmation
+    5. support_resistance
+    6. risk_reward
+    7. multi_timeframe_alignment (Set score to 0.0 if not enough data)
+    8. candlestick_patterns
+    9. chart_patterns
+    10. volatility
     
-    Do not calculate the total score yourself. Only output the individual scores and the contradiction penalties (as positive integers, they will be subtracted automatically).
-    
-    HOLD RULE (CRITICAL):
-    If the Risk/Reward threshold (meets_min_rr_threshold) is false, you MUST set Risk Management score to -2.5.
-    
-    RETURN EXACTLY THIS JSON SCHEMA:
+    RETURN EXACTLY THIS JSON SCHEMA (NO OTHER TEXT):
     {{
         "decision": {{
-            "scores": {{
-                "trend": 0,
-                "momentum": 0,
-                "volume": 0,
-                "candlestick": 0,
-                "chart": 0,
-                "support_resistance": 0,
-                "risk": 0
+            "component_scores": {{
+                "trend_strength": {{"score": 0.0, "reason": "..."}},
+                "momentum": {{"score": 0.0, "reason": "..."}},
+                "market_structure": {{"score": 0.0, "reason": "..."}},
+                "volume_confirmation": {{"score": 0.0, "reason": "..."}},
+                "support_resistance": {{"score": 0.0, "reason": "..."}},
+                "risk_reward": {{"score": 0.0, "reason": "..."}},
+                "multi_timeframe_alignment": {{"score": 0.0, "reason": "..."}},
+                "candlestick_patterns": {{"score": 0.0, "reason": "..."}},
+                "chart_patterns": {{"score": 0.0, "reason": "..."}},
+                "volatility": {{"score": 0.0, "reason": "..."}}
             }},
-            "contradictions": [
-                {{
-                    "severity": "Minor | Moderate | Major",
-                    "penalty": 0,
-                    "reason": "..."
-                }}
-            ],
-            "reasoning": [
-                {{
-                    "category": "Trend | Momentum | Support Resistance | Volume | Patterns | Risk",
-                    "reason": "..."
-                }}
-            ],
+            "top_3_bullish_factors": ["...", "...", "..."],
+            "top_3_bearish_factors": ["...", "...", "..."],
+            "primary_reason": "...",
+            "key_risks": ["...", "..."],
             "execution": {{
                 "entry": 0,
                 "stop_loss": 0,
@@ -559,46 +549,79 @@ def node_decision_engine(state: TradingState) -> dict:
                 decision = parsed_json["decision"]
                 
                 # Retrieve individual scores
-                scores = decision.get("scores", {})
-                trend_score = float(scores.get("trend", 0))
-                momentum_score = float(scores.get("momentum", 0))
-                volume_score = float(scores.get("volume", 0))
-                candle_score = float(scores.get("candlestick", 0))
-                chart_score = float(scores.get("chart", 0))
-                sr_score = float(scores.get("support_resistance", 0))
-                risk_score = float(scores.get("risk", 0))
+                c_scores = decision.get("component_scores", {})
                 
-                # Base score is 50. Add all bullish/bearish contributions.
-                total_score = 50 + trend_score + momentum_score + volume_score + candle_score + chart_score + sr_score + risk_score
+                # Define institutional weights
+                weights = {
+                    "trend_strength": 0.15,
+                    "momentum": 0.15,
+                    "market_structure": 0.15,
+                    "volume_confirmation": 0.10,
+                    "support_resistance": 0.10,
+                    "risk_reward": 0.10,
+                    "multi_timeframe_alignment": 0.10,
+                    "candlestick_patterns": 0.05,
+                    "chart_patterns": 0.05,
+                    "volatility": 0.05
+                }
                 
-                # Apply contradiction penalties
-                contradictions = decision.get("contradictions", [])
-                total_penalty = 0
-                if isinstance(contradictions, list):
-                    for c in contradictions:
-                        # Ensure penalty is positive before subtracting
-                        total_penalty += abs(float(c.get("penalty", 0)))
-                        
-                total_score -= total_penalty
+                net_evidence = 0.0
+                total_absolute_evidence = 0.0
                 
-                # Clamp score between 0 and 100
-                total_score = max(0, min(100, total_score))
+                for comp, weight in weights.items():
+                    val = c_scores.get(comp, {}).get("score", 0.0)
+                    try:
+                        val_float = float(val)
+                    except (ValueError, TypeError):
+                        val_float = 0.0
+                    
+                    # Clamp to [-1.0, 1.0] just in case
+                    val_float = max(-1.0, min(1.0, val_float))
+                    
+                    weighted_val = val_float * weight
+                    net_evidence += weighted_val
+                    total_absolute_evidence += abs(weighted_val)
+                    
+                # net_evidence ranges from -1.0 to 1.0. Scale to 0-100.
+                overall_score = (net_evidence + 1.0) / 2.0 * 100.0
                 
-                # Deterministic Recommendation Mapping
-                if total_score >= 85:
+                # Confidence Calculation
+                # If there is zero absolute evidence, confidence is 0
+                if total_absolute_evidence > 0:
+                    confidence = abs(net_evidence) / total_absolute_evidence
+                else:
+                    confidence = 0.0
+                    
+                # Floor confidence if evidence is extremely weak
+                if total_absolute_evidence < 0.2:
+                    confidence *= (total_absolute_evidence / 0.2)
+                    
+                # Map Overall Score to Recommendation
+                if overall_score >= 85:
                     rec = "STRONG BUY"
-                elif total_score >= 70:
+                elif overall_score >= 65:
                     rec = "BUY"
-                elif total_score >= 45:
+                elif overall_score >= 40:
                     rec = "HOLD"
-                elif total_score >= 25:
+                elif overall_score >= 20:
                     rec = "SELL"
                 else:
                     rec = "AVOID"
                     
-                decision["total_score"] = total_score
+                # Determine Strength Based on Absolute Evidence
+                if total_absolute_evidence >= 0.8:
+                    strength = "Very Strong"
+                elif total_absolute_evidence >= 0.5:
+                    strength = "Strong"
+                elif total_absolute_evidence >= 0.3:
+                    strength = "Moderate"
+                else:
+                    strength = "Weak"
+                    
+                decision["total_score"] = round(overall_score, 1)
                 decision["recommendation"] = rec
-                decision["confidence"] = total_score / 100.0  # Normalize to 0-1 for compatibility
+                decision["confidence"] = round(confidence, 2)
+                decision["strength"] = strength
                 
                 # Execution parameter cleanup for HOLD/AVOID
                 if rec in ["HOLD", "AVOID"]:

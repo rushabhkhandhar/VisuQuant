@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        
+        @page {
+            size: A4;
+            margin: 15mm;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            color: #334155;
+            background-color: #f8fafc;
+            line-height: 1.5;
+            font-size: 14px;
+        }
+        
+        h1 {
+            color: #0f172a;
+            font-size: 24px;
+            font-weight: 700;
+            border-bottom: 2px solid #e2e8f0;
+            padding-bottom: 8px;
+            margin-top: 0;
+            margin-bottom: 16px;
+        }
+        
+        h2 {
+            color: #1e293b;
+            font-size: 18px;
+            font-weight: 600;
+            margin-top: 24px;
+            margin-bottom: 12px;
+            background-color: #f1f5f9;
+            padding: 8px 12px;
+            border-radius: 6px;
+            border-left: 4px solid #3b82f6;
+        }
+        
+        .card {
+            background-color: #ffffff;
+            padding: 16px;
+            margin-bottom: 16px;
+            border: 1px solid #e2e8f0;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 8px;
+        }
+        
+        th, td {
+            text-align: left;
+            padding: 10px 12px;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        
+        th {
+            background-color: #f8fafc;
+            color: #475569;
+            font-weight: bold;
+            font-size: 13px;
+            text-transform: uppercase;
+        }
+        
+        td {
+            font-size: 14px;
+            vertical-align: top;
+        }
+        
+        .badge {
+            display: inline-block;
+            padding: 4px 10px;
+            font-size: 12px;
+            font-weight: bold;
+            text-transform: uppercase;
+            border: 1px solid #333;
+        }
+        
+        .badge-buy, .badge-strong-buy, .badge-passed, .badge-true {
+            background-color: #dcfce7;
+            color: #166534;
+            border-color: #166534;
+        }
+        
+        .badge-sell, .badge-strong-sell, .badge-failed, .badge-false {
+            background-color: #fee2e2;
+            color: #991b1b;
+            border-color: #991b1b;
+        }
+        
+        .badge-hold, .badge-unavailable, .badge-skipped {
+            background-color: #fef9c3;
+            color: #854d0e;
+            border-color: #854d0e;
+        }
+        
+        .header-box {
+            background-color: #1e293b;
+            color: white;
+            padding: 24px;
+            margin-bottom: 24px;
+        }
+        
+        .header-box h1 {
+            color: white;
+            border-bottom: none;
+            padding-bottom: 0;
+            margin-bottom: 8px;
+        }
+        
+        .header-box p {
+            color: #cbd5e1;
+            margin: 0;
+            font-size: 14px;
+        }
+        
+        .footer {
+            margin-top: 40px;
+            font-size: 11px;
+            color: #64748b;
+            text-align: center;
+            border-top: 1px solid #e2e8f0;
+            padding-top: 16px;
+        }
+        
+        .value-cell {
+            font-family: monospace;
+            font-size: 13px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="header-box">
+    <h1>TEST Technical Analysis Dashboard</h1>
+    <p>Automated Institutional Report generated on 2026-07-26</p>
+</div>
+
+<!-- Decision Summary -->
+<div class="card">
+    <h2>1. Final Decision Summary</h2>
+    <table>
+        <tr>
+            <th width="25%">Metric</th>
+            <th>Value</th>
+        </tr>
+        
+        <tr>
+            <td><strong>Recommendation</strong></td>
+            <td>
+                <span class="badge 
+                    badge-hold">
+                    HOLD
+                </span>
+            </td>
+        </tr>
+        <tr>
+            <td><strong>Confidence</strong></td>
+            <td class="value-cell">0</td>
+        </tr>
+        <tr>
+            <td><strong>Strength</strong></td>
+            <td>Low</td>
+        </tr>
+        <tr>
+            <td><strong>Why Chosen</strong></td>
+            <td>Risk Reward below acceptable threshold.</td>
+        </tr>
+    </table>
+</div>
+
+<!-- Risk Analysis -->
+<div class="card">
+    <h2>2. Risk & Execution Profile</h2>
+    <table>
+        <tr>
+            <th width="25%">Parameter</th>
+            <th>Value</th>
+        </tr>
+        
+        <tr>
+            <td><strong>Entry Price</strong></td>
+            <td class="value-cell">2254.3</td>
+        </tr>
+        <tr>
+            <td><strong>Stop Loss</strong></td>
+            <td class="value-cell">2166.49</td>
+        </tr>
+        <tr>
+            <td><strong>Target 1</strong></td>
+            <td class="value-cell">2342.11</td>
+        </tr>
+        <tr>
+            <td><strong>Target 2</strong></td>
+            <td class="value-cell">2429.92</td>
+        </tr>
+        <tr>
+            <td><strong>Risk / Reward</strong></td>
+            <td class="value-cell">3.33</td>
+        </tr>
+        <tr>
+            <td><strong>Position Size</strong></td>
+            <td>Small</td>
+        </tr>
+        <tr>
+            <td><strong>Risk Level</strong></td>
+            <td>Moderate</td>
+        </tr>
+    </table>
+    
+    
+</div>
+
+<!-- Confluence Analysis -->
+<div class="card">
+    <h2>3. Confluence Engine (Vision vs Math)</h2>
+    
+    <p style="margin-bottom: 12px;">Overall Confidence Score: <strong class="value-cell">0.56</strong></p>
+    <table>
+        <tr>
+            <th width="20%">Category</th>
+            <th width="15%">Status</th>
+            <th>Reason</th>
+        </tr>
+        
+            
+            
+            <tr>
+                <td><strong>Trend</strong></td>
+                <td>Confirmed</td>
+                <td style="font-size: 13px;">Vision indicates an uptrend with a confidence of 100, while the quantitative data shows a bearish downtrend (EMA20 < EMA50 < EMA100 < EMA200). This is a contradiction.</td>
+            </tr>
+            
+        
+            
+            
+            <tr>
+                <td><strong>Momentum</strong></td>
+                <td>Confirmed</td>
+                <td style="font-size: 13px;">Vision indicates bullish momentum with higher highs and no lower lows, while the quantitative data shows strong bullish momentum (RSI > 60) and MACD conditions indicating a strong bullish trend.</td>
+            </tr>
+            
+        
+            
+            
+            <tr>
+                <td><strong>Volume</strong></td>
+                <td>Confirmed</td>
+                <td style="font-size: 13px;">Vision indicates an increasing volume with no spikes, which aligns with the quantitative data showing an increasing volume trend.</td>
+            </tr>
+            
+        
+            
+            
+            <tr>
+                <td><strong>Support Resistance</strong></td>
+                <td>Confirmed</td>
+                <td style="font-size: 13px;">Vision shows a weak support zone around approximate price and a strong resistance at 2300, while pivot points show R1 at 2264.07 which is above the visual resistance.</td>
+            </tr>
+            
+        
+            
+            
+            <tr>
+                <td><strong>Patterns</strong></td>
+                <td>Confirmed</td>
+                <td style="font-size: 13px;">Vision shows candlestick patterns like Bullish Engulfing and Bearish Hammer, while quantitative data does not provide specific pattern interpretations but indicates a strong bullish trend which can be associated with such patterns.</td>
+            </tr>
+            
+        
+    </table>
+</div>
+
+<!-- Quantitative Analysis -->
+<div class="card" style="page-break-before: always;">
+    <h2>4. Quantitative Indicators (Deterministics)</h2>
+    
+    <h3 style="font-size: 14px; margin-bottom: 8px;">Indicator Interpretations</h3>
+    <table style="margin-bottom: 15px;">
+        <tr>
+            <th width="25%">Indicator</th>
+            <th>Interpretation</th>
+        </tr>
+        
+        
+            
+            <tr>
+                <td><strong>Ema Trend</strong></td>
+                <td>Bearish Downtrend (EMA20 < EMA50 < EMA100 < EMA200)</td>
+            </tr>
+            
+            <tr>
+                <td><strong>Rsi Condition</strong></td>
+                <td>Bullish Momentum (60.9426)</td>
+            </tr>
+            
+            <tr>
+                <td><strong>Macd Condition</strong></td>
+                <td>Strong Bullish (Line > Signal, both > 0)</td>
+            </tr>
+            
+        
+    </table>
+    
+    <h3 style="font-size: 14px; margin-bottom: 8px;">Key Technical Values</h3>
+    <table>
+        <tr>
+            <th width="25%">Metric</th>
+            <th>Value</th>
+        </tr>
+        <tr><td><strong>RSI (14)</strong></td><td class="value-cell">60.9426</td></tr>
+        <tr><td><strong>ADX</strong></td><td class="value-cell">19.7937</td></tr>
+        <tr><td><strong>ATR</strong></td><td class="value-cell">58.5385</td></tr>
+        <tr><td><strong>VWAP</strong></td><td class="value-cell">2669.0364</td></tr>
+        
+        
+        <tr>
+            <td><strong>MACD</strong></td>
+            <td class="value-cell">Line: 30.4021 | Signal: 16.1893 | Hist: 14.2128</td>
+        </tr>
+        
+        
+        <tr>
+            <td><strong>Bollinger Bands</strong></td>
+            <td class="value-cell">Upper: 2322.2086 | Middle: 2157.09 | Lower: 1991.9714</td>
+        </tr>
+        
+        
+        <tr>
+            <td><strong>Pivot Points</strong></td>
+            <td class="value-cell">R2: 2285.23 | R1: 2264.07 | P: 2228.83 | S1: 2207.67 | S2: 2172.43</td>
+        </tr>
+    </table>
+</div>
+
+<!-- Vision Analysis -->
+<div class="card">
+    <h2>5. Visual Chart Analysis (AI Vision)</h2>
+    <table>
+        <tr>
+            <th width="25%">Feature</th>
+            <th>Observation</th>
+        </tr>
+        <tr>
+            <td><strong>Trend Direction</strong></td>
+            <td>Uptrend <span style="color: #64748b; font-size: 12px;">(Conf: 100)</span></td>
+        </tr>
+        <tr>
+            <td><strong>Market Structure</strong></td>
+            <td>
+                
+                <span class="value-cell">HH: True</span> | 
+                <span class="value-cell">HL: False</span> | 
+                <span class="value-cell">LH: False</span> | 
+                <span class="value-cell">LL: False</span>
+            </td>
+        </tr>
+        <tr>
+            <td><strong>Support Zones</strong></td>
+            <td>
+                
+                
+                    
+                    None (Weak)<br>
+                    
+                
+            </td>
+        </tr>
+        <tr>
+            <td><strong>Resistance Zones</strong></td>
+            <td>
+                
+                
+                    
+                    2300 (Strong)<br>
+                    
+                
+            </td>
+        </tr>
+        <tr>
+            <td><strong>Candlestick Patterns</strong></td>
+            <td>
+                
+                
+                    
+                    Bullish Engulfing<br>
+                    
+                    Bearish Hammer<br>
+                    
+                
+            </td>
+        </tr>
+        <tr>
+            <td><strong>Trendlines & Channels</strong></td>
+            <td>
+                
+                
+                    
+                    Ascending Trendline<br>
+                    
+                
+                
+                
+                
+                    
+                    Rising Channel<br>
+                    
+                
+                
+                
+            </td>
+        </tr>
+    </table>
+</div>
+
+<!-- Trade Validation -->
+<div class="card">
+    <h2>6. System Validation Checks</h2>
+    <table>
+        <tr>
+            <th width="25%">Check</th>
+            <th>Result</th>
+        </tr>
+        <tr>
+            <td><strong>Overall Validity</strong></td>
+            <td>
+                <span class="badge badge-true">
+                    True
+                </span>
+            </td>
+        </tr>
+        
+        <tr>
+            <td><strong>Passed Checks</strong></td>
+            <td class="value-cell">8</td>
+        </tr>
+        <tr>
+            <td><strong>Failed Checks</strong></td>
+            <td class="value-cell">0</td>
+        </tr>
+        <tr>
+            <td><strong>Warnings</strong></td>
+            <td class="value-cell">0</td>
+        </tr>
+    </table>
+</div>
+
+<div class="footer">
+    This premium report is generated programmatically using VisuQuant AI.<br>
+    Intended for research and educational purposes only.
+</div>
+
+</body>
+</html>
