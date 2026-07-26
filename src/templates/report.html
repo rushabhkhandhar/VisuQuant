@@ -381,7 +381,12 @@
                 {% set pat = vision.get('patterns', {}).get('candlestick', []) %}
                 {% if pat %}
                     {% for p in pat %}
-                    {{ p.get('type', 'N/A') }}<br>
+                        {% if p is string %}
+                            {{ p }}<br>
+                        {% else %}
+                            <strong>{{ p.get('pattern_name', 'Unknown') }}</strong> 
+                            ({{ p.get('sentiment', 'Unknown') }}, Conf: {{ p.get('confidence', 0) }})<br>
+                        {% endif %}
                     {% endfor %}
                 {% else %}
                     None

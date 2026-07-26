@@ -84,7 +84,12 @@ def node_vision_analysis(state: TradingState) -> dict:
     1. Trend (Direction and Visual confidence 0-100)
     3. Support Zones (Approximate price, Strength)
     4. Resistance Zones (Approximate price, Strength)
-    5. Chart Patterns & Candlestick Patterns
+    5. Chart Patterns & Candlestick Patterns. For candlesticks, use STRICT terminology:
+       - Hammer = Bullish
+       - Hanging Man = Bearish
+       - Inverted Hammer = Bullish
+       - Shooting Star = Bearish
+       Do NOT invent ambiguous names (e.g. "Bearish Hammer").
     6. Trendlines (Type, touches, broken)
     7. Channels
     8. Visible Indicators (EMA, VWAP, Bollinger, RSI, MACD, Volume)
@@ -121,7 +126,13 @@ def node_vision_analysis(state: TradingState) -> dict:
       ],
       "patterns": {{
         "chart": [],
-        "candlestick": []
+        "candlestick": [
+          {{
+            "pattern_name": "Hammer | Hanging Man | Inverted Hammer | Shooting Star | Doji | Engulfing",
+            "sentiment": "Bullish | Bearish | Neutral",
+            "confidence": 0.0
+          }}
+        ]
       }},
       "trendlines": [
         {{
