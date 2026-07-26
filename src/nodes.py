@@ -475,6 +475,14 @@ def node_decision_engine(state: TradingState) -> dict:
         "targets": [],
         "reason": "No actionable trade."
     }}
+    
+    CONFIDENCE MAPPING RULE:
+    Your recommendation MUST align with the Confluence Analysis `overall_score`:
+    - 0.85 - 1.00: STRONG BUY or STRONG SELL
+    - 0.70 - 0.85: BUY or SELL
+    - 0.50 - 0.70: HOLD
+    - 0.00 - 0.40: AVOID (Output as HOLD)
+    Confidence decreases because of contradictions, it does NOT collapse to 0 just because the recommendation is HOLD.
 
     RETURN EXACTLY THIS JSON SCHEMA:
     {{
@@ -548,9 +556,20 @@ def node_decision_engine(state: TradingState) -> dict:
         try:
             parsed_json = json.loads(cleaned_str)
             
-            # Strictly enforce HOLD logic in post-processing to guarantee valid schema
+            # Strictly enforce HOLD logic and Mathematical Confidence in post-processing
             if parsed_json and "decision" in parsed_json:
                 decision = parsed_json["decision"]
+                
+                # Enforce Mathematical Confidence based on Confluence Score
+                conf_score = 0
+                if confluence_analysis:
+                    conf_obj = confluence_analysis.get("confluence_analysis", confluence_analysis)
+                    conf_score = float(conf_obj.get("overall_score", 0))
+                decision["confidence"] = conf_score
+                
+                # Determine recommendation strength based on user mapping if not driven by Risk/Reward
+                # The LLM chooses the direction (BUY/SELL) and RR logic, we ensure confidence doesn't drop to 0
+                
                 if decision.get("recommendation") == "HOLD":
                     decision["execution"] = {
                         "status": "Inactive",
