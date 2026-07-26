@@ -708,6 +708,15 @@ def node_report_generator(state: TradingState) -> dict:
     Decision: {json.dumps(decision)}
     Validation: {json.dumps(validation)}
     
+    NARRATIVE RULE (CRITICAL):
+    Do NOT simply list facts or output raw JSON values. Generate professional, analyst-style explanations that synthesize the data.
+    
+    For example:
+    BAD: "Trend = Bullish. Momentum = Bearish."
+    GOOD: "The primary trend remains bullish as confirmed by EMA alignment and an ascending trendline. However, momentum indicators such as RSI and MACD suggest weakening buying pressure, indicating a higher probability of short-term consolidation rather than trend reversal."
+    
+    Generate similar professional commentary for: Trend, Momentum, Volume, Support, Resistance, Risk, and the Final Recommendation.
+    
     RETURN YOUR REPORT AS PURE MARKDOWN.
     Use these 9 sections:
     1. Executive Summary, 2. Vision Analysis, 3. Quantitative Analysis, 4. Confluence Analysis, 5. Risk Analysis, 6. Decision Summary, 7. Validation Summary, 8. Overall Conclusion, 9. Disclaimer.
