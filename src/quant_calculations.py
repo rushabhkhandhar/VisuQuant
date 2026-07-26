@@ -452,6 +452,31 @@ def calculate_technical_indicators(df: pd.DataFrame) -> dict:
             "Impact": "Neutral"
         }
 
+    # Volume interpretation
+    rel_vol = ind.get("relative_volume")
+    if isinstance(rel_vol, (int, float)) and not df.empty:
+        last_c = df['Close'].iloc[-1]
+        last_o = df['Open'].iloc[-1]
+        if rel_vol > 1.2:
+            if last_c > last_o:
+                interp = "Increasing (Volume expanding on up-move)"
+                impact = "Bullish"
+            else:
+                interp = "Increasing (Volume expanding on down-move)"
+                impact = "Bearish"
+        elif rel_vol < 0.8:
+            interp = "Decreasing (Low participation)"
+            impact = "Neutral"
+        else:
+            interp = "Neutral (Average participation)"
+            impact = "Neutral"
+            
+        interpretations["Volume"] = {
+            "Value": round(rel_vol, 2),
+            "Interpretation": interp,
+            "Impact": impact
+        }
+
     ind["interpretations"] = interpretations
     ind["market_structure"] = detect_market_structure(df)
     

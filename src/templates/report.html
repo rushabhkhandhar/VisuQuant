@@ -169,7 +169,7 @@
             </td>
         </tr>
         <tr>
-            <td><strong>Overall Score (0-100)</strong></td>
+            <td><strong>Decision Score (0-100)</strong><br><span style="font-size: 11px; color: #64748b;">Overall weighted recommendation.</span></td>
             <td class="value-cell">{{ dec_obj.get('overall_score', 'N/A') }}</td>
         </tr>
         <tr>
@@ -290,7 +290,8 @@
 <div class="card">
     <h2>3. Confluence Engine (Vision vs Math)</h2>
     {% set conf_obj = confluence.get('confluence_analysis', confluence) if confluence else {} %}
-    <p style="margin-bottom: 12px;">Overall Confidence Score: <strong class="value-cell">{{ conf_obj.get('overall_score', 'N/A') }}</strong></p>
+    <p style="margin-bottom: 4px;">Vision-Quant Agreement Score: <strong class="value-cell">{{ conf_obj.get('overall_score', 'N/A') }}</strong></p>
+    <p style="margin-bottom: 12px; font-size: 12px; color: #64748b;">Measures the alignment between visual pattern recognition and quantitative data.</p>
     <table>
         <tr>
             <th width="20%">Category</th>
@@ -483,6 +484,31 @@
             <td class="value-cell">{{ vs.get('warnings', 0) }}</td>
         </tr>
     </table>
+    
+    {% set detailed_warns = vs.get('detailed_warnings', []) %}
+    {% if detailed_warns %}
+    <h3 style="font-size: 14px; margin-top: 16px; margin-bottom: 8px;">Detailed Warnings</h3>
+    <table style="font-size: 12px;">
+        <tr style="background-color: #fef2f2;">
+            <th width="10%">Severity</th>
+            <th width="20%">Module</th>
+            <th width="45%">Reason</th>
+            <th width="25%">Resolution</th>
+        </tr>
+        {% for w in detailed_warns %}
+        <tr>
+            <td>
+                {% if w.get('severity') == 'High' %}<strong style="color: #dc2626;">High</strong>
+                {% elif w.get('severity') == 'Medium' %}<strong style="color: #d97706;">Medium</strong>
+                {% else %}<span>{{ w.get('severity', 'Low') }}</span>{% endif %}
+            </td>
+            <td>{{ w.get('module', 'N/A') }}</td>
+            <td>{{ w.get('reason', 'N/A') }}</td>
+            <td>{{ w.get('resolution', 'N/A') }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+    {% endif %}
 </div>
 
 <div class="footer">

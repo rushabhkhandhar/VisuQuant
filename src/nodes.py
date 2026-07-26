@@ -203,6 +203,39 @@ def node_vision_analysis(state: TradingState) -> dict:
         
         try:
             parsed_json = json.loads(cleaned_str)
+            
+            # Post-processing: Filter low confidence patterns and trends
+            if "patterns" in parsed_json:
+                for p_type in ["candlestick", "chart"]:
+                    if p_type in parsed_json["patterns"]:
+                        valid_patterns = []
+                        for p in parsed_json["patterns"][p_type]:
+                            conf = p.get("confidence", 0.0)
+                            try:
+                                conf = float(conf)
+                            except:
+                                conf = 0.0
+                            
+                            if conf < 0.30:
+                                continue
+                            elif conf <= 0.60:
+                                p["pattern_name"] = f"{p.get('pattern_name', 'Unknown')} (Weak)"
+                            else:
+                                p["pattern_name"] = f"{p.get('pattern_name', 'Unknown')} (Confirmed)"
+                            valid_patterns.append(p)
+                        parsed_json["patterns"][p_type] = valid_patterns
+            
+            if "trendlines" in parsed_json:
+                for tl in parsed_json["trendlines"]:
+                    conf = tl.get("confidence", 0.0)
+                    try:
+                        conf = float(conf)
+                    except:
+                        conf = 0.0
+                    
+                    if conf < 0.30:
+                        tl["type"] = "Inconclusive"
+                        
             break
         except json.JSONDecodeError:
             print(f"[{ticker}] Warning: Failed to parse JSON on attempt {attempt+1}. Retrying...")
@@ -661,6 +694,28 @@ def node_decision_engine(state: TradingState) -> dict:
                     "volatility": 0.05
                 }
                 
+                # Deterministic Risk/Reward Override
+                best_rr = risk_analysis.get("metrics", {}).get("best_risk_reward", 0.0)
+                try:
+                    rr_val = float(best_rr)
+                    if rr_val < 1:
+                        rr_score = -1.0
+                    elif rr_val < 1.5:
+                        rr_score = -0.5
+                    elif rr_val < 2:
+                        rr_score = 0.0
+                    elif rr_val < 3:
+                        rr_score = 0.5
+                    else:
+                        rr_score = 1.0
+                        
+                    if "risk_reward" not in c_scores:
+                        c_scores["risk_reward"] = {}
+                    c_scores["risk_reward"]["score"] = rr_score
+                    c_scores["risk_reward"]["reason"] = f"Deterministic RR Score based on {rr_val} R:R."
+                except (ValueError, TypeError):
+                    pass
+
                 net_evidence = 0.0
                 
                 score_breakdown = []
@@ -761,7 +816,10 @@ def node_trade_validator(state: TradingState) -> dict:
             
     if validation_results["warnings"]:
         for warn in validation_results["warnings"]:
-            print(f"[{ticker}] Validation Warning: {warn}")
+            if isinstance(warn, dict):
+                print(f"[{ticker}] Validation Warning: {warn.get('reason', warn)}")
+            else:
+                print(f"[{ticker}] Validation Warning: {warn}")
     
     print(f"[{ticker}] Trade validation complete.")
     

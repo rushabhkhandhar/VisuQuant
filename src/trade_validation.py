@@ -21,25 +21,87 @@ def validate_trade_parameters(tech_ind: dict, confluence: dict, risk: dict, deci
         ms_trend = tech_ind.get("market_structure", {}).get("trend", "Unknown")
         
         if trend_dir in ["Bullish", "Bearish"] and ms_trend in ["Bullish", "Bearish"] and trend_dir != ms_trend:
-            warnings.append(f"Consistency Warning: Market Structure ({ms_trend}) contradicts Unified Trend ({trend_dir}). Downgrading confidence.")
+            warnings.append({
+                "severity": "Medium",
+                "module": "Consistency Engine",
+                "reason": f"Market Structure ({ms_trend}) contradicts Unified Trend ({trend_dir}).",
+                "resolution": "Downgrading confidence by 0.2."
+            })
             if "confidence" in decision:
                 decision["confidence"] = max(0.0, decision["confidence"] - 0.2)
                 checks["consistency"] = False
                 
         rec = decision.get("recommendation", "")
         if rec in ["STRONG BUY", "BUY"] and trend_dir == "Bearish":
-            warnings.append(f"Consistency Warning: BUY recommendation conflicts with Bearish trend. Downgrading confidence.")
+            warnings.append({
+                "severity": "High",
+                "module": "Decision Engine",
+                "reason": "BUY recommendation conflicts with Bearish trend.",
+                "resolution": "Downgrading confidence by 0.2."
+            })
             if "confidence" in decision:
                 decision["confidence"] = max(0.0, decision["confidence"] - 0.2)
                 checks["consistency"] = False
         elif rec in ["STRONG SELL", "SELL"] and trend_dir == "Bullish":
-            warnings.append(f"Consistency Warning: SELL recommendation conflicts with Bullish trend. Downgrading confidence.")
+            warnings.append({
+                "severity": "High",
+                "module": "Decision Engine",
+                "reason": "SELL recommendation conflicts with Bullish trend.",
+                "resolution": "Downgrading confidence by 0.2."
+            })
             if "confidence" in decision:
                 decision["confidence"] = max(0.0, decision["confidence"] - 0.2)
                 checks["consistency"] = False
-    
+
+    # Check: Unknown Volume despite clear trend
+    vol = tech_ind.get("interpretations", {}).get("Volume", {}).get("Interpretation", "")
+    if "Unknown" in vol or vol == "":
+        warnings.append({
+            "severity": "Low",
+            "module": "Confluence Engine",
+            "reason": "Volume interpretation is missing or Unknown.",
+            "resolution": "Check volume data availability."
+        })
+
+    # Check: High confidence but unknown trend
+    conf = decision.get("confidence")
+    if conf is not None and conf > 0.7:
+        if unified_trend and unified_trend.get("direction") == "Unknown":
+            warnings.append({
+                "severity": "High",
+                "module": "Decision Engine",
+                "reason": "High confidence recommendation despite Unknown trend.",
+                "resolution": "Review trade justification."
+            })
+            checks["consistency"] = False
+            
+    # Check: Bullish EMA but Bearish summary or vice-versa
+    ema_trend = ""
+    for k, v in tech_ind.get("interpretations", {}).items():
+        if "EMA" in k:
+            ema_trend = v.get("Impact", "")
+            break
+            
+    if rec in ["STRONG BUY", "BUY"] and ema_trend == "Bearish":
+        warnings.append({
+            "severity": "Medium",
+            "module": "Consistency Engine",
+            "reason": "BUY recommendation conflicts with Bearish EMA alignment.",
+            "resolution": "Downgrading confidence by 0.1."
+        })
+        if "confidence" in decision:
+            decision["confidence"] = max(0.0, decision["confidence"] - 0.1)
+    elif rec in ["STRONG SELL", "SELL"] and ema_trend == "Bullish":
+        warnings.append({
+            "severity": "Medium",
+            "module": "Consistency Engine",
+            "reason": "SELL recommendation conflicts with Bullish EMA alignment.",
+            "resolution": "Downgrading confidence by 0.1."
+        })
+        if "confidence" in decision:
+            decision["confidence"] = max(0.0, decision["confidence"] - 0.1)
+
     # 1. Decision Validation
-    rec = decision.get("recommendation", "")
     valid_recs = ["STRONG BUY", "BUY", "HOLD", "SELL", "STRONG SELL", "AVOID"]
     if rec in valid_recs:
         checks["decision"] = True
@@ -47,7 +109,6 @@ def validate_trade_parameters(tech_ind: dict, confluence: dict, risk: dict, deci
         errors.append(f"Invalid recommendation: '{rec}'. Must be one of {valid_recs}.")
 
     # 2. Confidence Validation
-    conf = decision.get("confidence")
     if conf is not None and isinstance(conf, (int, float)) and 0 <= conf <= 100:
         checks["confidence"] = True
     else:
@@ -64,22 +125,22 @@ def validate_trade_parameters(tech_ind: dict, confluence: dict, risk: dict, deci
     # 6, 7, 8. Risk and Volatility Validation
     if risk:
         pos_size = risk.get("position_size")
-        if pos_size in ["Small", "Medium", "Large"]:
+        if pos_size in ["Small", "Medium", "Large", "Unknown"]:
             checks["position_size"] = True
         else:
-            errors.append(f"Invalid position size: '{pos_size}'. Must be Small, Medium, or Large.")
+            errors.append(f"Invalid position size: '{pos_size}'. Must be Small, Medium, Large, or Unknown.")
 
         risk_level = risk.get("risk_level")
-        if risk_level in ["Low", "Moderate", "High"]:
+        if risk_level in ["Low", "Moderate", "High", "Unknown"]:
             checks["risk"] = True
         else:
-            errors.append(f"Invalid risk level: '{risk_level}'. Must be Low, Moderate, or High.")
+            errors.append(f"Invalid risk level: '{risk_level}'. Must be Low, Moderate, High, or Unknown.")
 
         volatility = risk.get("volatility")
-        if volatility in ["Low", "Medium", "High"]:
+        if volatility in ["Low", "Medium", "High", "Unknown"]:
             checks["volatility"] = True
         else:
-            errors.append(f"Invalid volatility: '{volatility}'. Must be Low, Medium, or High.")
+            errors.append(f"Invalid volatility: '{volatility}'. Must be Low, Medium, High, or Unknown.")
     else:
         errors.append("Risk analysis block is missing.")
         
@@ -87,7 +148,12 @@ def validate_trade_parameters(tech_ind: dict, confluence: dict, risk: dict, deci
     execution = decision.get("execution", {})
     if rec == "HOLD":
         if execution.get("entry") is not None or execution.get("stop_loss") is not None or execution.get("targets"):
-            warnings.append("HOLD recommendation contains active execution plan.")
+            warnings.append({
+                "severity": "Medium",
+                "module": "Decision Engine",
+                "reason": "HOLD recommendation contains active execution plan.",
+                "resolution": "Ignore execution plan."
+            })
         checks["execution"] = True
         checks["targets"] = True
     elif rec in ["BUY", "STRONG BUY", "SELL", "STRONG SELL"]:
@@ -161,7 +227,8 @@ def validate_trade_parameters(tech_ind: dict, confluence: dict, risk: dict, deci
             "warnings": len(warnings),
             "errors": len(errors),
             "passed_check_names": passed_check_names,
-            "failed_check_names": failed_check_names
+            "failed_check_names": failed_check_names,
+            "detailed_warnings": warnings
         },
         "errors": errors,
         "warnings": warnings,
