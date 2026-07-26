@@ -295,8 +295,8 @@ def node_confluence_engine(state: TradingState) -> dict:
     {json.dumps(simplified_quantitative)}
 
     Compare the following whenever available. CRITICAL: For technical indicators, do NOT interpret raw numbers. You MUST use the deterministic string values provided in the `interpretations` object inside the quantitative JSON!
-    - Trend (Vision vs Quantitative `ema_trend`)
-    - Momentum (Quantitative `rsi_condition` and `macd_condition`)
+    - Trend (Vision vs Quantitative `EMA`)
+    - Momentum (Quantitative `RSI` and `MACD`)
     - Volume (Relative Volume/OBV/VWAP)
     - Support & Resistance (Vision vs Pivot Points/Swing High/Low/Fibonacci)
     - Patterns (Chart/Candlestick)

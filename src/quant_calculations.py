@@ -309,52 +309,136 @@ def calculate_technical_indicators(df: pd.DataFrame) -> dict:
         ind["statistics"]["52_week_high"] = UNAVAILABLE
         ind["statistics"]["52_week_low"] = UNAVAILABLE
 
-    # Interpretations (Deterministic String Logic)
-    interpretations = {
-        "ema_trend": "Unknown",
-        "rsi_condition": "Unknown",
-        "macd_condition": "Unknown"
-    }
+    current_price = float(c.iloc[-1]) if len(c) > 0 else 0.0
+    interpretations = {}
 
     # EMA interpretation
     e20, e50, e100, e200 = ind["ema"].get("20"), ind["ema"].get("50"), ind["ema"].get("100"), ind["ema"].get("200")
     if all(x != UNAVAILABLE for x in [e20, e50, e100, e200]):
+        val_str = f"EMA20: {e20}, EMA50: {e50}"
         if e20 > e50 and e50 > e100 and e100 > e200:
-            interpretations["ema_trend"] = "Bullish Uptrend (EMA20 > EMA50 > EMA100 > EMA200)"
+            interpretations["EMA"] = {"Value": val_str, "Interpretation": "Bullish Uptrend (EMA20 > EMA50 > EMA100 > EMA200)", "Impact": "Bullish"}
         elif e20 < e50 and e50 < e100 and e100 < e200:
-            interpretations["ema_trend"] = "Bearish Downtrend (EMA20 < EMA50 < EMA100 < EMA200)"
+            interpretations["EMA"] = {"Value": val_str, "Interpretation": "Bearish Downtrend (EMA20 < EMA50 < EMA100 < EMA200)", "Impact": "Bearish"}
         else:
-            interpretations["ema_trend"] = "Mixed / Consolidating (Moving averages are crossing or out of strict order)"
+            interpretations["EMA"] = {"Value": val_str, "Interpretation": "Mixed / Consolidating (Moving averages are crossing or out of strict order)", "Impact": "Neutral"}
 
     # RSI interpretation
     rsi = ind.get("rsi")
-    if rsi != UNAVAILABLE:
+    if isinstance(rsi, (int, float)):
+        impact = "Neutral"
         if rsi >= 70:
-            interpretations["rsi_condition"] = f"Overbought ({rsi})"
+            interp = "Overbought conditions. Potential for a bearish reversal or pullback."
+            impact = "Bearish"
         elif rsi <= 30:
-            interpretations["rsi_condition"] = f"Oversold ({rsi})"
+            interp = "Oversold conditions. Potential for a bullish reversal or bounce."
+            impact = "Bullish"
         elif 50 < rsi < 70:
-            interpretations["rsi_condition"] = f"Bullish Momentum ({rsi})"
+            interp = "Bullish momentum. Buyers are in control."
+            impact = "Bullish"
         else:
-            interpretations["rsi_condition"] = f"Bearish Momentum ({rsi})"
+            interp = "Bearish momentum. Sellers are in control."
+            impact = "Bearish"
+            
+        interpretations["RSI"] = {
+            "Value": rsi,
+            "Interpretation": interp,
+            "Impact": impact
+        }
+
+    # ADX interpretation
+    adx = ind.get("adx")
+    if isinstance(adx, (int, float)):
+        impact = "Neutral"
+        if adx > 25:
+            interp = "Very strong trend."
+        else:
+            interp = "Weak or no trend. Choppy or sideways market."
+            
+        interpretations["ADX"] = {
+            "Value": adx,
+            "Interpretation": interp,
+            "Impact": impact
+        }
+
+    # VWAP interpretation
+    vwap = ind.get("vwap")
+    if isinstance(vwap, (int, float)) and current_price > 0:
+        if current_price > vwap:
+            interp = "Trading above VWAP indicates institutional bullish bias."
+            impact = "Bullish"
+        else:
+            interp = "Trading below VWAP indicates institutional bearish bias."
+            impact = "Bearish"
+            
+        interpretations["VWAP"] = {
+            "Value": vwap,
+            "Interpretation": interp,
+            "Impact": impact
+        }
+
+    # Bollinger Bands
+    bb = ind.get("bollinger_bands")
+    if bb != UNAVAILABLE and isinstance(bb, dict):
+        upper = bb.get("upper")
+        lower = bb.get("lower")
+        if upper != UNAVAILABLE and lower != UNAVAILABLE and current_price > 0:
+            val_str = f"Upper: {round(upper, 2)} | Lower: {round(lower, 2)}"
+            impact = "Neutral"
+            if current_price >= upper:
+                interp = "Price near upper band may indicate overextended bullishness or breakout."
+                impact = "Bearish"
+            elif current_price <= lower:
+                interp = "Price near lower band may indicate pullback or mean reversion opportunity."
+                impact = "Bullish"
+            else:
+                interp = "Price is within the bands, indicating normal volatility."
+                
+            interpretations["Bollinger Bands"] = {
+                "Value": val_str,
+                "Interpretation": interp,
+                "Impact": impact
+            }
 
     # MACD interpretation
     macd = ind.get("macd")
     if macd != UNAVAILABLE and isinstance(macd, dict):
         m_line, s_line = macd.get("line"), macd.get("signal")
-        if m_line != UNAVAILABLE and s_line != UNAVAILABLE:
+        if isinstance(m_line, (int, float)) and isinstance(s_line, (int, float)):
+            val_str = f"Line: {round(m_line, 4)} | Signal: {round(s_line, 4)}"
+            impact = "Neutral"
             if m_line > s_line:
                 if m_line > 0:
-                    interpretations["macd_condition"] = "Strong Bullish (Line > Signal, both > 0)"
+                    interp = "Strong bullish momentum (MACD > Signal, both > 0)."
+                    impact = "Bullish"
                 else:
-                    interpretations["macd_condition"] = "Bullish Crossover (Line > Signal, below 0)"
+                    interp = "Bullish crossover below zero. Potential trend reversal to the upside."
+                    impact = "Bullish"
             elif m_line < s_line:
                 if m_line < 0:
-                    interpretations["macd_condition"] = "Strong Bearish (Line < Signal, both < 0)"
+                    interp = "Strong bearish momentum (MACD < Signal, both < 0)."
+                    impact = "Bearish"
                 else:
-                    interpretations["macd_condition"] = "Bearish Crossover (Line < Signal, above 0)"
+                    interp = "Bearish crossover above zero. Short-term weakness inside longer-term bullish trend."
+                    impact = "Bearish"
             else:
-                interpretations["macd_condition"] = "Neutral (Line == Signal)"
+                interp = "Neutral. MACD line equals Signal line."
+                
+            interpretations["MACD"] = {
+                "Value": val_str,
+                "Interpretation": interp,
+                "Impact": impact
+            }
+
+    # ATR interpretation
+    atr = ind.get("atr")
+    if isinstance(atr, (int, float)) and current_price > 0:
+        # For ATR we just output it
+        interpretations["ATR"] = {
+            "Value": round(atr, 2),
+            "Interpretation": "High volatility." if atr > (current_price * 0.02) else "Normal volatility.",
+            "Impact": "Neutral"
+        }
 
     ind["interpretations"] = interpretations
     ind["market_structure"] = detect_market_structure(df)

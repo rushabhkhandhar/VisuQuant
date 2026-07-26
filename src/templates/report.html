@@ -273,47 +273,39 @@
 <div class="card" style="page-break-before: always;">
     <h2>4. Quantitative Indicators (Deterministics)</h2>
     
-    <h3 style="font-size: 14px; margin-bottom: 8px;">Indicator Interpretations</h3>
     <table style="margin-bottom: 15px;">
         <tr>
-            <th width="25%">Indicator</th>
-            <th>Interpretation</th>
+            <th width="20%">Indicator</th>
+            <th width="20%">Value</th>
+            <th width="45%">Interpretation</th>
+            <th width="15%">Impact</th>
         </tr>
         {% set interpretations = tech.get('interpretations', {}) if tech else {} %}
         {% if interpretations %}
             {% for k, v in interpretations.items() %}
             <tr>
-                <td><strong>{{ k.replace('_', ' ').title() }}</strong></td>
-                <td>{{ v }}</td>
+                <td><strong>{{ k }}</strong></td>
+                <td class="value-cell">{{ v.get('Value', 'N/A') }}</td>
+                <td>{{ v.get('Interpretation', 'N/A') }}</td>
+                <td>
+                    {% set imp = v.get('Impact', 'Neutral') %}
+                    {% if imp == 'Bullish' %}
+                        <span style="color: #10b981; font-weight: bold;">{{ imp }}</span>
+                    {% elif imp == 'Bearish' %}
+                        <span style="color: #ef4444; font-weight: bold;">{{ imp }}</span>
+                    {% else %}
+                        <span style="color: #64748b; font-weight: bold;">{{ imp }}</span>
+                    {% endif %}
+                </td>
             </tr>
             {% endfor %}
         {% else %}
-            <tr><td colspan="2">No deterministic interpretations available.</td></tr>
+            <tr><td colspan="4">No deterministic interpretations available.</td></tr>
         {% endif %}
     </table>
     
     <h3 style="font-size: 14px; margin-bottom: 8px;">Key Technical Values</h3>
     <table>
-        <tr>
-            <th width="25%">Metric</th>
-            <th>Value</th>
-        </tr>
-        <tr><td><strong>RSI (14)</strong></td><td class="value-cell">{{ tech.get('rsi', 'N/A') }}</td></tr>
-        <tr><td><strong>ADX</strong></td><td class="value-cell">{{ tech.get('adx', 'N/A') }}</td></tr>
-        <tr><td><strong>ATR</strong></td><td class="value-cell">{{ tech.get('atr', 'N/A') }}</td></tr>
-        <tr><td><strong>VWAP</strong></td><td class="value-cell">{{ tech.get('vwap', 'N/A') }}</td></tr>
-        
-        {% set macd = tech.get('macd', {}) %}
-        <tr>
-            <td><strong>MACD</strong></td>
-            <td class="value-cell">Line: {{ macd.get('line', 'N/A') }} | Signal: {{ macd.get('signal', 'N/A') }} | Hist: {{ macd.get('histogram', 'N/A') }}</td>
-        </tr>
-        
-        {% set bb = tech.get('bollinger_bands', {}) %}
-        <tr>
-            <td><strong>Bollinger Bands</strong></td>
-            <td class="value-cell">Upper: {{ bb.get('upper', 'N/A') }} | Middle: {{ bb.get('middle', 'N/A') }} | Lower: {{ bb.get('lower', 'N/A') }}</td>
-        </tr>
         
         {% set pp = tech.get('pivot_points', {}) %}
         <tr>
