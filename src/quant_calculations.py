@@ -168,90 +168,68 @@ def calculate_technical_indicators(df: pd.DataFrame) -> dict:
         "fibonacci": UNAVAILABLE
     }
 
+    try:
+        import pandas_ta as ta
+    except ImportError:
+        print("Warning: pandas-ta not installed. Returning UNAVAILABLE for indicators.")
+        return ind
+
     # Trend: EMA & SMA
     for period in [20, 50, 100, 200]:
         if len(c) >= period:
-            ind["ema"][str(period)] = safe_get(c.ewm(span=period, adjust=False).mean())
-            ind["sma"][str(period)] = safe_get(c.rolling(window=period).mean())
+            ind["ema"][str(period)] = safe_get(ta.ema(c, length=period))
+            ind["sma"][str(period)] = safe_get(ta.sma(c, length=period))
         else:
             ind["ema"][str(period)] = UNAVAILABLE
             ind["sma"][str(period)] = UNAVAILABLE
 
     # Momentum: RSI (14)
     if len(c) >= 15:
-        delta = c.diff()
-        gain = delta.where(delta > 0, 0).ewm(alpha=1/14, adjust=False).mean()
-        loss = (-delta.where(delta < 0, 0)).ewm(alpha=1/14, adjust=False).mean()
-        rs = gain / loss
-        rsi = 100 - (100 / (1 + rs))
-        ind["rsi"] = safe_get(rsi)
+        ind["rsi"] = safe_get(ta.rsi(c, length=14))
     else:
         ind["rsi"] = UNAVAILABLE
 
     # Momentum: MACD
-    if len(c) >= 26:
-        ema12 = c.ewm(span=12, adjust=False).mean()
-        ema26 = c.ewm(span=26, adjust=False).mean()
-        macd_line = ema12 - ema26
-        signal_line = macd_line.ewm(span=9, adjust=False).mean()
-        hist = macd_line - signal_line
-        ind["macd"] = {
-            "line": safe_get(macd_line),
-            "signal": safe_get(signal_line),
-            "histogram": safe_get(hist)
-        }
+    if len(c) >= 34:
+        macd_df = ta.macd(c, fast=12, slow=26, signal=9)
+        if macd_df is not None and not macd_df.empty:
+            ind["macd"] = {
+                "line": safe_get(macd_df.iloc[:, 0]),
+                "signal": safe_get(macd_df.iloc[:, 2]),
+                "histogram": safe_get(macd_df.iloc[:, 1])
+            }
+        else:
+            ind["macd"] = UNAVAILABLE
     else:
         ind["macd"] = UNAVAILABLE
 
     # ADX (14)
-    if len(c) >= 15:
-        prev_c = c.shift(1)
-        prev_h = h.shift(1)
-        prev_l = l.shift(1)
-        
-        tr1 = h - l
-        tr2 = (h - prev_c).abs()
-        tr3 = (l - prev_c).abs()
-        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-        
-        up_move = h - prev_h
-        down_move = prev_l - l
-        
-        plus_dm = pd.Series(np.where((up_move > down_move) & (up_move > 0), up_move, 0.0), index=c.index)
-        minus_dm = pd.Series(np.where((down_move > up_move) & (down_move > 0), down_move, 0.0), index=c.index)
-        
-        atr_14 = tr.ewm(alpha=1/14, adjust=False).mean()
-        plus_di = 100 * (plus_dm.ewm(alpha=1/14, adjust=False).mean() / atr_14)
-        minus_di = 100 * (minus_dm.ewm(alpha=1/14, adjust=False).mean() / atr_14)
-        
-        dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di)
-        adx = dx.ewm(alpha=1/14, adjust=False).mean()
-        
-        ind["adx"] = safe_get(adx)
+    if len(c) >= 28:
+        adx_df = ta.adx(h, l, c, length=14)
+        if adx_df is not None and not adx_df.empty:
+            ind["adx"] = safe_get(adx_df.iloc[:, 0])
+        else:
+            ind["adx"] = UNAVAILABLE
     else:
         ind["adx"] = UNAVAILABLE
     
     # Volatility: ATR (14)
-    if len(c) >= 2:
-        prev_c = c.shift(1)
-        tr1 = h - l
-        tr2 = (h - prev_c).abs()
-        tr3 = (l - prev_c).abs()
-        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-        atr = tr.ewm(alpha=1/14, adjust=False).mean()
-        ind["atr"] = safe_get(atr)
+    if len(c) >= 15:
+        ind["atr"] = safe_get(ta.atr(h, l, c, length=14))
     else:
         ind["atr"] = UNAVAILABLE
 
     # Bollinger Bands (20)
     if len(c) >= 20:
-        sma20 = c.rolling(20).mean()
-        std20 = c.rolling(20).std()
-        ind["bollinger_bands"] = {
-            "middle": safe_get(sma20),
-            "upper": safe_get(sma20 + 2*std20),
-            "lower": safe_get(sma20 - 2*std20)
-        }
+        bb_df = ta.bbands(c, length=20, std=2)
+        if bb_df is not None and not bb_df.empty:
+            ind["bollinger_bands"] = {
+                "lower": safe_get(bb_df.iloc[:, 0]),
+                "middle": safe_get(bb_df.iloc[:, 1]),
+                "upper": safe_get(bb_df.iloc[:, 2])
+            }
+        else:
+            ind["bollinger_bands"] = UNAVAILABLE
     else:
         ind["bollinger_bands"] = UNAVAILABLE
 
