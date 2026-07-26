@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        
+        @page {
+            size: A4;
+            margin: 15mm;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            color: #334155;
+            background-color: #f8fafc;
+            line-height: 1.5;
+            font-size: 14px;
+        }
+        
+        h1 {
+            color: #0f172a;
+            font-size: 24px;
+            font-weight: 700;
+            border-bottom: 2px solid #e2e8f0;
+            padding-bottom: 8px;
+            margin-top: 0;
+            margin-bottom: 16px;
+        }
+        
+        h2 {
+            color: #1e293b;
+            font-size: 18px;
+            font-weight: 600;
+            margin-top: 24px;
+            margin-bottom: 12px;
+            background-color: #f1f5f9;
+            padding: 8px 12px;
+            border-radius: 6px;
+            border-left: 4px solid #3b82f6;
+        }
+        
+        .card {
+            background-color: #ffffff;
+            padding: 16px;
+            margin-bottom: 16px;
+            border: 1px solid #e2e8f0;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 8px;
+        }
+        
+        th, td {
+            text-align: left;
+            padding: 10px 12px;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        
+        th {
+            background-color: #f8fafc;
+            color: #475569;
+            font-weight: bold;
+            font-size: 13px;
+            text-transform: uppercase;
+        }
+        
+        td {
+            font-size: 14px;
+            vertical-align: top;
+        }
+        
+        .badge {
+            display: inline-block;
+            padding: 4px 10px;
+            font-size: 12px;
+            font-weight: bold;
+            text-transform: uppercase;
+            border: 1px solid #333;
+        }
+        
+        .badge-buy, .badge-strong-buy, .badge-passed, .badge-true {
+            background-color: #dcfce7;
+            color: #166534;
+            border-color: #166534;
+        }
+        
+        .badge-sell, .badge-strong-sell, .badge-failed, .badge-false {
+            background-color: #fee2e2;
+            color: #991b1b;
+            border-color: #991b1b;
+        }
+        
+        .badge-hold, .badge-unavailable, .badge-skipped {
+            background-color: #fef9c3;
+            color: #854d0e;
+            border-color: #854d0e;
+        }
+        
+        .header-box {
+            background-color: #1e293b;
+            color: white;
+            padding: 24px;
+            margin-bottom: 24px;
+        }
+        
+        .header-box h1 {
+            color: white;
+            border-bottom: none;
+            padding-bottom: 0;
+            margin-bottom: 8px;
+        }
+        
+        .header-box p {
+            color: #cbd5e1;
+            margin: 0;
+            font-size: 14px;
+        }
+        
+        .footer {
+            margin-top: 40px;
+            font-size: 11px;
+            color: #64748b;
+            text-align: center;
+            border-top: 1px solid #e2e8f0;
+            padding-top: 16px;
+        }
+        
+        .value-cell {
+            font-family: monospace;
+            font-size: 13px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="header-box">
+    <h1>{{ ticker }} Technical Analysis Dashboard</h1>
+    <p>Automated Institutional Report generated on {{ date }}</p>
+</div>
+
+<!-- Decision Summary -->
+<div class="card">
+    <h2>1. Final Decision Summary</h2>
+    <table>
+        <tr>
+            <th width="25%">Metric</th>
+            <th>Value</th>
+        </tr>
+        {% set dec_obj = decision.get('decision', decision) if decision else {} %}
+        <tr>
+            <td><strong>Recommendation</strong></td>
+            <td>
+                <span class="badge 
+                    {% if dec_obj.get('recommendation') in ['BUY', 'STRONG BUY'] %}badge-buy
+                    {% elif dec_obj.get('recommendation') in ['SELL', 'STRONG SELL'] %}badge-sell
+                    {% else %}badge-hold{% endif %}">
+                    {{ dec_obj.get('recommendation', 'N/A') }}
+                </span>
+            </td>
+        </tr>
+        <tr>
+            <td><strong>Confidence</strong></td>
+            <td class="value-cell">{{ dec_obj.get('confidence', 'N/A') }}</td>
+        </tr>
+        <tr>
+            <td><strong>Strength</strong></td>
+            <td>{{ dec_obj.get('strength', 'N/A') }}</td>
+        </tr>
+        <tr>
+            <td><strong>Why Chosen</strong></td>
+            <td>{{ dec_obj.get('why_chosen', 'N/A') }}</td>
+        </tr>
+    </table>
+</div>
+
+<!-- Risk Analysis -->
+<div class="card">
+    <h2>2. Risk & Execution Profile</h2>
+    <table>
+        <tr>
+            <th width="25%">Parameter</th>
+            <th>Value</th>
+        </tr>
+        {% set rm = risk.get('metrics', {}) if risk else {} %}
+        <tr>
+            <td><strong>Entry Price</strong></td>
+            <td class="value-cell">{{ risk.get('entry', 'N/A') }}</td>
+        </tr>
+        <tr>
+            <td><strong>Stop Loss</strong></td>
+            <td class="value-cell">{{ risk.get('stop_loss', 'N/A') }}</td>
+        </tr>
+        <tr>
+            <td><strong>Target 1</strong></td>
+            <td class="value-cell">{{ risk.get('targets', {}).get('target_1', 'N/A') }}</td>
+        </tr>
+        <tr>
+            <td><strong>Target 2</strong></td>
+            <td class="value-cell">{{ risk.get('targets', {}).get('target_2', 'N/A') }}</td>
+        </tr>
+        <tr>
+            <td><strong>Risk / Reward</strong></td>
+            <td class="value-cell">{{ rm.get('best_risk_reward', 'N/A') }}</td>
+        </tr>
+        <tr>
+            <td><strong>Position Size</strong></td>
+            <td>{{ risk.get('position_size', 'N/A') }}</td>
+        </tr>
+        <tr>
+            <td><strong>Risk Level</strong></td>
+            <td>{{ risk.get('risk_level', 'N/A') }}</td>
+        </tr>
+    </table>
+    {% set warnings = risk.get('warnings', []) if risk else [] %}
+    {% if warnings %}
+    <p style="margin-top: 12px; margin-bottom: 4px;"><strong>Risk Warnings:</strong></p>
+    <ul style="margin-top: 0;">
+        {% for w in warnings %}
+        <li style="color: #991b1b; font-size: 13px;">{{ w }}</li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+</div>
+
+<!-- Confluence Analysis -->
+<div class="card">
+    <h2>3. Confluence Engine (Vision vs Math)</h2>
+    {% set conf_obj = confluence.get('confluence_analysis', confluence) if confluence else {} %}
+    <p style="margin-bottom: 12px;">Overall Confidence Score: <strong class="value-cell">{{ conf_obj.get('overall_score', 'N/A') }}</strong></p>
+    <table>
+        <tr>
+            <th width="20%">Category</th>
+            <th width="15%">Status</th>
+            <th>Reason</th>
+        </tr>
+        {% for category in ['trend', 'momentum', 'volume', 'support_resistance', 'patterns'] %}
+            {% set item = conf_obj.get(category, {}) if conf_obj else {} %}
+            {% if item %}
+            <tr>
+                <td><strong>{{ category.replace('_', ' ').title() }}</strong></td>
+                <td>{{ item.get('status', 'N/A') }}</td>
+                <td style="font-size: 13px;">{{ item.get('reason', 'N/A') }}</td>
+            </tr>
+            {% endif %}
+        {% endfor %}
+    </table>
+</div>
+
+<!-- Quantitative Analysis -->
+<div class="card" style="page-break-before: always;">
+    <h2>4. Quantitative Indicators (Deterministics)</h2>
+    
+    <h3 style="font-size: 14px; margin-bottom: 8px;">Indicator Interpretations</h3>
+    <table style="margin-bottom: 15px;">
+        <tr>
+            <th width="25%">Indicator</th>
+            <th>Interpretation</th>
+        </tr>
+        {% set interpretations = tech.get('interpretations', {}) if tech else {} %}
+        {% if interpretations %}
+            {% for k, v in interpretations.items() %}
+            <tr>
+                <td><strong>{{ k.replace('_', ' ').title() }}</strong></td>
+                <td>{{ v }}</td>
+            </tr>
+            {% endfor %}
+        {% else %}
+            <tr><td colspan="2">No deterministic interpretations available.</td></tr>
+        {% endif %}
+    </table>
+    
+    <h3 style="font-size: 14px; margin-bottom: 8px;">Key Technical Values</h3>
+    <table>
+        <tr>
+            <th width="25%">Metric</th>
+            <th>Value</th>
+        </tr>
+        <tr><td><strong>RSI (14)</strong></td><td class="value-cell">{{ tech.get('rsi', 'N/A') }}</td></tr>
+        <tr><td><strong>ADX</strong></td><td class="value-cell">{{ tech.get('adx', 'N/A') }}</td></tr>
+        <tr><td><strong>ATR</strong></td><td class="value-cell">{{ tech.get('atr', 'N/A') }}</td></tr>
+        <tr><td><strong>VWAP</strong></td><td class="value-cell">{{ tech.get('vwap', 'N/A') }}</td></tr>
+        
+        {% set macd = tech.get('macd', {}) %}
+        <tr>
+            <td><strong>MACD</strong></td>
+            <td class="value-cell">Line: {{ macd.get('line', 'N/A') }} | Signal: {{ macd.get('signal', 'N/A') }} | Hist: {{ macd.get('histogram', 'N/A') }}</td>
+        </tr>
+        
+        {% set bb = tech.get('bollinger_bands', {}) %}
+        <tr>
+            <td><strong>Bollinger Bands</strong></td>
+            <td class="value-cell">Upper: {{ bb.get('upper', 'N/A') }} | Middle: {{ bb.get('middle', 'N/A') }} | Lower: {{ bb.get('lower', 'N/A') }}</td>
+        </tr>
+        
+        {% set pp = tech.get('pivot_points', {}) %}
+        <tr>
+            <td><strong>Pivot Points</strong></td>
+            <td class="value-cell">R2: {{ pp.get('R2', 'N/A') }} | R1: {{ pp.get('R1', 'N/A') }} | P: {{ pp.get('P', 'N/A') }} | S1: {{ pp.get('S1', 'N/A') }} | S2: {{ pp.get('S2', 'N/A') }}</td>
+        </tr>
+    </table>
+</div>
+
+<!-- Vision Analysis -->
+<div class="card">
+    <h2>5. Visual Chart Analysis (AI Vision)</h2>
+    <table>
+        <tr>
+            <th width="25%">Feature</th>
+            <th>Observation</th>
+        </tr>
+        <tr>
+            <td><strong>Trend Direction</strong></td>
+            <td>{{ vision.get('trend', {}).get('direction', 'N/A') }} <span style="color: #64748b; font-size: 12px;">(Conf: {{ vision.get('trend', {}).get('confidence', 'N/A') }})</span></td>
+        </tr>
+        <tr>
+            <td><strong>Market Structure</strong></td>
+            <td>
+                {% set ms = vision.get('price_structure', vision.get('market_structure', {})) %}
+                <span class="value-cell">HH: {{ ms.get('higher_highs', 'N/A') }}</span> | 
+                <span class="value-cell">HL: {{ ms.get('higher_lows', 'N/A') }}</span> | 
+                <span class="value-cell">LH: {{ ms.get('lower_highs', 'N/A') }}</span> | 
+                <span class="value-cell">LL: {{ ms.get('lower_lows', 'N/A') }}</span>
+            </td>
+        </tr>
+        <tr>
+            <td><strong>Support Zones</strong></td>
+            <td>
+                {% set sz = vision.get('support_zones', []) %}
+                {% if sz %}
+                    {% for s in sz %}
+                    {{ s.get('price', 'N/A') }} ({{ s.get('strength', 'N/A') }})<br>
+                    {% endfor %}
+                {% else %}
+                    None detected
+                {% endif %}
+            </td>
+        </tr>
+        <tr>
+            <td><strong>Resistance Zones</strong></td>
+            <td>
+                {% set rz = vision.get('resistance_zones', []) %}
+                {% if rz %}
+                    {% for r in rz %}
+                    {{ r.get('price', 'N/A') }} ({{ r.get('strength', 'N/A') }})<br>
+                    {% endfor %}
+                {% else %}
+                    None detected
+                {% endif %}
+            </td>
+        </tr>
+        <tr>
+            <td><strong>Candlestick Patterns</strong></td>
+            <td>
+                {% set pat = vision.get('patterns', {}).get('candlestick', []) %}
+                {% if pat %}
+                    {% for p in pat %}
+                    {{ p.get('type', 'N/A') }}<br>
+                    {% endfor %}
+                {% else %}
+                    None
+                {% endif %}
+            </td>
+        </tr>
+        <tr>
+            <td><strong>Trendlines & Channels</strong></td>
+            <td>
+                {% set lines = vision.get('trendlines', []) %}
+                {% if lines %}
+                    {% for l in lines %}
+                    {{ l.get('type', 'N/A') }} Trendline<br>
+                    {% endfor %}
+                {% endif %}
+                
+                {% set chans = vision.get('channels', []) %}
+                {% if chans %}
+                    {% for c in chans %}
+                    {{ c.get('type', 'N/A') }} Channel<br>
+                    {% endfor %}
+                {% endif %}
+                
+                {% if not lines and not chans %}
+                    None
+                {% endif %}
+            </td>
+        </tr>
+    </table>
+</div>
+
+<!-- Trade Validation -->
+<div class="card">
+    <h2>6. System Validation Checks</h2>
+    <table>
+        <tr>
+            <th width="25%">Check</th>
+            <th>Result</th>
+        </tr>
+        <tr>
+            <td><strong>Overall Validity</strong></td>
+            <td>
+                <span class="badge {% if validation.get('valid') %}badge-true{% else %}badge-false{% endif %}">
+                    {{ validation.get('valid', 'N/A') }}
+                </span>
+            </td>
+        </tr>
+        {% set vs = validation.get('summary', {}) if validation else {} %}
+        <tr>
+            <td><strong>Passed Checks</strong></td>
+            <td class="value-cell">{{ vs.get('passed_checks', 0) }}</td>
+        </tr>
+        <tr>
+            <td><strong>Failed Checks</strong></td>
+            <td class="value-cell">{{ vs.get('failed_checks', 0) }}</td>
+        </tr>
+        <tr>
+            <td><strong>Warnings</strong></td>
+            <td class="value-cell">{{ vs.get('warnings', 0) }}</td>
+        </tr>
+    </table>
+</div>
+
+<div class="footer">
+    This premium report is generated programmatically using VisuQuant AI.<br>
+    Intended for research and educational purposes only.
+</div>
+
+</body>
+</html>

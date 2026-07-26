@@ -638,13 +638,16 @@ def build_report_prompt(ticker, vision_features, technical_indicators, confluenc
     RETURN YOUR REPORT AS PURE MARKDOWN. Do NOT wrap it in JSON.
     Use the following 9 sections as headers:
     1. Executive Summary: Include Stock Symbol, Current Market Trend, Final Recommendation, Decision Confidence, Overall Confluence, and Trade Validation Status.
-    2. Vision Analysis: Summarize ONLY the `Vision Features` JSON (Trend, Market Structure, Support, Resistance, Patterns, etc).
-    3. Quantitative Analysis: Summarize ONLY the `Technical Indicators` JSON. You MUST read the `interpretations` (EMA alignment, RSI condition, MACD condition). Explain what they collectively suggest. Do NOT mention visual features here.
-    4. Confluence Analysis: Explain areas of agreement/contradiction, missing data, and WHY the confluence score reached its value.
-    5. Risk Analysis: Present Entry, Stop Loss, Target 1, Target 2, Target 3, Risk/Reward, Position Size, Volatility, Risk Level, Warnings exactly as received.
-    6. Decision Summary: Present Recommendation, Confidence, Supporting Factors, Risk Factors. Copy Execution Plan directly from Decision Engine.
+    2. Vision Analysis: Summarize ONLY the `Vision Features` JSON. Present the data as a clean Markdown Table (e.g. | Metric | Observation |).
+    3. Quantitative Analysis: Summarize ONLY the `Technical Indicators` JSON. Present the data as a clean Markdown Table. You MUST read the `interpretations` (EMA alignment, RSI condition, MACD condition). Explain what they collectively suggest. Do NOT mention visual features here.
+    4. Confluence Analysis: Present areas of agreement/contradiction and missing data in a clean Markdown Table. Explain WHY the confluence score reached its value.
+    5. Risk Analysis: Present Entry, Stop Loss, Target 1, Target 2, Target 3, Risk/Reward, Position Size, Volatility, Risk Level, Warnings exactly as received in a clean Markdown Table.
+    6. Decision Summary: Present Recommendation, Confidence, Supporting Factors, Risk Factors in a clean Markdown Table. Copy Execution Plan directly from Decision Engine.
     7. Validation Summary: If passed: state it passed all deterministic validation checks. If failed: explain Errors, Warnings, Failed Checks.
     8. Overall Conclusion: Provide closing summary discussing market condition, overall trade quality, primary strengths/risks, and final recommendation.
+    
+    TABLE FORMATTING CRITICAL RULE:
+    For EVERY section (2 to 6), you MUST use Markdown tables. Do NOT use bullet points for data listing. Ensure headers are bold and properly aligned.
     9. Disclaimer: "This report is generated using AI-assisted technical analysis together with deterministic quantitative models. It is intended for research and educational purposes only and should not be interpreted as financial advice."
     """
 

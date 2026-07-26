@@ -53,43 +53,49 @@ def persist_pipeline_results(final_state: dict, start_time: float, end_time: flo
     try:
         output_dir = create_output_directory(ticker)
         
-        # 1. Save metadata
-        save_metadata(output_dir, ticker, start_time, end_time)
-        
-        # 2. Save pipeline state
-        save_pipeline_state(output_dir, final_state)
-        
-        # 3. Save individual JSON components (handle SKIPPED)
-        components = [
-            ("vision_features", "vision_features.json"),
-            ("technical_indicators", "technical_indicators.json"),
-            ("confluence_analysis", "confluence_analysis.json"),
-            ("risk_analysis", "risk_analysis.json"),
-            ("decision", "decision.json"),
-            ("trade_validation", "trade_validation.json"),
-            ("analysis_report", "analysis_report.json")
-        ]
-        
-        for key, filename in components:
-            filepath = os.path.join(output_dir, filename)
-            data = final_state.get(key)
-            if data is None:
-                data = {
-                    "status": "SKIPPED",
-                    "reason": f"{key} analysis unavailable or skipped."
-                }
-            save_json(filepath, data)
-            
-        # 4. Save markdown report
         md_content = final_state.get("final_report")
         if not md_content:
             md_content = final_state.get("analysis_report_markdown", "Report generation skipped or failed.")
             
-        save_markdown(os.path.join(output_dir, "analysis_report.md"), md_content)
+        # Generate Premium PDF Dashboard via xhtml2pdf
+        import jinja2
+        from xhtml2pdf import pisa
         
-        # 5. Output confirmation
+        # Load the Jinja2 template
+        template_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
+        env = jinja2.Environment(loader=jinja2.FileSystemLoader(template_dir))
+        template = env.get_template("report.html")
+        
+        # Render HTML string with JSON data
+        html_content = template.render(
+            ticker=ticker,
+            date=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            decision=final_state.get("decision", {}),
+            risk=final_state.get("risk_analysis", {}),
+            confluence=final_state.get("confluence_analysis", {}),
+            tech=final_state.get("technical_indicators", {}),
+            vision=final_state.get("vision_features", {}),
+            validation=final_state.get("trade_validation", {})
+        )
+        
+        pdf_path = os.path.join(output_dir, f"{ticker}_analysis_report.pdf")
+        with open(pdf_path, "wb") as pdf_file:
+            pisa.CreatePDF(html_content, dest=pdf_file)
+            
+        # JSON dumping disabled to save disk space
+        # if "vision_features" in final_state: save_json(os.path.join(output_dir, "vision_features.json"), final_state["vision_features"])
+        # if "technical_indicators" in final_state: save_json(os.path.join(output_dir, "technical_indicators.json"), final_state["technical_indicators"])
+        # if "confluence_analysis" in final_state: save_json(os.path.join(output_dir, "confluence_analysis.json"), final_state["confluence_analysis"])
+        # if "risk_analysis" in final_state: save_json(os.path.join(output_dir, "risk_analysis.json"), final_state["risk_analysis"])
+        # if "decision" in final_state: save_json(os.path.join(output_dir, "decision.json"), final_state["decision"])
+        # if "trade_validation" in final_state: save_json(os.path.join(output_dir, "trade_validation.json"), final_state["trade_validation"])
+        # save_pipeline_state(output_dir, final_state)
+        save_metadata(output_dir, ticker, start_time, end_time)
+        
+        # Output confirmation
         print("\n" + "="*50)
-        print(f"Results saved to\noutputs/{os.path.basename(output_dir)}/")
+        print(f"Premium Dashboard PDF successfully generated!")
+        print(f"Saved to: {pdf_path}")
         print("="*50)
         
     except Exception as e:

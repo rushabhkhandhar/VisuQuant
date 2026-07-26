@@ -1,9 +1,11 @@
 import sys
 import os
 from dotenv import load_dotenv
+import warnings
 
 # Load environment variables (e.g. HF_TOKEN)
 load_dotenv()
+warnings.filterwarnings("ignore")
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
