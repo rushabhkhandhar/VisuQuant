@@ -78,6 +78,7 @@ def node_vision_analysis(state: TradingState) -> dict:
     - A "Downtrend" MUST be logically compatible with Lower Highs and Lower Lows.
     - An "Uptrend" MUST be logically compatible with Higher Highs and Higher Lows.
     - A "Sideways" trend must not claim aggressively trending structures.
+    - If Market Structure is clearly identified (e.g. Higher Highs and Higher Lows), Trend Confidence cannot be 'Unknown' or low. Trend confidence MUST be derived from the confluence of Trendlines, Channels, and Market Structure.
     If you detect contradictions in your own visual assessment (e.g. you see a Downtrend but the structure is Higher Highs), you MUST set "consistency_status" to "FAILED", populate the "warnings" array explaining the visual contradiction, and drastically reduce your confidence score.
 
     Extract:
@@ -246,10 +247,90 @@ def node_quantitative_analysis(state: TradingState) -> dict:
     print(f"[{ticker}] Quantitative analysis complete.")
     return {"technical_indicators": indicators}
 
+def node_trend_engine(state: TradingState) -> dict:
+    ticker = state["ticker"]
+    vision_features = state.get("vision_features", {})
+    technical_indicators = state.get("technical_indicators", {})
+    
+    print(f"[{ticker}] Running unified trend engine...")
+    
+    # Extract components
+    vision_trend = vision_features.get("trend", {})
+    vision_direction = vision_trend.get("direction", "Unknown")
+    vision_conf = float(vision_trend.get("confidence", 0.0))
+    
+    market_structure = technical_indicators.get("market_structure", {})
+    ms_trend = market_structure.get("trend", "Unknown")
+    ms_conf = float(market_structure.get("confidence", 0.5))
+    
+    interpretations = technical_indicators.get("interpretations", {})
+    ema_interp = interpretations.get("EMA", {})
+    ema_impact = ema_interp.get("Impact", "Neutral")
+    
+    adx_interp = interpretations.get("ADX", {})
+    adx_val = adx_interp.get("Value", 0)
+    adx_strength = "Weak"
+    if adx_val >= 25:
+        adx_strength = "Strong"
+        
+    # Aggregate
+    bull_score = 0.0
+    bear_score = 0.0
+    
+    if vision_direction == "Uptrend":
+        bull_score += vision_conf
+    elif vision_direction == "Downtrend":
+        bear_score += vision_conf
+        
+    if ms_trend == "Bullish":
+        bull_score += ms_conf
+    elif ms_trend == "Bearish":
+        bear_score += ms_conf
+        
+    if ema_impact == "Bullish":
+        bull_score += 0.8
+    elif ema_impact == "Bearish":
+        bear_score += 0.8
+        
+    # Determine Unified Trend
+    trend_direction = "Sideways / Transition"
+    confidence = 0.5
+    
+    if bull_score > bear_score + 0.5:
+        trend_direction = "Bullish"
+        confidence = min(1.0, bull_score / 3.0)
+    elif bear_score > bull_score + 0.5:
+        trend_direction = "Bearish"
+        confidence = min(1.0, bear_score / 3.0)
+    else:
+        trend_direction = "Sideways / Transition"
+        confidence = min(1.0, (bull_score + bear_score) / 4.0)
+        
+    # Boost confidence if ADX is strong
+    if adx_strength == "Strong" and trend_direction != "Sideways / Transition":
+        confidence = min(1.0, confidence + 0.2)
+        
+    evidence = []
+    evidence.append(f"Market Structure: {ms_trend}")
+    evidence.append(f"EMA Alignment: {ema_impact}")
+    evidence.append(f"Vision Detection: {vision_direction}")
+    evidence.append(f"ADX Strength: {adx_val} ({adx_strength})")
+        
+    unified_trend = {
+        "direction": trend_direction,
+        "confidence": round(confidence, 2),
+        "supporting_evidence": evidence
+    }
+    
+    print(f"[{ticker}] Unified trend engine complete: {trend_direction} (Conf: {round(confidence, 2)})")
+    
+    return {"unified_trend": unified_trend}
+
 def node_confluence_engine(state: TradingState) -> dict:
     ticker = state["ticker"]
     vision_features = state.get("vision_features", {})
     technical_indicators = state.get("technical_indicators", {})
+    unified_trend = state.get("unified_trend", {})
     
     print(f"[{ticker}] Running confluence engine (evidence synthesis)...")
     
@@ -260,12 +341,23 @@ def node_confluence_engine(state: TradingState) -> dict:
     }
     
     prompt = f"""
-    You are a Confluence Engine for {ticker}. 
-    Your task is to compare evidence from visual chart analysis with quantitative market data.
-
-    Your task is ONLY to identify agreements, contradictions, and missing evidence.
-
-    Rules:
+    You are an expert quantitative trading engine for {ticker}.
+    Your objective is to identify confluences and contradictions between visual features and technical indicators.
+    
+    Unified Trend Engine Output:
+    {json.dumps(unified_trend)}
+    
+    Available Visual Features:
+    {json.dumps(vision_features)}
+    
+    Available Technical Indicators (Quantitative):
+    {json.dumps(simplified_quantitative)}
+    
+    RULES:
+    1. Base all trend direction conclusions solely on the "Unified Trend Engine Output". Do not re-evaluate the trend independently.
+    2. Base all indicator interpretations strictly on the exact strings provided in the "interpretations" dictionary. Never reinterpret raw indicators (e.g. do not recalculate MACD crossovers).
+    3. Generate summary bullet points that are directly sourced from the provided "interpretations".
+    
     - Return VALID JSON only.
     - No markdown.
     - No explanations outside JSON.
@@ -436,6 +528,7 @@ def node_decision_engine(state: TradingState) -> dict:
     vision_features = state.get("vision_features", {})
     technical_indicators = state.get("technical_indicators", {})
     confluence_analysis = state.get("confluence_analysis", {})
+    unified_trend = state.get("unified_trend", {})
     risk_analysis = state.get("risk_analysis", {})
     
     # Strip raw numerical noise to prevent LLM hallucinations
@@ -450,6 +543,9 @@ def node_decision_engine(state: TradingState) -> dict:
     You are an expert institutional technical analyst for {ticker}.
     Your responsibility is to review the following analyses and provide a highly structured, objective evaluation.
     
+    Unified Trend Engine Output:
+    {json.dumps(unified_trend)}
+    
     Available Visual Features:
     {json.dumps(vision_features)}
     
@@ -463,7 +559,7 @@ def node_decision_engine(state: TradingState) -> dict:
     {json.dumps(risk_analysis)}
     
     INSTRUCTIONS (CRITICAL):
-    1. You must evaluate 10 distinct technical components.
+    1. You must evaluate 10 distinct technical components. Base trend on Unified Trend Output. Base indicator impact strictly on provided interpretations.
     2. For each component, assign a mathematical score between -1.0 (Maximally Bearish) and 1.0 (Maximally Bullish). 0.0 means neutral or unavailable.
     3. Provide a brief 1-sentence reason for each score.
     4. Provide the top 3 bullish factors and top 3 bearish factors overall.
@@ -566,7 +662,8 @@ def node_decision_engine(state: TradingState) -> dict:
                 }
                 
                 net_evidence = 0.0
-                total_absolute_evidence = 0.0
+                
+                score_breakdown = []
                 
                 for comp, weight in weights.items():
                     val = c_scores.get(comp, {}).get("score", 0.0)
@@ -580,21 +677,19 @@ def node_decision_engine(state: TradingState) -> dict:
                     
                     weighted_val = val_float * weight
                     net_evidence += weighted_val
-                    total_absolute_evidence += abs(weighted_val)
+                    
+                    score_breakdown.append({
+                        "component": comp.replace("_", " ").title(),
+                        "weight": f"{int(weight * 100)}%",
+                        "normalized_score": round(val_float, 2),
+                        "contribution": f"{round(weighted_val * 100, 2):+}"
+                    })
                     
                 # net_evidence ranges from -1.0 to 1.0. Scale to 0-100.
                 overall_score = (net_evidence + 1.0) / 2.0 * 100.0
                 
-                # Confidence Calculation
-                # If there is zero absolute evidence, confidence is 0
-                if total_absolute_evidence > 0:
-                    confidence = abs(net_evidence) / total_absolute_evidence
-                else:
-                    confidence = 0.0
-                    
-                # Floor confidence if evidence is extremely weak
-                if total_absolute_evidence < 0.2:
-                    confidence *= (total_absolute_evidence / 0.2)
+                # Confidence Calculation directly from score
+                confidence = overall_score / 100.0
                     
                 # Map Overall Score to Recommendation
                 if overall_score >= 85:
@@ -608,30 +703,23 @@ def node_decision_engine(state: TradingState) -> dict:
                 else:
                     rec = "AVOID"
                     
-                # Determine Strength Based on Absolute Evidence
-                if total_absolute_evidence >= 0.8:
+                # Map Overall Score to Strength
+                if overall_score >= 85:
                     strength = "Very Strong"
-                elif total_absolute_evidence >= 0.5:
+                elif overall_score >= 65:
                     strength = "Strong"
-                elif total_absolute_evidence >= 0.3:
+                elif overall_score >= 45:
                     strength = "Moderate"
-                else:
+                elif overall_score >= 25:
                     strength = "Weak"
+                else:
+                    strength = "Very Weak"
                     
-                decision["total_score"] = round(overall_score, 1)
+                decision["overall_score"] = round(overall_score, 1)
                 decision["recommendation"] = rec
                 decision["confidence"] = round(confidence, 2)
                 decision["strength"] = strength
-                
-                # Execution parameter cleanup for HOLD/AVOID
-                if rec in ["HOLD", "AVOID"]:
-                    decision["execution"] = {
-                        "status": "Inactive",
-                        "entry": None,
-                        "stop_loss": None,
-                        "targets": [],
-                        "reason": "Recommendation is not actionable."
-                    }
+                decision["score_breakdown"] = score_breakdown
                     
             break
         except json.JSONDecodeError:
@@ -660,9 +748,11 @@ def node_trade_validator(state: TradingState) -> dict:
     risk = state.get("risk_analysis", {})
     decision = state.get("decision", {})
     
+    unified_trend = state.get("unified_trend", {})
+    
     print(f"[{ticker}] Running trade validator...")
     
-    validation_results = validate_trade_parameters(tech_ind, confluence, risk, decision)
+    validation_results = validate_trade_parameters(tech_ind, confluence, risk, decision, unified_trend)
     
     if not validation_results["valid"]:
         print(f"[{ticker}] WARNING: Trade validation failed with {len(validation_results['errors'])} errors.")

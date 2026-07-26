@@ -1,4 +1,4 @@
-def validate_trade_parameters(tech_ind: dict, confluence: dict, risk: dict, decision_node: dict) -> dict:
+def validate_trade_parameters(tech_ind: dict, confluence: dict, risk: dict, decision_node: dict, unified_trend: dict = None) -> dict:
     errors = []
     warnings = []
     checks = {
@@ -9,10 +9,34 @@ def validate_trade_parameters(tech_ind: dict, confluence: dict, risk: dict, deci
         "targets": False,
         "position_size": False,
         "volatility": False,
-        "confluence": False
+        "confluence": False,
+        "consistency": True
     }
 
     decision = decision_node.get("decision", {}) if decision_node else {}
+    
+    # 0. Consistency Validator
+    if unified_trend:
+        trend_dir = unified_trend.get("direction", "Unknown")
+        ms_trend = tech_ind.get("market_structure", {}).get("trend", "Unknown")
+        
+        if trend_dir in ["Bullish", "Bearish"] and ms_trend in ["Bullish", "Bearish"] and trend_dir != ms_trend:
+            warnings.append(f"Consistency Warning: Market Structure ({ms_trend}) contradicts Unified Trend ({trend_dir}). Downgrading confidence.")
+            if "confidence" in decision:
+                decision["confidence"] = max(0.0, decision["confidence"] - 0.2)
+                checks["consistency"] = False
+                
+        rec = decision.get("recommendation", "")
+        if rec in ["STRONG BUY", "BUY"] and trend_dir == "Bearish":
+            warnings.append(f"Consistency Warning: BUY recommendation conflicts with Bearish trend. Downgrading confidence.")
+            if "confidence" in decision:
+                decision["confidence"] = max(0.0, decision["confidence"] - 0.2)
+                checks["consistency"] = False
+        elif rec in ["STRONG SELL", "SELL"] and trend_dir == "Bullish":
+            warnings.append(f"Consistency Warning: SELL recommendation conflicts with Bullish trend. Downgrading confidence.")
+            if "confidence" in decision:
+                decision["confidence"] = max(0.0, decision["confidence"] - 0.2)
+                checks["consistency"] = False
     
     # 1. Decision Validation
     rec = decision.get("recommendation", "")

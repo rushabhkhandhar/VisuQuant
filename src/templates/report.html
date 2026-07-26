@@ -136,6 +136,9 @@
         .severity-major { color: #ef4444; }
         .severity-moderate { color: #f59e0b; }
         .severity-minor { color: #3b82f6; }
+
+        .text-green { color: green !important; }
+        .text-red { color: red !important; }
     </style>
 </head>
 <body>
@@ -167,7 +170,7 @@
         </tr>
         <tr>
             <td><strong>Overall Score (0-100)</strong></td>
-            <td class="value-cell">{{ dec_obj.get('total_score', 'N/A') }}</td>
+            <td class="value-cell">{{ dec_obj.get('overall_score', 'N/A') }}</td>
         </tr>
         <tr>
             <td><strong>Confidence & Strength</strong></td>
@@ -183,17 +186,22 @@
         <tr>
             <td><strong>Score Breakdown (Weighted)</strong></td>
             <td>
-                {% set c_scores = dec_obj.get('component_scores', {}) %}
-                <span class="value-cell">Trend (15%): {{ c_scores.get('trend_strength', {}).get('score', 0) }}</span> | 
-                <span class="value-cell">Momentum (15%): {{ c_scores.get('momentum', {}).get('score', 0) }}</span> | 
-                <span class="value-cell">Structure (15%): {{ c_scores.get('market_structure', {}).get('score', 0) }}</span><br>
-                <span class="value-cell">Volume (10%): {{ c_scores.get('volume_confirmation', {}).get('score', 0) }}</span> | 
-                <span class="value-cell">S/R (10%): {{ c_scores.get('support_resistance', {}).get('score', 0) }}</span> | 
-                <span class="value-cell">Risk/Reward (10%): {{ c_scores.get('risk_reward', {}).get('score', 0) }}</span> |
-                <span class="value-cell">Multi-TF (10%): {{ c_scores.get('multi_timeframe_alignment', {}).get('score', 0) }}</span><br>
-                <span class="value-cell">Candles (5%): {{ c_scores.get('candlestick_patterns', {}).get('score', 0) }}</span> | 
-                <span class="value-cell">Chart Patterns (5%): {{ c_scores.get('chart_patterns', {}).get('score', 0) }}</span> | 
-                <span class="value-cell">Volatility (5%): {{ c_scores.get('volatility', {}).get('score', 0) }}</span>
+                <table style="width: 100%; border: 1px solid #e2e8f0; border-collapse: collapse; margin-top: 5px;">
+                    <tr style="background-color: #f1f5f9;">
+                        <th style="padding: 4px; border: 1px solid #e2e8f0;">Component</th>
+                        <th style="padding: 4px; border: 1px solid #e2e8f0;">Weight</th>
+                        <th style="padding: 4px; border: 1px solid #e2e8f0;">Norm. Score</th>
+                        <th style="padding: 4px; border: 1px solid #e2e8f0;">Contribution</th>
+                    </tr>
+                    {% for item in dec_obj.get('score_breakdown', []) %}
+                    <tr>
+                        <td style="padding: 4px; border: 1px solid #e2e8f0;">{{ item.component }}</td>
+                        <td style="padding: 4px; border: 1px solid #e2e8f0; text-align: center;">{{ item.weight }}</td>
+                        <td style="padding: 4px; border: 1px solid #e2e8f0; text-align: center;">{{ item.normalized_score }}</td>
+                        <td style="padding: 4px; border: 1px solid #e2e8f0; text-align: center;" class="{% if item.contribution.startswith('+') %}text-green{% elif item.contribution.startswith('-') %}text-red{% endif %}">{{ item.contribution }}</td>
+                    </tr>
+                    {% endfor %}
+                </table>
             </td>
         </tr>
         <tr>

@@ -5,6 +5,7 @@ from src.nodes import (
     node_run_nse_scraper,
     node_vision_analysis,
     node_quantitative_analysis,
+    node_trend_engine,
     node_confluence_engine,
     node_risk_management,
     node_decision_engine,
@@ -24,6 +25,7 @@ def build_graph() -> StateGraph:
     builder.add_node("run_scraper", node_run_nse_scraper)
     builder.add_node("vision_analysis", node_vision_analysis)
     builder.add_node("quantitative_analysis", node_quantitative_analysis)
+    builder.add_node("trend_engine", node_trend_engine)
     builder.add_node("confluence_engine", node_confluence_engine)
     builder.add_node("risk_management", node_risk_management)
     builder.add_node("decision_engine", node_decision_engine)
@@ -41,23 +43,26 @@ def build_graph() -> StateGraph:
     # 3. run_scraper feeds into quantitative_analysis
     builder.add_edge("run_scraper", "quantitative_analysis")
     
-    # 4. Both vision_analysis and quantitative_analysis fan-in to confluence_engine
-    builder.add_edge("vision_analysis", "confluence_engine")
-    builder.add_edge("quantitative_analysis", "confluence_engine")
+    # 4. Both vision_analysis and quantitative_analysis fan-in to trend_engine
+    builder.add_edge("vision_analysis", "trend_engine")
+    builder.add_edge("quantitative_analysis", "trend_engine")
     
-    # 5. confluence_engine feeds into risk_management
+    # 5. trend_engine feeds into confluence_engine
+    builder.add_edge("trend_engine", "confluence_engine")
+    
+    # 6. confluence_engine feeds into risk_management
     builder.add_edge("confluence_engine", "risk_management")
 
-    # 6. risk_management feeds into decision_engine
+    # 7. risk_management feeds into decision_engine
     builder.add_edge("risk_management", "decision_engine")
     
-    # 7. decision_engine feeds into trade_validator
+    # 8. decision_engine feeds into trade_validator
     builder.add_edge("decision_engine", "trade_validator")
     
-    # 8. trade_validator feeds into report_generator
+    # 9. trade_validator feeds into report_generator
     builder.add_edge("trade_validator", "report_generator")
 
-    # 9. report_generator feeds into END
+    # 10. report_generator feeds into END
     builder.add_edge("report_generator", END)
     
     # Compile the graph

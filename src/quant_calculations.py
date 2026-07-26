@@ -349,10 +349,9 @@ def calculate_technical_indicators(df: pd.DataFrame) -> dict:
     # ADX interpretation
     adx = ind.get("adx")
     if isinstance(adx, (int, float)):
-        impact = "Neutral"
+        impact = "Reinforcement"
         if adx > 60:
             interp = "Extremely strong trend."
-            impact = "Bullish" # Or neutral contextually, but it supports the trend
         elif adx >= 40:
             interp = "Very strong trend."
         elif adx >= 25:
@@ -360,7 +359,7 @@ def calculate_technical_indicators(df: pd.DataFrame) -> dict:
         elif adx >= 20:
             interp = "Emerging trend."
         else:
-            interp = "Weak trend. Choppy or sideways market."
+            interp = "Weak trend."
             
         interpretations["ADX"] = {
             "Value": round(adx, 2),
@@ -372,10 +371,10 @@ def calculate_technical_indicators(df: pd.DataFrame) -> dict:
     vwap = ind.get("vwap")
     if isinstance(vwap, (int, float)) and current_price > 0:
         if current_price > vwap:
-            interp = "Trading above VWAP indicates institutional bullish bias."
+            interp = "Price is trading above VWAP, indicating institutional bullish bias."
             impact = "Bullish"
         else:
-            interp = "Trading below VWAP indicates institutional bearish bias."
+            interp = "Price is trading below VWAP, indicating institutional bearish bias."
             impact = "Bearish"
             
         interpretations["VWAP"] = {
@@ -391,15 +390,21 @@ def calculate_technical_indicators(df: pd.DataFrame) -> dict:
         lower = bb.get("lower")
         if upper != UNAVAILABLE and lower != UNAVAILABLE and current_price > 0:
             val_str = f"Upper: {round(upper, 2)} | Lower: {round(lower, 2)}"
+            
+            band_width = (upper - lower) / lower
+            squeeze = band_width < 0.05
+            
             impact = "Neutral"
-            if current_price >= upper:
-                interp = "Price near upper band may indicate overextended bullishness or breakout."
-                impact = "Bearish"
-            elif current_price <= lower:
-                interp = "Price near lower band may indicate pullback or mean reversion opportunity."
+            if squeeze:
+                interp = "Band squeeze detected; high probability of imminent volatility expansion/breakout."
+            elif current_price >= upper * 0.995:
+                interp = "Price riding upper band or breaking out, indicating strong upside momentum but potential for mean reversion."
                 impact = "Bullish"
+            elif current_price <= lower * 1.005:
+                interp = "Price near lower band, indicating strong downside momentum but potential for mean reversion bounce."
+                impact = "Bearish"
             else:
-                interp = "Price is within the bands, indicating normal volatility."
+                interp = "Price is within the bands indicating normal volatility."
                 
             interpretations["Bollinger Bands"] = {
                 "Value": val_str,
