@@ -188,10 +188,10 @@
             <td>
                 <table style="width: 100%; border: 1px solid #e2e8f0; border-collapse: collapse; margin-top: 5px;">
                     <tr style="background-color: #f1f5f9;">
-                        <th style="padding: 4px; border: 1px solid #e2e8f0;">Component</th>
-                        <th style="padding: 4px; border: 1px solid #e2e8f0;">Weight</th>
-                        <th style="padding: 4px; border: 1px solid #e2e8f0;">Norm. Score</th>
-                        <th style="padding: 4px; border: 1px solid #e2e8f0;">Contribution</th>
+                        <th style="padding: 4px; border: 1px solid #e2e8f0; width: 40%;">Component</th>
+                        <th style="padding: 4px; border: 1px solid #e2e8f0; width: 20%;">Weight</th>
+                        <th style="padding: 4px; border: 1px solid #e2e8f0; width: 20%;">Norm. Score</th>
+                        <th style="padding: 4px; border: 1px solid #e2e8f0; width: 20%;">Contribution</th>
                     </tr>
                     {% for item in dec_obj.get('score_breakdown', []) %}
                     <tr>
@@ -336,7 +336,7 @@
             {% for k, v in interpretations.items() %}
             <tr>
                 <td><strong>{{ k }}</strong></td>
-                <td class="value-cell">{{ v.get('Value', 'N/A') }}</td>
+                <td class="value-cell">{{ v.get('Value', 'N/A') | safe }}</td>
                 <td>{{ v.get('Interpretation', 'N/A') }}</td>
                 <td>
                     {% set imp = v.get('Impact', 'Neutral') %}

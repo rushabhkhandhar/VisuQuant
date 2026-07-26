@@ -550,7 +550,7 @@ def calculate_technical_indicators(df: pd.DataFrame) -> dict:
         liquidity_warning = ""
         val_str = f"Rel Vol: {round(rel_vol, 2)}"
         if isinstance(adv_currency, (int, float)) and isinstance(adv_shares, (int, float)):
-            val_str += f" | ADV: {int(adv_shares/1000)}K | T/O: {int(adv_currency/1000000)}M"
+            val_str += f"<br>ADV: {int(adv_shares/1000)}K<br>T/O: {int(adv_currency/1000000)}M"
             if adv_shares < 100000 or adv_currency < 10000000:
                 liquidity_warning = " [SYSTEM WARNING: Fails baseline institutional liquidity filters. Low Tradeability.]"
                 

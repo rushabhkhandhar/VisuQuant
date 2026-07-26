@@ -823,6 +823,14 @@ def node_decision_engine(state: TradingState) -> dict:
                 decision["confidence"] = round(confidence, 2)
                 decision["strength"] = strength
                 decision["score_breakdown"] = score_breakdown
+                
+                # Filter out Bearish ADX from Bullish Factors
+                adx_interp = technical_indicators.get("interpretations", {}).get("ADX", {}).get("Impact", "")
+                if adx_interp in ["Bearish", "Bearish Reinforcement"]:
+                    decision["top_3_bullish_factors"] = [
+                        factor for factor in decision.get("top_3_bullish_factors", [])
+                        if "adx" not in factor.lower()
+                    ]
                     
             break
         except json.JSONDecodeError:
