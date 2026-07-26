@@ -1,4 +1,4 @@
-def calculate_risk_parameters(tech_ind: dict, confluence: dict, scraped: dict) -> dict:
+def calculate_risk_parameters(tech_ind: dict, confluence: dict, scraped: dict, unified_trend: dict = None) -> dict:
     warnings = []
     
     # 1. Base Price (Entry)
@@ -45,47 +45,84 @@ def calculate_risk_parameters(tech_ind: dict, confluence: dict, scraped: dict) -
             elif bb_width > 6.0:
                 volatility = "High"
 
-    # 4. Stop Loss (Baseline Long Scenario)
+    # Determine Direction
+    direction = "Bullish"
+    if unified_trend and unified_trend.get("direction"):
+        if "Bearish" in unified_trend["direction"]:
+            direction = "Bearish"
+            
+    # 4. Stop Loss
     stop_loss = None
-    if atr:
-        stop_loss = round(entry - (1.5 * atr), 2)
-    elif tech_ind.get("swing_low"):
-        stop_loss = round(tech_ind["swing_low"], 2)
-    elif tech_ind.get("pivot_points") and tech_ind["pivot_points"].get("S1"):
-        stop_loss = round(tech_ind["pivot_points"]["S1"], 2)
+    if direction == "Bullish":
+        if atr:
+            stop_loss = round(entry - (1.5 * atr), 2)
+        elif tech_ind.get("swing_low"):
+            stop_loss = round(tech_ind["swing_low"], 2)
+        elif tech_ind.get("pivot_points") and tech_ind["pivot_points"].get("S1"):
+            stop_loss = round(tech_ind["pivot_points"]["S1"], 2)
+            
+        if not stop_loss or stop_loss >= entry:
+            stop_loss = round(entry * 0.95, 2) # 5% fallback
+            warnings.append("Using 5% fallback stop loss due to lack of support indicators.")
+    else: # Bearish
+        if atr:
+            stop_loss = round(entry + (1.5 * atr), 2)
+        elif tech_ind.get("swing_high"):
+            stop_loss = round(tech_ind["swing_high"], 2)
+        elif tech_ind.get("pivot_points") and tech_ind["pivot_points"].get("R1"):
+            stop_loss = round(tech_ind["pivot_points"]["R1"], 2)
+            
+        if not stop_loss or stop_loss <= entry:
+            stop_loss = round(entry * 1.05, 2) # 5% fallback
+            warnings.append("Using 5% fallback stop loss due to lack of resistance indicators.")
         
-    if not stop_loss or stop_loss >= entry:
-        stop_loss = round(entry * 0.95, 2) # 5% fallback
-        warnings.append("Using 5% fallback stop loss due to lack of support indicators.")
-        
-    risk_amount = entry - stop_loss
+    risk_amount = abs(entry - stop_loss)
     
-    # 5. Targets (Baseline Long Scenario)
+    # 5. Targets
     t1, t2, t3 = None, None, None
-    if atr:
-        t1 = round(entry + (1.5 * atr), 2)
-        t2 = round(entry + (3.0 * atr), 2)
-        t3 = round(entry + (5.0 * atr), 2)
-    elif tech_ind.get("pivot_points"):
-        pp = tech_ind["pivot_points"]
-        t1 = pp.get("R1", round(entry * 1.02, 2))
-        t2 = pp.get("R2", round(entry * 1.04, 2))
-        t3 = round(entry * 1.06, 2) # fallback
-    else:
-        t1 = round(entry * 1.02, 2)
-        t2 = round(entry * 1.04, 2)
-        t3 = round(entry * 1.06, 2)
-        warnings.append("Using fixed percentage targets due to lack of volatility/pivot indicators.")
+    if direction == "Bullish":
+        if atr:
+            t1 = round(entry + (1.5 * atr), 2)
+            t2 = round(entry + (3.0 * atr), 2)
+            t3 = round(entry + (5.0 * atr), 2)
+        elif tech_ind.get("pivot_points"):
+            pp = tech_ind["pivot_points"]
+            t1 = pp.get("R1", round(entry * 1.02, 2))
+            t2 = pp.get("R2", round(entry * 1.04, 2))
+            t3 = round(entry * 1.06, 2)
+        else:
+            t1 = round(entry * 1.02, 2)
+            t2 = round(entry * 1.04, 2)
+            t3 = round(entry * 1.06, 2)
+            warnings.append("Using fixed percentage targets due to lack of volatility/pivot indicators.")
+    else: # Bearish
+        if atr:
+            t1 = round(entry - (1.5 * atr), 2)
+            t2 = round(entry - (3.0 * atr), 2)
+            t3 = round(entry - (5.0 * atr), 2)
+        elif tech_ind.get("pivot_points"):
+            pp = tech_ind["pivot_points"]
+            t1 = pp.get("S1", round(entry * 0.98, 2))
+            t2 = pp.get("S2", round(entry * 0.96, 2))
+            t3 = round(entry * 0.94, 2)
+        else:
+            t1 = round(entry * 0.98, 2)
+            t2 = round(entry * 0.96, 2)
+            t3 = round(entry * 0.94, 2)
+            warnings.append("Using fixed percentage targets due to lack of volatility/pivot indicators.")
 
     # 6. Risk / Reward Ratios
-    def calc_rr(target, entry_price, risk):
+    def calc_rr(target, entry_price, risk, trade_dir):
         if not target or not entry_price or risk <= 0:
             return None
-        return round((target - entry_price) / risk, 2)
+        if trade_dir == "Bullish":
+            return round((target - entry_price) / risk, 2)
+        else:
+            return round((entry_price - target) / risk, 2)
 
-    rr1 = calc_rr(t1, entry, risk_amount)
-    rr2 = calc_rr(t2, entry, risk_amount)
-    rr3 = calc_rr(t3, entry, risk_amount)
+    rr1 = calc_rr(t1, entry, risk_amount, direction)
+    rr2 = calc_rr(t2, entry, risk_amount, direction)
+    rr3 = calc_rr(t3, entry, risk_amount, direction)
     
     # 7. Position Sizing
     position_size = "Medium"

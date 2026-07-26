@@ -376,7 +376,18 @@
         </tr>
         <tr>
             <td><strong>Trend Direction</strong></td>
-            <td>{{ vision.get('trend', {}).get('direction', 'N/A') }} <span style="color: #64748b; font-size: 12px;">(Conf: {{ vision.get('trend', {}).get('confidence', 'N/A') }})</span></td>
+            <td>
+                {% set vt = vision.get('trend', {}) %}
+                {% if vt.get('long_term_trend') %}
+                    <strong>Long:</strong> {{ vt.get('long_term_trend', 'N/A') }} | 
+                    <strong>Med:</strong> {{ vt.get('medium_term_trend', 'N/A') }} | 
+                    <strong>Short:</strong> {{ vt.get('short_term_structure', 'N/A') }}<br>
+                    <span style="font-size: 13px; font-style: italic;">"{{ vt.get('overall_interpretation', '') }}"</span>
+                {% else %}
+                    {{ vt.get('direction', 'N/A') }}
+                {% endif %}
+                <span style="color: #64748b; font-size: 12px;">(Conf: {{ vt.get('confidence', 'N/A') }})</span>
+            </td>
         </tr>
         <tr>
             <td><strong>Market Structure (Quantitative)</strong></td>

@@ -557,10 +557,11 @@ def node_risk_management(state: TradingState) -> dict:
     tech_ind = state.get("technical_indicators", {})
     confluence = state.get("confluence_analysis", {})
     scraped = state.get("scraped_data", {})
+    unified_trend = state.get("unified_trend", {})
     
     print(f"[{ticker}] Running risk management calculations...")
     
-    risk_params = calculate_risk_parameters(tech_ind, confluence, scraped)
+    risk_params = calculate_risk_parameters(tech_ind, confluence, scraped, unified_trend)
     
     print(f"[{ticker}] Risk management complete.")
     return {"risk_analysis": risk_params}
@@ -755,8 +756,8 @@ def node_decision_engine(state: TradingState) -> dict:
                         score_breakdown.append({
                             "component": comp.replace("_", " ").title(),
                             "weight": "0% (Excluded)",
-                            "normalized_score": 0.0,
-                            "contribution": "+0.0"
+                            "normalized_score": "N/A",
+                            "contribution": "N/A"
                         })
                         continue
                         
@@ -831,6 +832,29 @@ def node_decision_engine(state: TradingState) -> dict:
                         factor for factor in decision.get("top_3_bullish_factors", [])
                         if "adx" not in factor.lower()
                     ]
+                    
+                # Synchronize execution block and risk state with final mathematical recommendation
+                from src.risk_calculations import calculate_risk_parameters
+                if rec in ["SELL", "STRONG SELL", "AVOID"]:
+                    # Force a bearish risk profile
+                    new_risk = calculate_risk_parameters(technical_indicators, confluence_analysis, state.get("scraped_data", {}), {"direction": "Bearish"})
+                    risk_analysis.update(new_risk)
+                    decision["execution"] = {
+                        "entry": new_risk.get("entry"),
+                        "stop_loss": new_risk.get("stop_loss"),
+                        "targets": new_risk.get("targets", {}),
+                        "info": "Targets auto-adjusted for short position."
+                    }
+                elif rec in ["BUY", "STRONG BUY"]:
+                    # Force a bullish risk profile
+                    new_risk = calculate_risk_parameters(technical_indicators, confluence_analysis, state.get("scraped_data", {}), {"direction": "Bullish"})
+                    risk_analysis.update(new_risk)
+                    decision["execution"] = {
+                        "entry": new_risk.get("entry"),
+                        "stop_loss": new_risk.get("stop_loss"),
+                        "targets": new_risk.get("targets", {}),
+                        "info": "Targets auto-adjusted for long position."
+                    }
                     
             break
         except json.JSONDecodeError:
