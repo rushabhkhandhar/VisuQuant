@@ -82,7 +82,6 @@ def node_vision_analysis(state: TradingState) -> dict:
 
     Extract:
     1. Trend (Direction and Visual confidence 0-100)
-    2. Price Structure (Higher Highs, Higher Lows, Lower Highs, Lower Lows)
     3. Support Zones (Approximate price, Strength)
     4. Resistance Zones (Approximate price, Strength)
     5. Chart Patterns & Candlestick Patterns
@@ -99,12 +98,6 @@ def node_vision_analysis(state: TradingState) -> dict:
       "trend": {{
         "direction": "Uptrend | Downtrend | Sideways | Unknown",
         "confidence": 0
-      }},
-      "price_structure": {{
-        "higher_highs": true,
-        "higher_lows": true,
-        "lower_highs": false,
-        "lower_lows": false
       }},
       "support_zones": [
         {{

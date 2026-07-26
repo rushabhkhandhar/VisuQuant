@@ -28,6 +28,76 @@ def safe_get(val):
     except (ValueError, TypeError):
         return UNAVAILABLE
 
+def detect_market_structure(df: pd.DataFrame, window: int = 3) -> dict:
+    if df is None or len(df) < (window * 2 + 1):
+        return {
+            "higher_highs": False,
+            "higher_lows": False,
+            "lower_highs": False,
+            "lower_lows": False,
+            "trend": "Unknown",
+            "confidence": 0.0
+        }
+        
+    highs = df['High'].values
+    lows = df['Low'].values
+    
+    swing_highs = []
+    swing_lows = []
+    
+    for i in range(window, len(df) - window):
+        # Check for swing high
+        is_swing_high = True
+        for j in range(1, window + 1):
+            if highs[i] <= highs[i - j] or highs[i] <= highs[i + j]:
+                is_swing_high = False
+                break
+        if is_swing_high:
+            swing_highs.append(highs[i])
+            
+        # Check for swing low
+        is_swing_low = True
+        for j in range(1, window + 1):
+            if lows[i] >= lows[i - j] or lows[i] >= lows[i + j]:
+                is_swing_low = False
+                break
+        if is_swing_low:
+            swing_lows.append(lows[i])
+            
+    # Default state
+    hh, hl, lh, ll = False, False, False, False
+    trend = "Sideways / Transition"
+    confidence = 0.5
+    
+    if len(swing_highs) >= 2:
+        sh1, sh2 = swing_highs[-2], swing_highs[-1]
+        hh = sh2 > sh1
+        lh = sh2 < sh1
+        
+    if len(swing_lows) >= 2:
+        sl1, sl2 = swing_lows[-2], swing_lows[-1]
+        hl = sl2 > sl1
+        ll = sl2 < sl1
+        
+    if hh and hl:
+        trend = "Bullish"
+        confidence = 0.9
+    elif lh and ll:
+        trend = "Bearish"
+        confidence = 0.9
+    elif (hh and ll) or (lh and hl):
+        trend = "Sideways / Transition"
+        confidence = 0.6
+        
+    return {
+        "higher_highs": bool(hh),
+        "higher_lows": bool(hl),
+        "lower_highs": bool(lh),
+        "lower_lows": bool(ll),
+        "trend": trend,
+        "confidence": confidence
+    }
+
 def calculate_technical_indicators(df: pd.DataFrame) -> dict:
     if df is None or df.empty or len(df) < 2:
         return {}
@@ -287,5 +357,6 @@ def calculate_technical_indicators(df: pd.DataFrame) -> dict:
                 interpretations["macd_condition"] = "Neutral (Line == Signal)"
 
     ind["interpretations"] = interpretations
-
+    ind["market_structure"] = detect_market_structure(df)
+    
     return ind

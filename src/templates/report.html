@@ -336,13 +336,17 @@
             <td>{{ vision.get('trend', {}).get('direction', 'N/A') }} <span style="color: #64748b; font-size: 12px;">(Conf: {{ vision.get('trend', {}).get('confidence', 'N/A') }})</span></td>
         </tr>
         <tr>
-            <td><strong>Market Structure</strong></td>
+            <td><strong>Market Structure (Quantitative)</strong></td>
             <td>
-                {% set ms = vision.get('price_structure', vision.get('market_structure', {})) %}
+                {% set ms = tech.get('market_structure', {}) %}
                 <span class="value-cell">HH: {{ ms.get('higher_highs', 'N/A') }}</span> | 
                 <span class="value-cell">HL: {{ ms.get('higher_lows', 'N/A') }}</span> | 
                 <span class="value-cell">LH: {{ ms.get('lower_highs', 'N/A') }}</span> | 
-                <span class="value-cell">LL: {{ ms.get('lower_lows', 'N/A') }}</span>
+                <span class="value-cell">LL: {{ ms.get('lower_lows', 'N/A') }}</span><br>
+                <span class="value-cell" style="margin-top: 5px; display: inline-block;">
+                    <strong>Trend:</strong> {{ ms.get('trend', 'N/A') }} 
+                    <span style="color: #64748b; font-size: 12px;">(Conf: {{ ms.get('confidence', 'N/A') }})</span>
+                </span>
             </td>
         </tr>
         <tr>
