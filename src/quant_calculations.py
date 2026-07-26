@@ -360,3 +360,104 @@ def calculate_technical_indicators(df: pd.DataFrame) -> dict:
     ind["market_structure"] = detect_market_structure(df)
     
     return ind
+
+def cluster_support_resistance(vision: dict, tech: dict, current_price: float, tolerance_pct: float = 0.015) -> dict:
+    levels = []
+
+    if vision:
+        for sz in vision.get('support_zones', []):
+            try:
+                price = float(sz.get('price'))
+                if not pd.isna(price) and price > 0:
+                    levels.append({"price": price, "source": "Vision Support", "type": "Support"})
+            except:
+                pass
+        for rz in vision.get('resistance_zones', []):
+            try:
+                price = float(rz.get('price'))
+                if not pd.isna(price) and price > 0:
+                    levels.append({"price": price, "source": "Vision Resistance", "type": "Resistance"})
+            except:
+                pass
+
+    pivots = tech.get("pivot_points", {})
+    if isinstance(pivots, dict) and "status" not in pivots:
+        for k, v in pivots.items():
+            if isinstance(v, (int, float)):
+                t = "Support" if "S" in k else ("Resistance" if "R" in k else "Pivot")
+                levels.append({"price": float(v), "source": f"Pivot {k}", "type": t})
+
+    emas = tech.get("ema", {})
+    if isinstance(emas, dict):
+        for k, v in emas.items():
+            if isinstance(v, (int, float)):
+                t = "Support" if v < current_price else "Resistance"
+                levels.append({"price": float(v), "source": f"EMA{k}", "type": t})
+
+    vwap = tech.get("vwap")
+    if isinstance(vwap, (int, float)):
+        t = "Support" if vwap < current_price else "Resistance"
+        levels.append({"price": float(vwap), "source": "VWAP", "type": t})
+
+    bb = tech.get("bollinger_bands", {})
+    if isinstance(bb, dict) and "status" not in bb:
+        upper = bb.get("upper")
+        lower = bb.get("lower")
+        if isinstance(upper, (int, float)):
+            levels.append({"price": float(upper), "source": "BB Upper", "type": "Resistance"})
+        if isinstance(lower, (int, float)):
+            levels.append({"price": float(lower), "source": "BB Lower", "type": "Support"})
+
+    if not levels:
+        return {"support": [], "resistance": []}
+
+    levels.sort(key=lambda x: x["price"])
+    clusters = []
+    current_cluster = [levels[0]]
+
+    for i in range(1, len(levels)):
+        lvl = levels[i]
+        avg_cluster_price = sum(x["price"] for x in current_cluster) / len(current_cluster)
+        
+        if abs(lvl["price"] - avg_cluster_price) / avg_cluster_price <= tolerance_pct:
+            current_cluster.append(lvl)
+        else:
+            clusters.append(current_cluster)
+            current_cluster = [lvl]
+            
+    if current_cluster:
+        clusters.append(current_cluster)
+
+    support_clusters = []
+    resistance_clusters = []
+
+    for cluster in clusters:
+        avg_price = round(sum(x["price"] for x in cluster) / len(cluster), 2)
+        sources = [x["source"] for x in cluster]
+        
+        factors = len(sources)
+        if factors >= 3:
+            strength = "Strong"
+        elif factors == 2:
+            strength = "Medium"
+        else:
+            strength = "Weak"
+
+        cluster_obj = {
+            "price": avg_price,
+            "strength": strength,
+            "factors": sources
+        }
+
+        if avg_price <= current_price:
+            support_clusters.append(cluster_obj)
+        else:
+            resistance_clusters.append(cluster_obj)
+
+    support_clusters.sort(key=lambda x: x["price"], reverse=True)
+    resistance_clusters.sort(key=lambda x: x["price"])
+
+    return {
+        "support": support_clusters,
+        "resistance": resistance_clusters
+    }

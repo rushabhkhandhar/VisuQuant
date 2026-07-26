@@ -395,6 +395,21 @@ def node_confluence_engine(state: TradingState) -> dict:
         
     print(f"[{ticker}] Confluence analysis complete.")
     
+    # Run mathematical clustering for Support/Resistance
+    from src.quant_calculations import cluster_support_resistance
+    
+    current_price = 0.0
+    scraped = state.get("scraped_data", {})
+    if isinstance(scraped, dict):
+        history = scraped.get("history", scraped.get("historical_data", scraped.get("data", [])))
+        if history and len(history) > 0:
+            current_price = float(history[-1].get("Close", history[-1].get("close", 0.0)))
+    elif isinstance(scraped, list) and len(scraped) > 0:
+        current_price = float(scraped[-1].get("Close", scraped[-1].get("close", 0.0)))
+        
+    clustered_sr = cluster_support_resistance(vision_features, technical_indicators, current_price, tolerance_pct=0.015)
+    parsed_json["clustered_sr"] = clustered_sr
+    
     # Return confluence_analysis, and keep validation_result populated to preserve backward compatibility for Decision node
     return {
         "confluence_analysis": parsed_json,

@@ -350,12 +350,13 @@
             </td>
         </tr>
         <tr>
-            <td><strong>Support Zones</strong></td>
+            <td><strong>Confluence Support Zones</strong></td>
             <td>
-                {% set sz = vision.get('support_zones', []) %}
-                {% if sz %}
-                    {% for s in sz %}
-                    {{ s.get('price', 'N/A') }} ({{ s.get('strength', 'N/A') }})<br>
+                {% set csr = confluence.get('clustered_sr', {}).get('support', []) %}
+                {% if csr %}
+                    {% for c in csr %}
+                    <strong>{{ c.get('price', 'N/A') }}</strong> ({{ c.get('strength', 'N/A') }}) - 
+                    <span style="font-size: 12px; color: #64748b;">{{ c.get('factors', []) | join(', ') }}</span><br>
                     {% endfor %}
                 {% else %}
                     None detected
@@ -363,12 +364,13 @@
             </td>
         </tr>
         <tr>
-            <td><strong>Resistance Zones</strong></td>
+            <td><strong>Confluence Resistance Zones</strong></td>
             <td>
-                {% set rz = vision.get('resistance_zones', []) %}
-                {% if rz %}
-                    {% for r in rz %}
-                    {{ r.get('price', 'N/A') }} ({{ r.get('strength', 'N/A') }})<br>
+                {% set crz = confluence.get('clustered_sr', {}).get('resistance', []) %}
+                {% if crz %}
+                    {% for c in crz %}
+                    <strong>{{ c.get('price', 'N/A') }}</strong> ({{ c.get('strength', 'N/A') }}) - 
+                    <span style="font-size: 12px; color: #64748b;">{{ c.get('factors', []) | join(', ') }}</span><br>
                     {% endfor %}
                 {% else %}
                     None detected
