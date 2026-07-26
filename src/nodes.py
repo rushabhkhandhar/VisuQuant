@@ -431,7 +431,7 @@ def node_decision_engine(state: TradingState) -> dict:
     
     prompt = f"""
     You are the final institutional trading decision engine for {ticker}.
-    Your responsibility is to review completed analyses.
+    Your responsibility is to review the following analyses and assign a mathematical score for each category.
     
     Available Visual Features:
     {json.dumps(vision_features)}
@@ -445,86 +445,54 @@ def node_decision_engine(state: TradingState) -> dict:
     Risk Management Profile:
     {json.dumps(risk_analysis)}
     
-    Do not perform calculations.
-    Do not generate numerical estimates.
-    Do not invent missing information.
-    Base every conclusion only on the supplied structured JSON.
-    If evidence is contradictory, prefer HOLD over speculative recommendations.
-    Confidence must reflect the quality and consistency of the supplied evidence.
+    SCORING RULES (CRITICAL):
+    You must assign a numerical score to each category based on its bullish or bearish nature. 
+    Contradictions (where vision and math disagree) should result in a score of 0 for that category, effectively neutralizing it.
     
-    If confluence is weak OR risk is high, become more conservative.
-    If evidence is contradictory, prefer HOLD over speculative recommendations.
-    If you recommend HOLD due to contradictory evidence, your "why_chosen" MUST explicitly state: "HOLD recommended due to contradictory evidence between vision and quantitative metrics", NOT because of risk/reward.
-    
-    REASONING ARRAY RULE (CRITICAL):
-    For your "reasoning" array, you MUST directly copy the category, status, and reasons from the supplied Confluence Analysis.
-    Do NOT re-evaluate the trend yourself. Do NOT hallucinate mathematical comparisons (like EMA20 > SMA20) if they contradict the Confluence Engine.
-    
-    RISK REWARD THRESHOLD (CRITICAL):
-    You MUST read the "metrics" -> "meets_min_rr_threshold" boolean value from the Risk Management Profile.
-    If "meets_min_rr_threshold" is false, you MUST NEVER recommend BUY, SELL, STRONG BUY, or STRONG SELL.
-    Instead, you MUST recommend "HOLD" and your "why_chosen" field MUST explicitly state: "Risk Reward below acceptable threshold."
+    1. Trend (Max ±15): +15 if strongly Bullish, -15 if strongly Bearish. 0 if contradictory.
+    2. Momentum (Max ±10): +10 if strongly Bullish, -10 if strongly Bearish. 0 if contradictory.
+    3. Volume (Max ±7.5): +7.5 if supportive of a Bullish trend, -7.5 if supportive of a Bearish trend. 0 if neutral.
+    4. Candlestick Patterns (Max ±5): +5 if Bullish patterns exist, -5 if Bearish. 0 if none/mixed.
+    5. Chart Patterns (Max ±5): +5 if Bullish (e.g. Ascending triangle), -5 if Bearish. 0 if none.
+    6. Support/Resistance (Max ±5): +5 if price is near strong support, -5 if near strong resistance. 0 if neutral.
+    7. Risk Management (Max ±2.5): +2.5 if Risk/Reward is highly favorable (meets min threshold), -2.5 if poor.
+
+    Do not calculate the total score yourself. Only output the individual scores.
     
     HOLD RULE (CRITICAL):
-    If your recommendation is "HOLD", you MUST NOT provide trading execution parameters.
-    For a HOLD recommendation, your execution block MUST exactly match this:
-    "execution": {{
-        "status": "Inactive",
-        "entry": null,
-        "stop_loss": null,
-        "targets": [],
-        "reason": "No actionable trade."
-    }}
+    If the Risk/Reward threshold (meets_min_rr_threshold) is false, you MUST set Risk Management score to -2.5.
     
-    CONFIDENCE MAPPING RULE:
-    Your recommendation MUST align with the Confluence Analysis `overall_score`:
-    - 0.85 - 1.00: STRONG BUY or STRONG SELL
-    - 0.70 - 0.85: BUY or SELL
-    - 0.50 - 0.70: HOLD
-    - 0.00 - 0.40: AVOID (Output as HOLD)
-    Confidence decreases because of contradictions, it does NOT collapse to 0 just because the recommendation is HOLD.
-
     RETURN EXACTLY THIS JSON SCHEMA:
     {{
         "decision": {{
-            "recommendation": "STRONG BUY | BUY | HOLD | SELL | STRONG SELL",
-            "confidence": 0,
-            "strength": "High | Medium | Low",
-            "why_chosen": "...",
-            "alternatives_rejected": "...",
+            "scores": {{
+                "trend": 0,
+                "momentum": 0,
+                "volume": 0,
+                "candlestick": 0,
+                "chart": 0,
+                "support_resistance": 0,
+                "risk": 0
+            }},
             "reasoning": [
                 {{
                     "category": "Trend | Momentum | Support Resistance | Volume | Patterns | Risk",
-                    "weight": 0,
-                    "status": "Confirmed | Contradiction | Partially Confirmed | Unavailable",
-                    "evidence": [
-                        "..."
-                    ],
                     "reason": "..."
                 }}
             ],
-            "supporting_factors": [
-                "..."
-            ],
-            "risk_factors": [
-                "..."
-            ],
             "execution": {{
-                "status": "Active | Inactive",
                 "entry": 0,
                 "stop_loss": 0,
                 "targets": {{
                     "target_1": 0,
                     "target_2": 0,
                     "target_3": 0
-                }},
-                "position_size": "...",
-                "reason": "..."
+                }}
             }}
         }}
     }}
     
-    NOTE: For the "execution" block (if not HOLD), strictly copy the values from the provided Risk Management Profile JSON. Do NOT calculate them yourself.
+    NOTE: For the "execution" block, strictly copy the values from the provided Risk Management Profile JSON. Do NOT calculate them yourself.
     """
     
     parsed_json = None
@@ -556,27 +524,49 @@ def node_decision_engine(state: TradingState) -> dict:
         try:
             parsed_json = json.loads(cleaned_str)
             
-            # Strictly enforce HOLD logic and Mathematical Confidence in post-processing
             if parsed_json and "decision" in parsed_json:
                 decision = parsed_json["decision"]
                 
-                # Enforce Mathematical Confidence based on Confluence Score
-                conf_score = 0
-                if confluence_analysis:
-                    conf_obj = confluence_analysis.get("confluence_analysis", confluence_analysis)
-                    conf_score = float(conf_obj.get("overall_score", 0))
-                decision["confidence"] = conf_score
+                # Retrieve individual scores
+                scores = decision.get("scores", {})
+                trend_score = float(scores.get("trend", 0))
+                momentum_score = float(scores.get("momentum", 0))
+                volume_score = float(scores.get("volume", 0))
+                candle_score = float(scores.get("candlestick", 0))
+                chart_score = float(scores.get("chart", 0))
+                sr_score = float(scores.get("support_resistance", 0))
+                risk_score = float(scores.get("risk", 0))
                 
-                # Determine recommendation strength based on user mapping if not driven by Risk/Reward
-                # The LLM chooses the direction (BUY/SELL) and RR logic, we ensure confidence doesn't drop to 0
+                # Base score is 50. Add all bullish/bearish contributions.
+                total_score = 50 + trend_score + momentum_score + volume_score + candle_score + chart_score + sr_score + risk_score
                 
-                if decision.get("recommendation") == "HOLD":
+                # Clamp score between 0 and 100
+                total_score = max(0, min(100, total_score))
+                
+                # Deterministic Recommendation Mapping
+                if total_score >= 85:
+                    rec = "STRONG BUY"
+                elif total_score >= 70:
+                    rec = "BUY"
+                elif total_score >= 45:
+                    rec = "HOLD"
+                elif total_score >= 25:
+                    rec = "SELL"
+                else:
+                    rec = "AVOID"
+                    
+                decision["total_score"] = total_score
+                decision["recommendation"] = rec
+                decision["confidence"] = total_score / 100.0  # Normalize to 0-1 for compatibility
+                
+                # Execution parameter cleanup for HOLD/AVOID
+                if rec in ["HOLD", "AVOID"]:
                     decision["execution"] = {
                         "status": "Inactive",
                         "entry": None,
                         "stop_loss": None,
                         "targets": [],
-                        "reason": "No actionable trade."
+                        "reason": "Recommendation is not actionable."
                     }
                     
             break

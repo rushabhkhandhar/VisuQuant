@@ -16,7 +16,7 @@ def validate_trade_parameters(tech_ind: dict, confluence: dict, risk: dict, deci
     
     # 1. Decision Validation
     rec = decision.get("recommendation", "")
-    valid_recs = ["STRONG BUY", "BUY", "HOLD", "SELL", "STRONG SELL"]
+    valid_recs = ["STRONG BUY", "BUY", "HOLD", "SELL", "STRONG SELL", "AVOID"]
     if rec in valid_recs:
         checks["decision"] = True
     else:

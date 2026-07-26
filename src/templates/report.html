@@ -162,16 +162,36 @@
             </td>
         </tr>
         <tr>
-            <td><strong>Confidence</strong></td>
-            <td class="value-cell">{{ dec_obj.get('confidence', 'N/A') }}</td>
+            <td><strong>Total Score (0-100)</strong></td>
+            <td class="value-cell">{{ dec_obj.get('total_score', 'N/A') }}</td>
         </tr>
         <tr>
-            <td><strong>Strength</strong></td>
-            <td>{{ dec_obj.get('strength', 'N/A') }}</td>
+            <td><strong>Score Breakdown</strong></td>
+            <td>
+                {% set sc = dec_obj.get('scores', {}) %}
+                <span class="value-cell">Trend: {{ sc.get('trend', '0') }}/30</span> | 
+                <span class="value-cell">Momentum: {{ sc.get('momentum', '0') }}/20</span> | 
+                <span class="value-cell">Volume: {{ sc.get('volume', '0') }}/15</span><br>
+                <span class="value-cell">Candlestick: {{ sc.get('candlestick', '0') }}/10</span> | 
+                <span class="value-cell">Chart Patterns: {{ sc.get('chart', '0') }}/10</span> | 
+                <span class="value-cell">S/R: {{ sc.get('support_resistance', '0') }}/10</span> | 
+                <span class="value-cell">Risk: {{ sc.get('risk', '0') }}/5</span>
+            </td>
         </tr>
         <tr>
-            <td><strong>Why Chosen</strong></td>
-            <td>{{ dec_obj.get('why_chosen', 'N/A') }}</td>
+            <td><strong>Reasoning</strong></td>
+            <td>
+                {% set reasons = dec_obj.get('reasoning', []) %}
+                {% if reasons %}
+                    <ul style="margin: 0; padding-left: 15px;">
+                    {% for r in reasons %}
+                        <li><strong>{{ r.get('category', '') }}:</strong> {{ r.get('reason', '') }}</li>
+                    {% endfor %}
+                    </ul>
+                {% else %}
+                    N/A
+                {% endif %}
+            </td>
         </tr>
     </table>
 </div>
