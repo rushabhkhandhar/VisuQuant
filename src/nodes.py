@@ -468,8 +468,8 @@ def node_decision_engine(state: TradingState) -> dict:
     You must assign a numerical score to each category based on its bullish or bearish nature. 
     Contradictions (where vision and math disagree) should result in a score of 0 for that category, effectively neutralizing it.
     
-    1. Trend (Max ±15): +15 if strongly Bullish, -15 if strongly Bearish. 0 if contradictory.
-    2. Momentum (Max ±10): +10 if strongly Bullish, -10 if strongly Bearish. 0 if contradictory.
+    1. Trend (Max ±15): +15 if strongly Bullish, -15 if strongly Bearish. 0 if contradictory. ADX RULE: High ADX (>25) should increase confidence and maximize the trend score. Low ADX (<20) should reduce the trend score.
+    2. Momentum (Max ±10): +10 if strongly Bullish, -10 if strongly Bearish. 0 if contradictory. ADX RULE: High ADX (>40) indicates a very strong trend, which should reduce the penalty applied by contrary/bearish momentum (e.g. temporary pullbacks).
     3. Volume (Max ±7.5): +7.5 if supportive of a Bullish trend, -7.5 if supportive of a Bearish trend. 0 if neutral.
     4. Candlestick Patterns (Max ±5): +5 if Bullish patterns exist, -5 if Bearish. 0 if none/mixed.
     5. Chart Patterns (Max ±5): +5 if Bullish (e.g. Ascending triangle), -5 if Bearish. 0 if none.

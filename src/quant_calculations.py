@@ -350,13 +350,20 @@ def calculate_technical_indicators(df: pd.DataFrame) -> dict:
     adx = ind.get("adx")
     if isinstance(adx, (int, float)):
         impact = "Neutral"
-        if adx > 25:
+        if adx > 60:
+            interp = "Extremely strong trend."
+            impact = "Bullish" # Or neutral contextually, but it supports the trend
+        elif adx >= 40:
             interp = "Very strong trend."
+        elif adx >= 25:
+            interp = "Strong trend."
+        elif adx >= 20:
+            interp = "Emerging trend."
         else:
-            interp = "Weak or no trend. Choppy or sideways market."
+            interp = "Weak trend. Choppy or sideways market."
             
         interpretations["ADX"] = {
-            "Value": adx,
+            "Value": round(adx, 2),
             "Interpretation": interp,
             "Impact": impact
         }
