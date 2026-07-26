@@ -62,6 +62,19 @@ def validate_trade_parameters(tech_ind: dict, confluence: dict, risk: dict, deci
             "reason": "Volume interpretation is missing or Unknown.",
             "resolution": "Check volume data availability."
         })
+        
+    # Check: Institutional Liquidity
+    adv_shares = tech_ind.get("adv_shares")
+    adv_currency = tech_ind.get("adv_currency")
+    if isinstance(adv_shares, (int, float)) and isinstance(adv_currency, (int, float)):
+        if adv_shares < 100000 or adv_currency < 10000000:
+            warnings.append({
+                "severity": "High",
+                "module": "Quantitative Engine",
+                "reason": f"Fails baseline institutional liquidity filters (ADV: {int(adv_shares/1000)}K, Turnover: {int(adv_currency/1000000)}M).",
+                "resolution": "Flagged for low tradeability."
+            })
+            checks["consistency"] = False
 
     # Check: High confidence but unknown trend
     conf = decision.get("confidence")

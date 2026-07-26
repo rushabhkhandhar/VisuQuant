@@ -277,8 +277,18 @@ def calculate_technical_indicators(df: pd.DataFrame) -> dict:
         vol_sma20 = v.rolling(20).mean()
         rel_vol = v / vol_sma20
         ind["relative_volume"] = safe_get(rel_vol)
+        
+        # Absolute Liquidity metrics
+        current_price = float(c.iloc[-1])
+        adv_shares = float(vol_sma20.iloc[-1])
+        currency_adv = adv_shares * current_price
+        
+        ind["adv_shares"] = round(adv_shares, 2)
+        ind["adv_currency"] = round(currency_adv, 2)
     else:
         ind["relative_volume"] = UNAVAILABLE
+        ind["adv_shares"] = UNAVAILABLE
+        ind["adv_currency"] = UNAVAILABLE
 
     # Pivot Points (Standard Daily based on previous day)
     if len(c) >= 2:
@@ -391,17 +401,27 @@ def calculate_technical_indicators(df: pd.DataFrame) -> dict:
     # ADX interpretation
     adx = ind.get("adx")
     if isinstance(adx, (int, float)):
-        impact = "Reinforcement"
+        # Directional Gating
+        rsi_val = ind.get("rsi")
+        direction = "Neutral"
+        if isinstance(rsi_val, (int, float)):
+            if rsi_val > 50:
+                direction = "Bullish"
+            elif rsi_val < 50:
+                direction = "Bearish"
+                
+        impact = f"{direction} Reinforcement" if adx >= 20 and direction != "Neutral" else "Reinforcement"
+        
         if adx > 60:
-            interp = "Extremely strong trend."
+            interp = f"Extremely strong {direction.lower()} trend." if direction != "Neutral" else "Extremely strong trend."
         elif adx >= 40:
-            interp = "Very strong trend."
+            interp = f"Very strong {direction.lower()} trend." if direction != "Neutral" else "Very strong trend."
         elif adx >= 25:
-            interp = "Strong trend."
+            interp = f"Strong {direction.lower()} trend." if direction != "Neutral" else "Strong trend."
         elif adx >= 20:
-            interp = "Emerging trend."
+            interp = f"Emerging {direction.lower()} trend." if direction != "Neutral" else "Emerging trend."
         else:
-            interp = "Weak trend."
+            interp = "Weak trend (sideways/choppy)."
             
         interpretations["ADX"] = {
             "Value": round(adx, 2),
@@ -506,6 +526,9 @@ def calculate_technical_indicators(df: pd.DataFrame) -> dict:
 
     # Volume interpretation
     rel_vol = ind.get("relative_volume")
+    adv_currency = ind.get("adv_currency")
+    adv_shares = ind.get("adv_shares")
+    
     if isinstance(rel_vol, (int, float)) and not df.empty:
         last_c = df['Close'].iloc[-1]
         last_o = df['Open'].iloc[-1]
@@ -523,9 +546,17 @@ def calculate_technical_indicators(df: pd.DataFrame) -> dict:
             interp = "Neutral (Average participation)"
             impact = "Neutral"
             
+        # Absolute Liquidity Filter
+        liquidity_warning = ""
+        val_str = f"Rel Vol: {round(rel_vol, 2)}"
+        if isinstance(adv_currency, (int, float)) and isinstance(adv_shares, (int, float)):
+            val_str += f" | ADV: {int(adv_shares/1000)}K | T/O: {int(adv_currency/1000000)}M"
+            if adv_shares < 100000 or adv_currency < 10000000:
+                liquidity_warning = " [SYSTEM WARNING: Fails baseline institutional liquidity filters. Low Tradeability.]"
+                
         interpretations["Volume"] = {
-            "Value": round(rel_vol, 2),
-            "Interpretation": interp,
+            "Value": val_str,
+            "Interpretation": interp + liquidity_warning,
             "Impact": impact
         }
 

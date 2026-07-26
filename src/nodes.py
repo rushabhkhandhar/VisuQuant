@@ -602,12 +602,13 @@ def node_decision_engine(state: TradingState) -> dict:
     
     INSTRUCTIONS (CRITICAL):
     1. You must evaluate 10 distinct technical components. Base trend on Unified Trend Output. Base indicator impact strictly on provided interpretations.
-    2. For each component, assign a mathematical score between -1.0 (Maximally Bearish) and 1.0 (Maximally Bullish). 0.0 means neutral or unavailable.
-    3. Provide a brief 1-sentence reason for each score.
-    4. Provide the top 3 bullish factors and top 3 bearish factors overall.
-    5. GOLDEN RULE: The report should never read like independent AI modules stitched together. It should read like one experienced institutional technical analyst who has considered every indicator before writing a single coherent conclusion. Every statement should be derived from a shared internal analysis state. No section should contradict another. If uncertainty exists, explain WHY rather than reporting conflicting facts.
-    6. Summarize the institutional narrative for your recommendation, explaining the logic contextually.
-    7. Identify key risks that could invalidate the trade.
+    2. STRICT STATE SYNCHRONIZATION: If an indicator's impact is "Bearish" or "Bearish Reinforcement" (e.g., ADX), its mathematical score MUST be negative. You are strictly prohibited from listing a Bearish or Bearish Reinforcement metric in the top_3_bullish_factors.
+    3. For each component, assign a mathematical score between -1.0 (Maximally Bearish) and 1.0 (Maximally Bullish). If a component is completely unavailable, undetected, or not applicable, return the exact string "N/A" for the score.
+    4. Provide a brief 1-sentence reason for each score.
+    5. Provide the top 3 bullish factors and top 3 bearish factors overall.
+    6. GOLDEN RULE: The report should never read like independent AI modules stitched together. It should read like one experienced institutional technical analyst who has considered every indicator before writing a single coherent conclusion. Every statement should be derived from a shared internal analysis state. No section should contradict another. If uncertainty exists, explain WHY rather than reporting conflicting facts.
+    7. Summarize the institutional narrative for your recommendation, explaining the logic contextually.
+    8. Identify key risks that could invalidate the trade.
     
     COMPONENTS TO EVALUATE:
     1. trend_strength
@@ -616,7 +617,7 @@ def node_decision_engine(state: TradingState) -> dict:
     4. volume_confirmation
     5. support_resistance
     6. risk_reward
-    7. multi_timeframe_alignment (Set score to 0.0 if not enough data)
+    7. multi_timeframe_alignment (Set score to "N/A" if not enough data)
     8. candlestick_patterns
     9. chart_patterns
     10. volatility
@@ -631,9 +632,9 @@ def node_decision_engine(state: TradingState) -> dict:
                 "volume_confirmation": {{"score": 0.0, "reason": "..."}},
                 "support_resistance": {{"score": 0.0, "reason": "..."}},
                 "risk_reward": {{"score": 0.0, "reason": "..."}},
-                "multi_timeframe_alignment": {{"score": 0.0, "reason": "..."}},
-                "candlestick_patterns": {{"score": 0.0, "reason": "..."}},
-                "chart_patterns": {{"score": 0.0, "reason": "..."}},
+                "multi_timeframe_alignment": {{"score": "N/A", "reason": "..."}},
+                "candlestick_patterns": {{"score": "N/A", "reason": "..."}},
+                "chart_patterns": {{"score": "N/A", "reason": "..."}},
                 "volatility": {{"score": 0.0, "reason": "..."}}
             }},
             "top_3_bullish_factors": ["...", "...", "..."],
@@ -726,26 +727,63 @@ def node_decision_engine(state: TradingState) -> dict:
                 except (ValueError, TypeError):
                     pass
 
-                net_evidence = 0.0
+                invalid_keywords = ["unknown", "none", "not detected", "no pattern", "unavailable", "insufficient", "absent", "not found", "no clear"]
                 
+                active_weights = {}
+                for comp, weight in weights.items():
+                    val = c_scores.get(comp, {}).get("score", "N/A")
+                    reason = str(c_scores.get(comp, {}).get("reason", "")).lower()
+                    
+                    is_invalid = val == "N/A" or any(kw in reason for kw in invalid_keywords)
+                    if not is_invalid:
+                        active_weights[comp] = weight
+
+                total_active_weight = sum(active_weights.values())
+                if total_active_weight <= 0.0:
+                    total_active_weight = 1.0
+                    
+                net_evidence = 0.0
                 score_breakdown = []
                 
-                for comp, weight in weights.items():
-                    val = c_scores.get(comp, {}).get("score", 0.0)
+                for comp, original_weight in weights.items():
+                    val = c_scores.get(comp, {}).get("score", "N/A")
+                    reason = str(c_scores.get(comp, {}).get("reason", "")).lower()
+                    
+                    is_invalid = val == "N/A" or any(kw in reason for kw in invalid_keywords)
+                    
+                    if is_invalid:
+                        score_breakdown.append({
+                            "component": comp.replace("_", " ").title(),
+                            "weight": "0% (Excluded)",
+                            "normalized_score": 0.0,
+                            "contribution": "+0.0"
+                        })
+                        continue
+                        
                     try:
                         val_float = float(val)
                     except (ValueError, TypeError):
                         val_float = 0.0
+                        
+                    # Trend Math Gating for ADX
+                    if comp == "trend_strength":
+                        adx_interp = technical_indicators.get("interpretations", {}).get("ADX", {}).get("Impact", "")
+                        if adx_interp == "Bearish Reinforcement" and val_float > 0:
+                            val_float = -val_float # Flip to negative if ADX reinforces bearishness
+                            if "score" in c_scores.get(comp, {}):
+                                c_scores[comp]["reason"] += " (System flipped to negative due to Bearish ADX)."
                     
                     # Clamp to [-1.0, 1.0] just in case
                     val_float = max(-1.0, min(1.0, val_float))
                     
-                    weighted_val = val_float * weight
+                    # Normalize weight
+                    normalized_weight = original_weight / total_active_weight
+                    weighted_val = val_float * normalized_weight
                     net_evidence += weighted_val
                     
                     score_breakdown.append({
                         "component": comp.replace("_", " ").title(),
-                        "weight": f"{int(weight * 100)}%",
+                        "weight": f"{int(normalized_weight * 100)}%",
                         "normalized_score": round(val_float, 2),
                         "contribution": f"{round(weighted_val * 100, 2):+}"
                     })

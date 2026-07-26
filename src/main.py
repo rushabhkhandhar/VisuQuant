@@ -21,7 +21,7 @@ def ensure_ollama_running():
     print("Checking if Ollama is running...")
     try:
         urllib.request.urlopen("http://127.0.0.1:11434/", timeout=2)
-        print("Ollama is already running!")
+        print("Ollama is already running!") 
         return
     except urllib.error.URLError:
         pass
