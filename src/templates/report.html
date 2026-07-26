@@ -180,8 +180,8 @@
             </td>
         </tr>
         <tr>
-            <td><strong>Primary Reason</strong></td>
-            <td>{{ dec_obj.get('primary_reason', 'N/A') }}</td>
+            <td><strong>Institutional Narrative</strong></td>
+            <td>{{ dec_obj.get('institutional_narrative', dec_obj.get('primary_reason', 'N/A')) }}</td>
         </tr>
         <tr>
             <td><strong>Score Breakdown (Weighted)</strong></td>
@@ -246,6 +246,14 @@
             <th>Value</th>
         </tr>
         {% set rm = risk.get('metrics', {}) if risk else {} %}
+        {% set exec = decision.get('decision', {}).get('execution', {}) if decision else {} %}
+        {% if dec_obj.get('recommendation') in ['HOLD', 'AVOID'] %}
+        <tr>
+            <td colspan="2" style="text-align: center; color: #64748b; padding: 15px;">
+                <em>No active trade setup. Execution levels are informational only.</em>
+            </td>
+        </tr>
+        {% else %}
         <tr>
             <td><strong>Entry Price</strong></td>
             <td class="value-cell">{{ risk.get('entry', 'N/A') }}</td>
@@ -262,6 +270,7 @@
             <td><strong>Target 2</strong></td>
             <td class="value-cell">{{ risk.get('targets', {}).get('target_2', 'N/A') }}</td>
         </tr>
+        {% endif %}
         <tr>
             <td><strong>Risk / Reward</strong></td>
             <td class="value-cell">{{ rm.get('best_risk_reward', 'N/A') }}</td>
@@ -296,7 +305,7 @@
         <tr>
             <th width="20%">Category</th>
             <th width="15%">Status</th>
-            <th>Reason</th>
+            <th>Explanation</th>
         </tr>
         {% for category in ['trend', 'momentum', 'volume', 'support_resistance', 'patterns'] %}
             {% set item = conf_obj.get(category, {}) if conf_obj else {} %}
@@ -304,7 +313,7 @@
             <tr>
                 <td><strong>{{ category.replace('_', ' ').title() }}</strong></td>
                 <td>{{ item.get('status', 'N/A') }}</td>
-                <td style="font-size: 13px;">{{ item.get('reason', 'N/A') }}</td>
+                <td style="font-size: 13px;">{{ item.get('explanation', item.get('reason', 'N/A')) }}</td>
             </tr>
             {% endif %}
         {% endfor %}

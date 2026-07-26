@@ -78,8 +78,11 @@ def node_vision_analysis(state: TradingState) -> dict:
     - A "Downtrend" MUST be logically compatible with Lower Highs and Lower Lows.
     - An "Uptrend" MUST be logically compatible with Higher Highs and Higher Lows.
     - A "Sideways" trend must not claim aggressively trending structures.
-    - If Market Structure is clearly identified (e.g. Higher Highs and Higher Lows), Trend Confidence cannot be 'Unknown' or low. Trend confidence MUST be derived from the confluence of Trendlines, Channels, and Market Structure.
-    If you detect contradictions in your own visual assessment (e.g. you see a Downtrend but the structure is Higher Highs), you MUST set "consistency_status" to "FAILED", populate the "warnings" array explaining the visual contradiction, and drastically reduce your confidence score.
+    - Hierarchical Context (CRITICAL): Prioritize Market Structure over Channels and Trendlines.
+      - If Market Structure is Bullish (Higher Highs, Higher Lows), a Falling Channel is a "Corrective Pullback", NOT a "Bearish Trend".
+      - If Market Structure is Bearish (Lower Highs, Lower Lows), a Rising Channel is a "Bearish Rally", NOT a "Bullish Trend".
+    - If you detect contradictions in your own visual assessment (e.g. you see a Downtrend but the structure is Higher Highs), you MUST NOT output the contradiction. Instead, resolve the context (e.g. "Short-term pullback in a long-term bullish trend").
+    - If Market Structure is clearly identified, Trend Confidence cannot be 'Unknown' or low.
 
     Extract:
     1. Trend (Direction and Visual confidence 0-100)
@@ -102,7 +105,11 @@ def node_vision_analysis(state: TradingState) -> dict:
       "consistency_status": "PASSED | FAILED",
       "warnings": [],
       "trend": {{
-        "direction": "Uptrend | Downtrend | Sideways | Unknown",
+        "long_term_trend": "Bullish | Bearish | Sideways | Unknown",
+        "medium_term_trend": "Bullish | Bearish | Sideways | Unknown",
+        "short_term_structure": "Impulse | Pullback | Consolidation | Breakdown",
+        "current_channel": "Rising | Falling | Horizontal | None",
+        "overall_interpretation": "Provide a 1-sentence market context description without listing conflicting facts. E.g. 'The stock remains in a long-term bullish trend but is currently undergoing a short-term pullback inside a falling corrective channel.'",
         "confidence": 0
       }},
       "support_zones": [
@@ -390,6 +397,8 @@ def node_confluence_engine(state: TradingState) -> dict:
     1. Base all trend direction conclusions solely on the "Unified Trend Engine Output". Do not re-evaluate the trend independently.
     2. Base all indicator interpretations strictly on the exact strings provided in the "interpretations" dictionary. Never reinterpret raw indicators (e.g. do not recalculate MACD crossovers).
     3. Generate summary bullet points that are directly sourced from the provided "interpretations".
+    4. EXPLANATION LAYER: You must provide an institutional-style `explanation` for each section, contextualizing the findings. DO NOT output logically impossible sentences (e.g. "Downtrend but Higher Highs observed"). Instead, use comparative analysis: "The visual model suggests X, while quantitative identifies Y, indicating disagreement."
+    5. VOLUME INHERITANCE: If quantitative volume interpretation exists, the volume status MUST NOT be 'Unknown'. It MUST inherit the quantitative classification (e.g. 'Decreasing', 'Increasing', 'Neutral').
     
     - Return VALID JSON only.
     - No markdown.
@@ -433,27 +442,27 @@ def node_confluence_engine(state: TradingState) -> dict:
         "trend": {{
             "status": "Confirmed | Contradiction | Partially Confirmed | Unknown",
             "confidence": 0,
-            "reason": "..."
+            "explanation": "Institutional-grade explanation combining visual and quantitative findings..."
         }},
         "momentum": {{
             "status": "Confirmed | Contradiction | Partially Confirmed | Unknown | Bullish | Bearish",
             "confidence": 0,
-            "reason": "..."
+            "explanation": "Institutional-grade explanation..."
         }},
         "volume": {{
-            "status": "Confirmed | Contradiction | Partially Confirmed | Unknown",
+            "status": "Increasing | Decreasing | Neutral | Breakout Confirmation | Distribution | Accumulation",
             "confidence": 0,
-            "reason": "..."
+            "explanation": "Institutional-grade explanation inheriting the quantitative state..."
         }},
         "support_resistance": {{
             "status": "Confirmed | Contradiction | Partially Confirmed | Unknown",
             "confidence": 0,
-            "reason": "..."
+            "explanation": "Institutional-grade explanation..."
         }},
         "patterns": {{
             "status": "Confirmed | Contradiction | Partially Confirmed | Unknown",
             "confidence": 0,
-            "reason": "..."
+            "explanation": "Institutional-grade explanation..."
         }},
         "contradictions": [
             {{
@@ -596,8 +605,9 @@ def node_decision_engine(state: TradingState) -> dict:
     2. For each component, assign a mathematical score between -1.0 (Maximally Bearish) and 1.0 (Maximally Bullish). 0.0 means neutral or unavailable.
     3. Provide a brief 1-sentence reason for each score.
     4. Provide the top 3 bullish factors and top 3 bearish factors overall.
-    5. Summarize the primary reason for your recommendation.
-    6. Identify key risks that could invalidate the trade.
+    5. GOLDEN RULE: The report should never read like independent AI modules stitched together. It should read like one experienced institutional technical analyst who has considered every indicator before writing a single coherent conclusion. Every statement should be derived from a shared internal analysis state. No section should contradict another. If uncertainty exists, explain WHY rather than reporting conflicting facts.
+    6. Summarize the institutional narrative for your recommendation, explaining the logic contextually.
+    7. Identify key risks that could invalidate the trade.
     
     COMPONENTS TO EVALUATE:
     1. trend_strength
@@ -628,7 +638,7 @@ def node_decision_engine(state: TradingState) -> dict:
             }},
             "top_3_bullish_factors": ["...", "...", "..."],
             "top_3_bearish_factors": ["...", "...", "..."],
-            "primary_reason": "...",
+            "institutional_narrative": "...",
             "key_risks": ["...", "..."],
             "execution": {{
                 "entry": 0,
@@ -823,7 +833,7 @@ def node_trade_validator(state: TradingState) -> dict:
     
     print(f"[{ticker}] Trade validation complete.")
     
-    return {"trade_validation": validation_results}
+    return {"trade_validation": validation_results, "decision": decision}
 
 def build_report_prompt(ticker, vision_features, technical_indicators, confluence_analysis, risk_analysis, decision, trade_validation) -> str:
     # Strip raw numerical noise to prevent LLM hallucinations
@@ -903,6 +913,8 @@ def node_report_generator(state: TradingState) -> dict:
     
     NARRATIVE RULE (CRITICAL):
     Do NOT simply list facts or output raw JSON values. Generate professional, analyst-style explanations that synthesize the data.
+    GOLDEN RULE: The report should never read like independent AI modules stitched together. It should read like one experienced institutional technical analyst who has considered every indicator before writing a single coherent conclusion.
+    Every statement should be derived from a shared internal analysis state. No section should contradict another. If uncertainty exists, explain WHY rather than reporting conflicting facts.
     
     For example:
     BAD: "Trend = Bullish. Momentum = Bearish."

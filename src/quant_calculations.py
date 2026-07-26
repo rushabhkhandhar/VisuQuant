@@ -98,6 +98,40 @@ def detect_market_structure(df: pd.DataFrame, window: int = 3) -> dict:
         "confidence": confidence
     }
 
+def detect_market_regime(ind: dict) -> str:
+    """Classifies the overall market regime based on ADX, EMAs, and RSI."""
+    try:
+        ema20 = ind.get("ema", {}).get("20")
+        ema50 = ind.get("ema", {}).get("50")
+        ema200 = ind.get("ema", {}).get("200")
+        adx = ind.get("adx")
+        rsi = ind.get("rsi")
+
+        if any(x == UNAVAILABLE or x is None for x in [ema20, ema50, ema200, adx, rsi]):
+            return "Unknown Regime"
+            
+        if ema20 > ema50 > ema200:
+            if adx > 25 and rsi > 50:
+                return "Strong Bull Trend"
+            elif adx < 20:
+                return "Correction inside Bull Trend"
+            else:
+                return "Weak Bull Trend"
+        elif ema20 < ema50 < ema200:
+            if adx > 25 and rsi < 50:
+                return "Strong Bear Trend"
+            elif adx < 20:
+                return "Recovery inside Bear Trend"
+            else:
+                return "Weak Bear Trend"
+        else:
+            if adx < 20:
+                return "Sideways"
+            else:
+                return "Volatile Range"
+    except Exception:
+        return "Unknown Regime"
+
 def calculate_technical_indicators(df: pd.DataFrame) -> dict:
     if df is None or df.empty or len(df) < 2:
         return {}
@@ -311,6 +345,14 @@ def calculate_technical_indicators(df: pd.DataFrame) -> dict:
 
     current_price = float(c.iloc[-1]) if len(c) > 0 else 0.0
     interpretations = {}
+    
+    regime = detect_market_regime(ind)
+    ind["market_regime"] = regime
+    interpretations["Market Regime"] = {
+        "Value": regime,
+        "Interpretation": f"Current market condition is classified as {regime}.",
+        "Impact": "Bullish" if "Bull" in regime else "Bearish" if "Bear" in regime else "Neutral"
+    }
 
     # EMA interpretation
     e20, e50, e100, e200 = ind["ema"].get("20"), ind["ema"].get("50"), ind["ema"].get("100"), ind["ema"].get("200")
@@ -396,13 +438,23 @@ def calculate_technical_indicators(df: pd.DataFrame) -> dict:
             
             impact = "Neutral"
             if squeeze:
-                interp = "Band squeeze detected; high probability of imminent volatility expansion/breakout."
+                interp = "Band compression (Volatility squeeze) detected; high probability of imminent volatility expansion/breakout."
+            elif band_width > 0.15:
+                interp = "Wide bands indicating high volatility."
             elif current_price >= upper * 0.995:
-                interp = "Price riding upper band or breaking out, indicating strong upside momentum but potential for mean reversion."
-                impact = "Bullish"
+                if "Bull" in regime:
+                    interp = "Upper band expansion indicating bullish continuation."
+                    impact = "Bullish"
+                else:
+                    interp = "Price riding upper band against the trend, potential for mean reversion."
+                    impact = "Bearish"
             elif current_price <= lower * 1.005:
-                interp = "Price near lower band, indicating strong downside momentum but potential for mean reversion bounce."
-                impact = "Bearish"
+                if "Bear" in regime:
+                    interp = "Lower band expansion indicating bearish continuation."
+                    impact = "Bearish"
+                else:
+                    interp = "Lower band touch in non-bearish regime, potential pullback bounce."
+                    impact = "Bullish"
             else:
                 interp = "Price is within the bands indicating normal volatility."
                 
