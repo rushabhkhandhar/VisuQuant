@@ -411,121 +411,143 @@ def node_confluence_engine(state: TradingState) -> dict:
     - If a field does not exist inside technical indicators or vision features, explicitly list it inside the missing_data field.
     - Never invent values or hallucinate missing information.
     
-    WEIGHTED SCORING (CRITICAL):
-    You must calculate an overall confluence score strictly based on these maximum weights (Total = 100):
-    - Trend = 30
-    - Momentum = 20
-    - Support & Resistance = 20
-    - Volume = 15
-    - Patterns = 15
-    
-    If an entire category is unavailable (e.g. Volume is unavailable), you MUST reduce confidence and heavily penalize the score for that category. Do NOT assign full marks for missing data.
-    Explain your calculation for each category within its respective "reason" field.
+    EXPLANATION RULES:
+    Keep explanations concise and institutional.
 
-    Available Visual Features:
-    {json.dumps(vision_features)}
-
-    Available Technical Indicators (Quantitative):
-    {json.dumps(simplified_quantitative)}
-
-    Compare the following whenever available. CRITICAL: For technical indicators, do NOT interpret raw numbers. You MUST use the deterministic string values provided in the `interpretations` object inside the quantitative JSON!
-    - Trend (Vision vs Quantitative `EMA`)
-    - Momentum (Quantitative `RSI` and `MACD`)
-    - Volume (Relative Volume/OBV/VWAP)
-    - Support & Resistance (Vision vs Pivot Points/Swing High/Low/Fibonacci)
-    - Patterns (Chart/Candlestick)
-    - Events (Breakout/Breakdown/Retest/Gap)
-    - Market Structure (Higher Highs/Lows)
-
-    RETURN EXACTLY THIS JSON SCHEMA:
-    {{
-        "trend": {{
-            "status": "Confirmed | Contradiction | Partially Confirmed | Unknown",
-            "confidence": 0,
-            "explanation": "Institutional-grade explanation combining visual and quantitative findings..."
-        }},
-        "momentum": {{
-            "status": "Confirmed | Contradiction | Partially Confirmed | Unknown | Bullish | Bearish",
-            "confidence": 0,
-            "explanation": "Institutional-grade explanation..."
-        }},
-        "volume": {{
-            "status": "Increasing | Decreasing | Neutral | Breakout Confirmation | Distribution | Accumulation",
-            "confidence": 0,
-            "explanation": "Institutional-grade explanation inheriting the quantitative state..."
-        }},
-        "support_resistance": {{
-            "status": "Confirmed | Contradiction | Partially Confirmed | Unknown",
-            "confidence": 0,
-            "explanation": "Institutional-grade explanation..."
-        }},
-        "patterns": {{
-            "status": "Confirmed | Contradiction | Partially Confirmed | Unknown",
-            "confidence": 0,
-            "explanation": "Institutional-grade explanation..."
-        }},
-        "contradictions": [
-            {{
-                "category": "...",
-                "reason": "..."
-            }}
-        ],
-        "missing_data": [
-            "..."
-        ],
-        "scores": {{
-            "trend": 0,
-            "momentum": 0,
-            "support_resistance": 0,
-            "volume": 0,
-            "patterns": 0
-        }},
-        "overall_score": 0,
-        "overall_confluence": {{
-            "score": 0,
-            "strength": "Strong | Moderate | Weak | Unknown"
-        }}
-    }}
+    Only evaluate the following categories:
+    1. trend
+    2. momentum
+    3. volume
+    4. support_resistance
+    5. patterns
+    6. missing_data (list any missing fields here)
     """
+    
+    confluence_schema = {
+        "type": "object",
+        "properties": {
+            "trend": {
+                "type": "object",
+                "properties": {
+                    "status": {"type": "string", "enum": ["Confirmed", "Contradiction", "Partially Confirmed", "Unknown"]},
+                    "explanation": {"type": "string"}
+                },
+                "required": ["status", "explanation"]
+            },
+            "momentum": {
+                "type": "object",
+                "properties": {
+                    "status": {"type": "string", "enum": ["Confirmed", "Contradiction", "Partially Confirmed", "Unknown", "Bullish", "Bearish"]},
+                    "explanation": {"type": "string"}
+                },
+                "required": ["status", "explanation"]
+            },
+            "volume": {
+                "type": "object",
+                "properties": {
+                    "status": {"type": "string", "enum": ["Increasing", "Decreasing", "Neutral", "Breakout Confirmation", "Distribution", "Accumulation", "Unknown"]},
+                    "explanation": {"type": "string"}
+                },
+                "required": ["status", "explanation"]
+            },
+            "support_resistance": {
+                "type": "object",
+                "properties": {
+                    "status": {"type": "string", "enum": ["Confirmed", "Contradiction", "Partially Confirmed", "Unknown"]},
+                    "explanation": {"type": "string"}
+                },
+                "required": ["status", "explanation"]
+            },
+            "patterns": {
+                "type": "object",
+                "properties": {
+                    "status": {"type": "string", "enum": ["Confirmed", "Contradiction", "Partially Confirmed", "Unknown"]},
+                    "explanation": {"type": "string"}
+                },
+                "required": ["status", "explanation"]
+            },
+            "missing_data": {
+                "type": "array",
+                "items": {"type": "string"}
+            }
+        },
+        "required": ["trend", "momentum", "volume", "support_resistance", "patterns", "missing_data"]
+    }
     
     parsed_json = None
     raw_analysis = ""
     
     for attempt in range(2):
-        response = ollama.chat(
-            model='qwen2.5vl:7b',
-            messages=[{
-                'role': 'user',
-                'content': prompt
-            }],
-            options={'temperature': 0.0}
-        )
-        raw_analysis = response['message']['content']
-        
-        # Robust parsing
-        cleaned_str = raw_analysis.strip()
-        if cleaned_str.startswith("```json"):
-            cleaned_str = cleaned_str[7:]
-        elif cleaned_str.startswith("```"):
-            cleaned_str = cleaned_str[3:]
-            
-        if cleaned_str.endswith("```"):
-            cleaned_str = cleaned_str[:-3]
-            
-        cleaned_str = cleaned_str.strip()
-        
         try:
-            parsed_json = json.loads(cleaned_str)
+            response = ollama.chat(
+                model='qwen2.5vl:7b',
+                messages=[{
+                    'role': 'user',
+                    'content': prompt
+                }],
+                options={'temperature': 0.0},
+                format=confluence_schema
+            )
+            raw_analysis = response['message']['content']
+            parsed_json = json.loads(raw_analysis)
             break
-        except json.JSONDecodeError:
-            print(f"[{ticker}] Warning: Failed to parse confluence JSON on attempt {attempt+1}. Retrying...")
+        except Exception as e:
+            print(f"[{ticker}] Warning: Failed to generate/parse structured JSON on attempt {attempt+1}: {e}")
             continue
             
     if parsed_json is None:
         parsed_json = {
             "error": "Failed to parse JSON output after retries.",
-            "raw_output": raw_analysis
+            "raw_output": raw_analysis,
+            "trend": {"status": "Unknown", "explanation": "Failed"},
+            "momentum": {"status": "Unknown", "explanation": "Failed"},
+            "volume": {"status": "Unknown", "explanation": "Failed"},
+            "support_resistance": {"status": "Unknown", "explanation": "Failed"},
+            "patterns": {"status": "Unknown", "explanation": "Failed"}
         }
+
+    # Deterministic Python Scoring
+    weights = {
+        "trend": 30.0,
+        "momentum": 20.0,
+        "support_resistance": 20.0,
+        "volume": 15.0,
+        "patterns": 15.0
+    }
+    
+    parsed_json["scores"] = {}
+    total_score = 0.0
+    
+    for cat, w in weights.items():
+        cat_status = parsed_json.get(cat, {}).get("status", "Unknown")
+        if cat_status == "Confirmed":
+            mult = 1.0
+        elif cat_status in ["Partially Confirmed", "Bullish", "Bearish", "Increasing", "Breakout Confirmation", "Accumulation"]:
+            mult = 0.5
+        elif cat_status in ["Contradiction", "Decreasing", "Distribution"]:
+            mult = 0.0
+        else:
+            mult = 0.0
+            
+        cat_score = w * mult
+        parsed_json["scores"][cat] = cat_score
+        total_score += cat_score
+        
+    parsed_json["overall_score"] = total_score
+    
+    if total_score >= 80:
+        strength = "Strong"
+    elif total_score >= 50:
+        strength = "Moderate"
+    elif total_score >= 20:
+        strength = "Weak"
+    else:
+        strength = "Unknown"
+        
+    parsed_json["overall_confluence"] = {
+        "score": total_score,
+        "strength": strength
+    }
         
     print(f"[{ticker}] Confluence analysis complete.")
     
