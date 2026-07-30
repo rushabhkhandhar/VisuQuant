@@ -4,3 +4,4 @@ playwright
 pandas
 langchain-core
 pandas-ta
+PyMuPDF

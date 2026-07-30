@@ -45,6 +45,16 @@ def node_run_nse_scraper(state: TradingState) -> dict:
     data = fetch_nse_data(ticker)
     return {"scraped_data": data}
 
+from src.news_fetcher import fetch_latest_announcements
+
+def node_fetch_announcements(state: TradingState) -> dict:
+    ticker = state["ticker"]
+    print(f"[{ticker}] Fetching latest corporate announcements...")
+    announcements = fetch_latest_announcements(ticker, limit=3)
+    print(f"[{ticker}] Found {len(announcements)} announcements.")
+    return {"announcements": announcements}
+
+
 def node_vision_analysis(state: TradingState) -> dict:
     ticker = state["ticker"]
     chart_image_base64 = state.get("chart_image_base64")
@@ -371,6 +381,7 @@ def node_confluence_engine(state: TradingState) -> dict:
     vision_features = state.get("vision_features", {})
     technical_indicators = state.get("technical_indicators", {})
     unified_trend = state.get("unified_trend", {})
+    announcements = state.get("announcements", [])
     
     print(f"[{ticker}] Running confluence engine (evidence synthesis)...")
     
@@ -392,6 +403,9 @@ def node_confluence_engine(state: TradingState) -> dict:
     
     Available Technical Indicators (Quantitative):
     {json.dumps(simplified_quantitative)}
+    
+    Recent Corporate Announcements / Fundamentals:
+    {json.dumps(announcements)}
     
     RULES:
     1. Base all trend direction conclusions solely on the "Unified Trend Engine Output". Do not re-evaluate the trend independently.
@@ -595,6 +609,7 @@ def node_decision_engine(state: TradingState) -> dict:
     confluence_analysis = state.get("confluence_analysis", {})
     unified_trend = state.get("unified_trend", {})
     risk_analysis = state.get("risk_analysis", {})
+    announcements = state.get("announcements", [])
     
     # Strip raw numerical noise to prevent LLM hallucinations
     simplified_quantitative = {
@@ -622,6 +637,9 @@ def node_decision_engine(state: TradingState) -> dict:
     
     Risk Management Profile:
     {json.dumps(risk_analysis)}
+    
+    Recent Corporate Announcements / Fundamentals:
+    {json.dumps(announcements)}
     
     INSTRUCTIONS (CRITICAL):
     1. You must evaluate 10 distinct technical components. Base trend on Unified Trend Output. Base indicator impact strictly on provided interpretations.

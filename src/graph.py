@@ -10,7 +10,8 @@ from src.nodes import (
     node_risk_management,
     node_decision_engine,
     node_trade_validator,
-    node_report_generator
+    node_report_generator,
+    node_fetch_announcements
 )
 
 def build_graph() -> StateGraph:
@@ -31,6 +32,7 @@ def build_graph() -> StateGraph:
     builder.add_node("decision_engine", node_decision_engine)
     builder.add_node("trade_validator", node_trade_validator)
     builder.add_node("report_generator", node_report_generator)
+    builder.add_node("fetch_announcements", node_fetch_announcements)
     
     # Define the execution flow
     # 1. START fans out to capture_chart AND run_scraper in parallel
@@ -47,8 +49,11 @@ def build_graph() -> StateGraph:
     builder.add_edge("vision_analysis", "trend_engine")
     builder.add_edge("quantitative_analysis", "trend_engine")
     
-    # 5. trend_engine feeds into confluence_engine
-    builder.add_edge("trend_engine", "confluence_engine")
+    # 5. trend_engine feeds into fetch_announcements
+    builder.add_edge("trend_engine", "fetch_announcements")
+    
+    # 5.5 fetch_announcements feeds into confluence_engine
+    builder.add_edge("fetch_announcements", "confluence_engine")
     
     # 6. confluence_engine feeds into risk_management
     builder.add_edge("confluence_engine", "risk_management")

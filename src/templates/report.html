@@ -237,9 +237,36 @@
     </table>
 </div>
 
+<!-- Corporate Announcements -->
+{% if announcements %}
+<div class="card">
+    <h2>2. Recent Corporate Announcements</h2>
+    <table>
+        <tr>
+            <th width="20%">Date</th>
+            <th width="30%">Title</th>
+            <th width="50%">Content / Summary</th>
+        </tr>
+        {% for ann in announcements %}
+        <tr>
+            <td class="value-cell">{{ ann.date }}</td>
+            <td><strong>{{ ann.title }}</strong><br><a href="{{ ann.attachment }}" style="font-size: 11px; color: #3b82f6;">View PDF Attachment</a></td>
+            <td style="font-size: 12px; color: #475569;">
+                {% if ann.text_content %}
+                    {{ ann.text_content }}
+                {% else %}
+                    No PDF text extracted or available.
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </table>
+</div>
+{% endif %}
+
 <!-- Risk Analysis -->
 <div class="card">
-    <h2>2. Risk & Execution Profile</h2>
+    <h2>3. Risk & Execution Profile</h2>
     <table>
         <tr>
             <th width="25%">Parameter</th>

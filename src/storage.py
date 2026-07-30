@@ -75,7 +75,8 @@ def persist_pipeline_results(final_state: dict, start_time: float, end_time: flo
             confluence=final_state.get("confluence_analysis", {}),
             tech=final_state.get("technical_indicators", {}),
             vision=final_state.get("vision_features", {}),
-            validation=final_state.get("trade_validation", {})
+            validation=final_state.get("trade_validation", {}),
+            announcements=final_state.get("announcements", [])
         )
         
         pdf_path = os.path.join(output_dir, f"{ticker}_analysis_report.pdf")

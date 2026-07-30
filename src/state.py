@@ -10,6 +10,7 @@ class TradingState(TypedDict):
     vision_analysis: Optional[str]
     vision_features: Optional[dict]
     technical_indicators: Optional[dict]
+    announcements: Optional[list]
     confluence_analysis: Optional[dict]
     unified_trend: Optional[dict]
     risk_analysis: Optional[dict]
