@@ -20,6 +20,8 @@ graph TD
     C --> E(Unified Trend Engine)
     D --> E
     E --> F(Confluence & Evidence Synthesis)
+    A -->|News Fetcher| News(Fetch Latest Announcements)
+    News --> F
     F --> G(Risk Management Engine)
     G --> H(Decision Engine & Scoring)
     H --> I(Trade Validation)
@@ -48,6 +50,7 @@ The core logic resides in the `src/` directory.
 - **`nodes.py`**: The heart of the application containing the LLM invocation functions for Vision, Unified Trend, Confluence, and Decision generation.
 - **`quant_calculations.py`**: The mathematical engine that computes Moving Averages, RSI, MACD, ADX, ATR, Bollinger Bands, and Volume/Liquidity metrics.
 - **`nse_fetcher.py` / `scraper.py`**: Handles live market data scraping (NSE Bhavcopy) and TradingView chart screenshot capture via headless browser.
+- **`news_fetcher.py`**: Fetches the latest corporate announcements from the NSE and uses a local LLM to perform strict extractive summarization of attached PDFs, avoiding boilerplate legal jargon.
 - **`risk_calculations.py`**: Computes entry price, optimal stop losses (using ATR logic), position sizing, and Risk/Reward targets.
 - **`trade_validation.py`**: Performs institutional baseline safety checks (e.g. Absolute Liquidity > $10M ADV) and flags systemic execution risks before the report prints.
 - **`llm.py`**: Standardized wrapper for LLM calls supporting fallback mechanisms (e.g. Qwen2.5-VL for vision).
@@ -66,6 +69,7 @@ The core logic resides in the `src/` directory.
 3. **Data Acquisition**:
    - `NSE Bhavcopy Scraper`: Grabs end-of-day history for Quantitative logic directly from NSE servers.
    - `Playwright`: Headless automation to capture live interactive TradingView charts.
+   - `Fundamental Scraper`: Fetches real-time corporate announcements and extracts text from attached PDFs (via PyMuPDF).
 4. **Data Science / Quantitative**:
    - `Pandas` and `NumPy` for native deterministic technical indicator math.
 5. **Presentation & Reporting**:
