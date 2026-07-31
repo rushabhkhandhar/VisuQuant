@@ -1,3 +1,6 @@
 requests
 pytz
 python-dotenv
+Pillow
+google-generativeai
+pdfplumber
