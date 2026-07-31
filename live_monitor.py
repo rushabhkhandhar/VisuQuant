@@ -225,14 +225,7 @@ def fetch_latest_announcements(limit: int = 20) -> list:
         
     return announcements
 
-def is_market_open() -> bool:
-    ist = pytz.timezone('Asia/Kolkata')
-    now = datetime.now(ist)
-    if now.weekday() > 4:
-        return False
-    market_open = now.replace(hour=9, minute=0, second=0, microsecond=0)
-    market_close = now.replace(hour=15, minute=30, second=0, microsecond=0)
-    return market_open <= now <= market_close
+
 
 def load_cache() -> set:
     if os.path.exists(CACHE_FILE):
@@ -271,11 +264,6 @@ def start_monitor():
         print("📥 Script started: Fetching existing announcements to build baseline...")
     
     while True:
-        if not is_market_open():
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] Market is closed. Sleeping...")
-            time.sleep(POLL_INTERVAL_SECONDS)
-            continue
-            
         print(f"[{datetime.now().strftime('%H:%M:%S')}] Checking NSE for global announcements...")
         announcements = fetch_latest_announcements()
         
