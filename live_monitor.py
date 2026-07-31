@@ -9,7 +9,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Configuration
-TICKER = "CARTRADE"  # You can change this to monitor any stock, or make it a list
 POLL_INTERVAL_SECONDS = 60
 CACHE_FILE = "monitor_state.json"
 
@@ -36,9 +35,9 @@ def send_telegram_alert(message: str) -> bool:
         print(f"❌ Error sending Telegram alert: {e}")
         return False
 
-def fetch_latest_announcements(ticker: str, limit: int = 5) -> list:
-    """Fetches raw announcements without any AI/LLM summarization."""
-    url = f"https://www.nseindia.com/api/corporate-announcements?index=equities&symbol={ticker}"
+def fetch_latest_announcements(limit: int = 20) -> list:
+    """Fetches raw announcements across ALL equities without any AI/LLM summarization."""
+    url = "https://www.nseindia.com/api/corporate-announcements?index=equities"
     homepage = "https://www.nseindia.com"
     
     headers = {
@@ -62,7 +61,7 @@ def fetch_latest_announcements(ticker: str, limit: int = 5) -> list:
         api_headers = headers.copy()
         api_headers["Accept"] = "application/json, text/javascript, */*; q=0.01"
         api_headers["X-Requested-With"] = "XMLHttpRequest"
-        api_headers["Referer"] = f"https://www.nseindia.com/get-quote/equity?symbol={ticker}"
+        api_headers["Referer"] = "https://www.nseindia.com/market-data/corporate-announcements"
         
         res = session.get(url, headers=api_headers, timeout=10)
         
@@ -71,12 +70,13 @@ def fetch_latest_announcements(ticker: str, limit: int = 5) -> list:
             for item in data[:limit]:
                 announcements.append({
                     "id": str(item.get('seq_id', item.get('an_dt'))),  # Unique identifier
+                    "symbol": item.get('symbol', 'UNKNOWN'),
                     "date": item.get('an_dt'),
                     "title": item.get('subject') or item.get('desc'),
                     "attachment": item.get('attchmntFile')
                 })
     except Exception as e:
-        print(f"[{ticker}] Error fetching announcements: {e}")
+        print(f"Error fetching announcements: {e}")
         
     return announcements
 
@@ -108,7 +108,7 @@ def save_cache(seen_ids: set):
         json.dump(list(seen_ids), f)
 
 def start_monitor():
-    print(f"🚀 Starting Live News Monitor for {TICKER}...")
+    print("🚀 Starting Global Live News Monitor for ALL NSE Equities...")
     print(f"Polling interval: {POLL_INTERVAL_SECONDS} seconds.")
     
     seen_ids = load_cache()
@@ -119,8 +119,8 @@ def start_monitor():
             time.sleep(POLL_INTERVAL_SECONDS)
             continue
             
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] Checking NSE for {TICKER}...")
-        announcements = fetch_latest_announcements(TICKER)
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] Checking NSE for global announcements...")
+        announcements = fetch_latest_announcements()
         
         new_news_found = False
         
@@ -132,14 +132,15 @@ def start_monitor():
                 seen_ids.add(ann_id)
                 
                 # Format message
-                message = f"🚨 <b>NEW NSE ALERT: {TICKER}</b>\n\n"
+                symbol = ann['symbol']
+                message = f"🚨 <b>NEW NSE ALERT: {symbol}</b>\n\n"
                 message += f"<b>Title:</b> {ann['title']}\n"
                 message += f"<b>Date:</b> {ann['date']}\n"
                 
                 if ann['attachment']:
                     message += f"\n🔗 <a href='{ann['attachment']}'>View PDF Attachment</a>"
                 
-                print(f"⚠️ NEW ANNOUNCEMENT FOUND! Sending to Telegram...")
+                print(f"⚠️ NEW ANNOUNCEMENT FOR {symbol}! Sending to Telegram...")
                 send_telegram_alert(message)
                 
         if new_news_found:
