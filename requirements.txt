@@ -1,7 +1,3 @@
-langgraph
-ollama
-playwright
-pandas
-langchain-core
-pandas-ta
-PyMuPDF
+requests
+pytz
+python-dotenv
