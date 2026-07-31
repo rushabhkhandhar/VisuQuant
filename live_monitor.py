@@ -12,6 +12,7 @@ from PIL import Image, ImageDraw, ImageFont
 import pdfplumber
 import threading
 from itertools import cycle
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 load_dotenv()
 
@@ -313,5 +314,26 @@ def start_monitor():
             
         time.sleep(POLL_INTERVAL_SECONDS)
 
+class DummyHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"Bot is alive and monitoring NSE!")
+
+    def log_message(self, format, *args):
+        # Suppress standard HTTP logging to keep the console clean
+        pass
+
+def run_dummy_server():
+    port = int(os.environ.get("PORT", 8000))
+    server = HTTPServer(("0.0.0.0", port), DummyHandler)
+    print(f"🌐 Dummy web server listening on port {port} (to satisfy Render.com)")
+    server.serve_forever()
+
 if __name__ == "__main__":
+    # Start the dummy web server in a background thread so Render doesn't kill the app
+    server_thread = threading.Thread(target=run_dummy_server, daemon=True)
+    server_thread.start()
+    
     start_monitor()
