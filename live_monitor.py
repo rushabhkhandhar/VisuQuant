@@ -299,6 +299,8 @@ def start_monitor():
                 print(f"💤 Ignored {len(new_anns)} announcements (not 'Outcome of Board Meeting').")
             
             save_cache(seen_ids)
+        else:
+            print(f"   ↳ 0 new announcements found. Sleeping for {POLL_INTERVAL_SECONDS}s...")
             
         time.sleep(POLL_INTERVAL_SECONDS)
 
