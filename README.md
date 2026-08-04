@@ -20,7 +20,7 @@ graph TD
     C --> E(Unified Trend Engine)
     D --> E
     E --> F(Confluence & Evidence Synthesis)
-    A -->|News Fetcher| News(Fetch Announcements & Gemini Dual-POV Extraction)
+    A -->|News Fetcher| News("Fetch Announcements <br> & Gemini Dual-POV")
     News --> F
     F --> G(Risk Management Engine)
     G --> H(Decision Engine & Scoring)
