@@ -285,11 +285,11 @@ def start_monitor():
             for ann in new_anns:
                 seen_ids.add(ann['id'])
                 
-            # Filter to ONLY process 'Outcome of Board Meeting'
-            filtered_anns = [ann for ann in new_anns if "outcome of board meeting" in ann['title'].lower()]
+            # Filter to ONLY process 'Outcome of Board Meeting' and 'Financial Results'
+            filtered_anns = [ann for ann in new_anns if "outcome of board meeting" in ann['title'].lower() or "financial result" in ann['title'].lower()]
             
             if filtered_anns:
-                print(f"⚡ Detected {len(filtered_anns)} 'Outcome of Board Meeting' announcements! Launching extraction...")
+                print(f"⚡ Detected {len(filtered_anns)} Earnings/Board Meeting announcements! Launching extraction...")
                 for ann in filtered_anns:
                     try:
                         process_single_announcement(ann)
