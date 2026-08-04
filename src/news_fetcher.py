@@ -1,28 +1,32 @@
 import json
 import requests
 import time
+import os
 import fitz  # PyMuPDF
-import ollama
+from dotenv import load_dotenv
+
+load_dotenv()
 
 def summarize_text_with_llm(raw_text: str) -> str:
-    """Uses the local LLM to perform strict extractive summarization, avoiding hallucinations."""
+    """Uses the LLM to perform strict extractive summarization, focusing on Long Term POV."""
     if not raw_text or len(raw_text.strip()) < 50:
         return "No substantial text found to summarize."
 
-    # Keep only the first ~4000 characters to avoid context window blowouts 
-    # and mostly capture the core press release which is usually at the start or early pages.
-    truncated_text = raw_text[:4000]
+    # We will pass the full text since Gemini can easily handle large context windows.
+    # The actual financial numbers are rarely on the first 3 pages (which are just cover letters).
+    truncated_text = raw_text
 
     prompt = f"""
     You are a strict financial data extractor. 
-    Your ONLY job is to extract facts from the provided text.
+    Your ONLY job is to extract hard financial facts and structural updates from the provided text, focusing on the Long-Term Point of View (POV).
     
     RULES:
-    1. DO NOT calculate, infer, guess, or hallucinate any numbers or facts.
-    2. If a metric is not explicitly stated in the text, do not mention it.
-    3. Ignore all boilerplate legal addresses to the BSE/NSE, "Dear Sir/Madam", etc.
-    4. You MUST output exactly 2-3 concise bullet points starting with a dash (-). Do not output paragraphs.
-    5. NEVER repeat the input text verbatim. If the text is just a routine administrative cover letter with no actual news or financial figures, output exactly: "- Routine administrative filing with no material updates."
+    1. DO NOT calculate, infer, guess, or hallucinate any numbers or facts. If a number is not explicitly written, DO NOT output it.
+    2. You MUST extract key financial metrics if present (e.g., Total Revenue, Net Profit, EPS, EBITDA, Year-over-Year % growth, or margins).
+    3. Include structural investing impact (e.g., debt reduction, strategic expansion plans, guidance, capital expenditure).
+    4. Ignore short-term noise and boilerplate legal text.
+    5. You MUST output exactly 4-6 concise bullet points starting with a dash (-). Ensure at least 1-2 bullet points contain hard financial numbers.
+    6. NEVER repeat the input text verbatim.
 
     TEXT TO SUMMARIZE:
     <text>
@@ -31,14 +35,29 @@ def summarize_text_with_llm(raw_text: str) -> str:
     """
 
     try:
-        response = ollama.chat(
-            model='qwen2.5vl:7b',
-            messages=[{'role': 'user', 'content': prompt}],
-            options={'temperature': 0.0} # Zero temperature for deterministic, factual output
-        )
-        return response['message']['content'].strip()
+        api_keys_str = os.environ.get("GEMINI_API_KEYS", "")
+        if not api_keys_str:
+            return "Error: GEMINI_API_KEYS not found in .env."
+            
+        # Use the first key for VisuQuant fetching
+        api_key = api_keys_str.split(",")[0].strip()
+        
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={api_key}"
+        headers = {"Content-Type": "application/json"}
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}]
+        }
+        
+        res = requests.post(url, headers=headers, json=payload, timeout=30)
+        if res.status_code == 200:
+            data = res.json()
+            return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+        else:
+            print(f"Gemini API Error {res.status_code}: {res.text}")
+            return "Summary failed due to API error."
+            
     except Exception as e:
-        print(f"Error during LLM summarization: {e}")
+        print(f"Error during Gemini summarization: {e}")
         return "Summary failed. Showing raw snippet: " + truncated_text[:200]
 
 def download_and_parse_pdf(pdf_url: str) -> str:
@@ -51,7 +70,7 @@ def download_and_parse_pdf(pdf_url: str) -> str:
         if res.status_code == 200:
             pdf_document = fitz.open(stream=res.content, filetype="pdf")
             text = ""
-            for page_num in range(min(3, len(pdf_document))):
+            for page_num in range(min(15, len(pdf_document))):
                 page = pdf_document.load_page(page_num)
                 text += page.get_text("text") + "\n"
             return text.strip()
@@ -90,8 +109,18 @@ def fetch_latest_announcements(ticker: str, limit: int = 3) -> list:
         
         if res.status_code == 200:
             data = res.json()
-            # Process the latest announcements
-            for item in data[:limit]:
+            
+            # Filter for relevant announcements only
+            relevant_anns = []
+            for item in data:
+                title = (item.get('subject') or item.get('desc') or '').lower()
+                if "outcome of board meeting" in title or "financial result" in title:
+                    relevant_anns.append(item)
+                    if len(relevant_anns) >= limit:
+                        break
+                        
+            # Process the filtered announcements
+            for item in relevant_anns:
                 ann = {
                     "date": item.get('an_dt'),
                     "title": item.get('subject') or item.get('desc'),
