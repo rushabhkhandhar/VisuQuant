@@ -252,7 +252,32 @@
             <td class="value-cell">{{ ann.date }}</td>
             <td><strong>{{ ann.title }}</strong><br><a href="{{ ann.attachment }}" style="font-size: 11px; color: #3b82f6;">View PDF Attachment</a></td>
             <td style="font-size: 12px; color: #475569;">
-                {% if ann.text_content %}
+                {% if ann.text_content is mapping %}
+                    {% if ann.text_content.error %}
+                        {{ ann.text_content.error }}
+                    {% else %}
+                        {% if ann.text_content.short_term_pov %}
+                        <div style="margin-bottom: 8px;">
+                            <strong style="color: #3b82f6;">Short-Term POV (Financials & Catalysts):</strong>
+                            <ul style="margin: 4px 0; padding-left: 15px;">
+                                {% for item in ann.text_content.short_term_pov %}
+                                <li>{{ item }}</li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                        {% endif %}
+                        {% if ann.text_content.long_term_pov %}
+                        <div>
+                            <strong style="color: #10b981;">Long-Term POV (Structural & Strategic):</strong>
+                            <ul style="margin: 4px 0; padding-left: 15px;">
+                                {% for item in ann.text_content.long_term_pov %}
+                                <li>{{ item }}</li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                        {% endif %}
+                    {% endif %}
+                {% elif ann.text_content %}
                     {{ ann.text_content }}
                 {% else %}
                     No PDF text extracted or available.

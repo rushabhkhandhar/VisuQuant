@@ -18,16 +18,20 @@ def summarize_text_with_llm(raw_text: str) -> str:
 
     prompt = f"""
     You are a strict financial data extractor. 
-    Your ONLY job is to extract hard financial facts and structural updates from the provided text, focusing on the Long-Term Point of View (POV).
+    Your ONLY job is to extract hard financial facts and structural updates from the provided text, categorizing them into Short-Term and Long-Term Points of View (POV).
     
     RULES:
     1. DO NOT calculate, infer, guess, or hallucinate any numbers or facts. If a number is not explicitly written, DO NOT output it.
-    2. You MUST extract key financial metrics if present (e.g., Total Revenue, Net Profit, EPS, EBITDA, Year-over-Year % growth, or margins).
-    3. Include structural investing impact (e.g., debt reduction, strategic expansion plans, guidance, capital expenditure).
-    4. Ignore short-term noise and boilerplate legal text.
-    5. You MUST output exactly 4-6 concise bullet points starting with a dash (-). Ensure at least 1-2 bullet points contain hard financial numbers.
-    6. NEVER repeat the input text verbatim.
-
+    2. Short-Term POV: Extract key financial metrics (e.g., Total Revenue, Net Profit, EPS, EBITDA, Year-over-Year % growth, margins) and immediate market catalysts (dividends, management changes).
+    3. Long-Term POV: Extract structural investing impacts (e.g., debt reduction, strategic expansion plans, guidance, capital expenditure, acquisitions).
+    4. Ignore noise and boilerplate legal text.
+    5. You MUST output EXACTLY valid JSON matching this schema:
+    {{
+      "short_term_pov": ["bullet 1", "bullet 2"],
+      "long_term_pov": ["bullet 1", "bullet 2"]
+    }}
+    6. Do not include markdown formatting (like ```json). Just the raw JSON object.
+    
     TEXT TO SUMMARIZE:
     <text>
     {truncated_text}
@@ -51,14 +55,24 @@ def summarize_text_with_llm(raw_text: str) -> str:
         res = requests.post(url, headers=headers, json=payload, timeout=30)
         if res.status_code == 200:
             data = res.json()
-            return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+            raw_text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+            
+            # Clean markdown backticks if the model ignores instruction 6
+            if raw_text.startswith("```json"):
+                raw_text = raw_text[7:]
+            if raw_text.startswith("```"):
+                raw_text = raw_text[3:]
+            if raw_text.endswith("```"):
+                raw_text = raw_text[:-3]
+                
+            return json.loads(raw_text.strip())
         else:
             print(f"Gemini API Error {res.status_code}: {res.text}")
-            return "Summary failed due to API error."
+            return {"error": "Summary failed due to API error."}
             
     except Exception as e:
         print(f"Error during Gemini summarization: {e}")
-        return "Summary failed. Showing raw snippet: " + truncated_text[:200]
+        return {"error": f"Summary failed. Showing raw snippet: {truncated_text[:200]}"}
 
 def download_and_parse_pdf(pdf_url: str) -> str:
     headers = {
