@@ -711,17 +711,15 @@ def node_decision_engine(state: TradingState) -> dict:
         )
         raw_analysis = response['message']['content']
         
-        # Robust parsing
+        # Robust parsing: Extract from first '{' to last '}' to ignore any preambles
         cleaned_str = raw_analysis.strip()
-        if cleaned_str.startswith("```json"):
-            cleaned_str = cleaned_str[7:]
-        elif cleaned_str.startswith("```"):
-            cleaned_str = cleaned_str[3:]
-            
-        if cleaned_str.endswith("```"):
-            cleaned_str = cleaned_str[:-3]
-            
-        cleaned_str = cleaned_str.strip()
+        start_idx = cleaned_str.find('{')
+        end_idx = cleaned_str.rfind('}')
+        if start_idx != -1 and end_idx != -1 and end_idx >= start_idx:
+            cleaned_str = cleaned_str[start_idx:end_idx+1]
+        else:
+            print(f"[{ticker}] Warning: Could not find JSON brackets in LLM output.")
+
         
         try:
             parsed_json = json.loads(cleaned_str)

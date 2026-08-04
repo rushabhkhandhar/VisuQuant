@@ -20,7 +20,7 @@ graph TD
     C --> E(Unified Trend Engine)
     D --> E
     E --> F(Confluence & Evidence Synthesis)
-    A -->|News Fetcher| News(Fetch Latest Announcements)
+    A -->|News Fetcher| News(Fetch Announcements & Gemini Dual-POV Extraction)
     News --> F
     F --> G(Risk Management Engine)
     G --> H(Decision Engine & Scoring)
@@ -50,7 +50,7 @@ The core logic resides in the `src/` directory.
 - **`nodes.py`**: The heart of the application containing the LLM invocation functions for Vision, Unified Trend, Confluence, and Decision generation.
 - **`quant_calculations.py`**: The mathematical engine that computes Moving Averages, RSI, MACD, ADX, ATR, Bollinger Bands, and Volume/Liquidity metrics.
 - **`nse_fetcher.py` / `scraper.py`**: Handles live market data scraping (NSE Bhavcopy) and TradingView chart screenshot capture via headless browser.
-- **`news_fetcher.py`**: Fetches the latest corporate announcements from the NSE and uses a local LLM to perform strict extractive summarization of attached PDFs, avoiding boilerplate legal jargon.
+- **`news_fetcher.py`**: Fetches the latest corporate announcements (specifically targeting "Outcome of Board Meeting" and "Financial Results") from the NSE. It parses up to 15 pages of the attached PDF and leverages **Gemini 3.6 Flash** (via direct REST API) to strictly extract structured JSON containing **Short-Term POV** (financial metrics/catalysts) and **Long-Term POV** (structural/strategic updates), avoiding boilerplate legal jargon.
 - **`risk_calculations.py`**: Computes entry price, optimal stop losses (using ATR logic), position sizing, and Risk/Reward targets.
 - **`trade_validation.py`**: Performs institutional baseline safety checks (e.g. Absolute Liquidity > $10M ADV) and flags systemic execution risks before the report prints.
 - **`llm.py`**: Standardized wrapper for LLM calls supporting fallback mechanisms (e.g. Qwen2.5-VL for vision).
@@ -66,10 +66,11 @@ The core logic resides in the `src/` directory.
    - `Ollama`: Local LLM serving for total privacy.
    - `Qwen2.5-VL` / Vision Models: Used to "look" at the TradingView charts and interpret support, resistance, and channel patterns exactly like a human analyst would.
    - `Llama3` / `DeepSeek`: Used for deterministic reasoning inside the Decision and Confluence nodes.
+   - `Gemini 3.6 Flash`: Direct REST API integration for high-context, ultra-fast structural financial data extraction from Board Meeting PDFs.
 3. **Data Acquisition**:
    - `NSE Bhavcopy Scraper`: Grabs end-of-day history for Quantitative logic directly from NSE servers.
    - `Playwright`: Headless automation to capture live interactive TradingView charts.
-   - `Fundamental Scraper`: Fetches real-time corporate announcements and extracts text from attached PDFs (via PyMuPDF).
+   - `Fundamental Scraper`: Fetches real-time corporate announcements and extracts text from attached PDFs (via PyMuPDF), routing it to Gemini for strict dual-POV structured JSON extraction.
 4. **Data Science / Quantitative**:
    - `Pandas` and `NumPy` for native deterministic technical indicator math.
 5. **Presentation & Reporting**:
