@@ -1,5 +1,5 @@
 from datetime import date
-from src.nse_fetcher import fetch_daily_candles
+from src.data.nse_fetcher import fetch_daily_candles
 
 def fetch_nse_data(ticker: str) -> dict:
     """

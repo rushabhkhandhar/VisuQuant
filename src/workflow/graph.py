@@ -1,6 +1,6 @@
 from langgraph.graph import StateGraph, START, END
-from src.state import TradingState
-from src.nodes import (
+from src.workflow.state import TradingState
+from src.workflow.nodes import (
     node_capture_chart,
     node_run_nse_scraper,
     node_vision_analysis,

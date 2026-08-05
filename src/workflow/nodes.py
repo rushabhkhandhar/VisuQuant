@@ -5,8 +5,8 @@ import pandas as pd
 import ollama
 from playwright.sync_api import sync_playwright
 
-from src.state import TradingState
-from src.scraper import fetch_nse_data
+from src.workflow.state import TradingState
+from src.data.scraper import fetch_nse_data
 
 def node_capture_chart(state: TradingState) -> dict:
     ticker = state["ticker"]
@@ -45,7 +45,7 @@ def node_run_nse_scraper(state: TradingState) -> dict:
     data = fetch_nse_data(ticker)
     return {"scraped_data": data}
 
-from src.news_fetcher import fetch_latest_announcements
+from src.data.news_fetcher import fetch_latest_announcements
 
 def node_fetch_announcements(state: TradingState) -> dict:
     ticker = state["ticker"]
@@ -271,7 +271,7 @@ def node_vision_analysis(state: TradingState) -> dict:
         "vision_analysis": json.dumps(parsed_json, indent=2) # Backward compatibility for downstream nodes
     }
 
-from src.quant_calculations import calculate_technical_indicators
+from src.quant.quant_calculations import calculate_technical_indicators
 
 def node_quantitative_analysis(state: TradingState) -> dict:
     ticker = state["ticker"]
@@ -566,7 +566,7 @@ def node_confluence_engine(state: TradingState) -> dict:
     print(f"[{ticker}] Confluence analysis complete.")
     
     # Run mathematical clustering for Support/Resistance
-    from src.quant_calculations import cluster_support_resistance
+    from src.quant.quant_calculations import cluster_support_resistance
     
     current_price = 0.0
     scraped = state.get("scraped_data", {})
@@ -586,7 +586,7 @@ def node_confluence_engine(state: TradingState) -> dict:
         "validation_result": json.dumps(parsed_json, indent=2)
     }
 
-from src.risk_calculations import calculate_risk_parameters
+from src.quant.risk_calculations import calculate_risk_parameters
 
 def node_risk_management(state: TradingState) -> dict:
     ticker = state["ticker"]
@@ -872,7 +872,7 @@ def node_decision_engine(state: TradingState) -> dict:
                     ]
                     
                 # Synchronize execution block and risk state with final mathematical recommendation
-                from src.risk_calculations import calculate_risk_parameters
+                from src.quant.risk_calculations import calculate_risk_parameters
                 if rec in ["SELL", "STRONG SELL", "AVOID"]:
                     # Force a bearish risk profile
                     new_risk = calculate_risk_parameters(technical_indicators, confluence_analysis, state.get("scraped_data", {}), {"direction": "Bearish"})
@@ -912,7 +912,7 @@ def node_decision_engine(state: TradingState) -> dict:
         "final_decision": json.dumps(parsed_json, indent=2) # Backward compatibility
     }
 
-from src.trade_validation import validate_trade_parameters
+from src.quant.trade_validation import validate_trade_parameters
 
 def node_trade_validator(state: TradingState) -> dict:
     ticker = state["ticker"]

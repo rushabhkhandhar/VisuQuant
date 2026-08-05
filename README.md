@@ -42,18 +42,29 @@ graph TD
 
 ##  Project Structure & Key Modules
 
-The core logic resides in the `src/` directory.
+The core logic resides in a domain-driven `src/` directory.
 
 - **`main.py`**: The main entry point. Automatically verifies Ollama status and triggers the pipeline.
+
+### `workflow/` (LangGraph Orchestration)
 - **`graph.py`**: Compiles the nodes into a LangGraph state machine, enforcing execution order.
 - **`state.py`**: Defines the `TypedDict` schema representing the memory passed between nodes.
 - **`nodes.py`**: The heart of the application containing the LLM invocation functions for Vision, Unified Trend, Confluence, and Decision generation.
-- **`quant_calculations.py`**: The mathematical engine that computes Moving Averages, RSI, MACD, ADX, ATR, Bollinger Bands, and Volume/Liquidity metrics.
-- **`nse_fetcher.py` / `scraper.py`**: Handles live market data scraping (NSE Bhavcopy) and TradingView chart screenshot capture via headless browser.
-- **`news_fetcher.py`**: Fetches the latest corporate announcements (targeting "Outcome of Board Meeting", "Financial Results", and "Earnings Call Transcripts") from the NSE. It also aggregates the latest top 5 headlines from Google News RSS. It parses up to 15 pages of the attached PDFs and leverages **Gemini 3.6 Flash** (via direct REST API, with graceful degradation to 3.5-flash-lite on 429/503 errors) to strictly extract structured JSON containing **Short-Term POV** (financial metrics/catalysts) and **Long-Term POV** (structural/strategic updates), avoiding boilerplate legal jargon.
+
+### `quant/` (Mathematical & Risk Engine)
+- **`quant_calculations.py`**: The mathematical engine computing Moving Averages, RSI, MACD, ADX, ATR, Bollinger Bands, and Volume/Liquidity metrics.
 - **`risk_calculations.py`**: Computes entry price, optimal stop losses (using ATR logic), position sizing, and Risk/Reward targets.
-- **`trade_validation.py`**: Performs institutional baseline safety checks (e.g. Absolute Liquidity > $10M ADV) and flags systemic execution risks before the report prints.
+- **`trade_validation.py`**: Performs institutional baseline safety checks (e.g. Absolute Liquidity > $10M ADV) and flags systemic execution risks.
+
+### `data/` (Acquisition & Fetching)
+- **`nse_fetcher.py`**: Handles live market data scraping from NSE Bhavcopy and implements highly-optimized caching for massive historical lookbacks.
+- **`scraper.py`**: Playwright headless browser automation to capture interactive TradingView charts as base64 images.
+- **`news_fetcher.py`**: Fetches the latest corporate announcements (targeting "Outcome of Board Meeting", "Financial Results", and "Earnings Call Transcripts") from the NSE. It also aggregates the latest top 5 headlines from Google News RSS. It leverages **Gemini 3.6 Flash** (via direct REST API, with graceful degradation to 3.5-flash-lite on 429/503 errors) to strictly extract structured JSON containing **Short-Term POV** and **Long-Term POV**.
+
+### `core/` (Foundational Utilities)
 - **`llm.py`**: Standardized wrapper for LLM calls supporting fallback mechanisms (e.g. Qwen2.5-VL for vision).
+
+### `reporting/` (PDF Generation)
 - **`storage.py` & `templates/`**: Processes the final JSON outputs, injects them into HTML templates using **Jinja2**, and renders the output to a highly stylized PDF.
 
 ---

@@ -9,8 +9,8 @@ warnings.filterwarnings("ignore")
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.graph import build_graph
-from src.storage import persist_pipeline_results
+from src.workflow.graph import build_graph
+from src.reporting.storage import persist_pipeline_results
 
 import subprocess
 import time
@@ -80,7 +80,7 @@ def main():
     # Persist all data
     persist_pipeline_results(final_state, start_time, end_time)
     
-    from src.nse_fetcher import cleanup_cache
+    from src.data.nse_fetcher import cleanup_cache
     cleanup_cache()
 
 if __name__ == "__main__":
