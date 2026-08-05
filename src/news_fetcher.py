@@ -3,6 +3,8 @@ import requests
 import time
 import os
 import fitz  # PyMuPDF
+import urllib.request
+import xml.etree.ElementTree as ET
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -74,12 +76,12 @@ def summarize_text_with_llm(raw_text: str) -> str:
                     raw_text = raw_text[:-3]
                     
                 return json.loads(raw_text.strip())
-            elif res.status_code == 503:
-                print(f"Warning: {model_name} is overloaded (503). Falling back to next model...")
+            elif res.status_code in [503, 429]:
+                print(f"Warning: {model_name} returned {res.status_code}. Falling back to next model...")
                 continue
             else:
                 print(f"Gemini API Error {res.status_code} on {model_name}: {res.text}")
-                # For non-503 errors (like 400 Bad Request), it's usually fatal for all models
+                # For non-503/429 errors (like 400 Bad Request), it's usually fatal for all models
                 break
                 
         return {"error": "Summary failed. All models overloaded or encountered API errors."}
@@ -138,11 +140,11 @@ def fetch_latest_announcements(ticker: str, limit: int = 3) -> list:
         if res.status_code == 200:
             data = res.json()
             
-            # Filter for relevant announcements only
+            # Filter for relevant announcements only (Board Meetings, Financials, Transcripts)
             relevant_anns = []
             for item in data:
                 title = (item.get('subject') or item.get('desc') or '').lower()
-                if "outcome of board meeting" in title or "financial result" in title:
+                if "outcome of board meeting" in title or "financial result" in title or "transcript" in title:
                     relevant_anns.append(item)
                     if len(relevant_anns) >= limit:
                         break
@@ -165,6 +167,33 @@ def fetch_latest_announcements(ticker: str, limit: int = 3) -> list:
                         ann["text_content"] = summarize_text_with_llm(extracted_text)
                     
                 announcements.append(ann)
+                
+        # --- Add Google News Headlines ---
+        print(f"[{ticker}] Fetching latest Google News headlines...")
+        try:
+            url_news = f'https://news.google.com/rss/search?q={ticker}+stock+NSE&hl=en-IN&gl=IN&ceid=IN:en'
+            req = urllib.request.Request(url_news, headers={'User-Agent': 'Mozilla/5.0'})
+            rss_data = urllib.request.urlopen(req, timeout=10).read()
+            root = ET.fromstring(rss_data)
+            
+            headlines_text = ""
+            for item in root.findall('.//item')[:5]:  # Get top 5
+                title = item.find('title').text if item.find('title') is not None else ''
+                pubDate = item.find('pubDate').text if item.find('pubDate') is not None else ''
+                headlines_text += f"- {title} ({pubDate})\n"
+                
+            if headlines_text.strip():
+                print(f"[{ticker}] Summarizing Google News headlines...")
+                google_ann = {
+                    "date": time.strftime("%d-%b-%Y %H:%M:%S"),
+                    "title": f"Latest Google News Headlines for {ticker}",
+                    "description": "Aggregated recent news articles and market sentiment.",
+                    "attachment": "",
+                    "text_content": summarize_text_with_llm(f"LATEST GOOGLE NEWS HEADLINES:\n{headlines_text}")
+                }
+                announcements.append(google_ann)
+        except Exception as e:
+            print(f"[{ticker}] Error fetching Google News: {e}")
                 
     except Exception as e:
         print(f"[{ticker}] Error fetching announcements: {e}")
