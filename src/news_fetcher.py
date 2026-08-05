@@ -46,29 +46,43 @@ def summarize_text_with_llm(raw_text: str) -> str:
         # Use the first key for VisuQuant fetching
         api_key = api_keys_str.split(",")[0].strip()
         
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={api_key}"
+        models_to_try = [
+            "gemini-3.6-flash",
+            "gemini-3.5-flash-lite",
+            "gemini-1.5-flash"
+        ]
+        
         headers = {"Content-Type": "application/json"}
         payload = {
             "contents": [{"parts": [{"text": prompt}]}]
         }
         
-        res = requests.post(url, headers=headers, json=payload, timeout=30)
-        if res.status_code == 200:
-            data = res.json()
-            raw_text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+        for model_name in models_to_try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
             
-            # Clean markdown backticks if the model ignores instruction 6
-            if raw_text.startswith("```json"):
-                raw_text = raw_text[7:]
-            if raw_text.startswith("```"):
-                raw_text = raw_text[3:]
-            if raw_text.endswith("```"):
-                raw_text = raw_text[:-3]
+            res = requests.post(url, headers=headers, json=payload, timeout=30)
+            if res.status_code == 200:
+                data = res.json()
+                raw_text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
                 
-            return json.loads(raw_text.strip())
-        else:
-            print(f"Gemini API Error {res.status_code}: {res.text}")
-            return {"error": "Summary failed due to API error."}
+                # Clean markdown backticks if the model ignores instruction 6
+                if raw_text.startswith("```json"):
+                    raw_text = raw_text[7:]
+                if raw_text.startswith("```"):
+                    raw_text = raw_text[3:]
+                if raw_text.endswith("```"):
+                    raw_text = raw_text[:-3]
+                    
+                return json.loads(raw_text.strip())
+            elif res.status_code == 503:
+                print(f"Warning: {model_name} is overloaded (503). Falling back to next model...")
+                continue
+            else:
+                print(f"Gemini API Error {res.status_code} on {model_name}: {res.text}")
+                # For non-503 errors (like 400 Bad Request), it's usually fatal for all models
+                break
+                
+        return {"error": "Summary failed. All models overloaded or encountered API errors."}
             
     except Exception as e:
         print(f"Error during Gemini summarization: {e}")
