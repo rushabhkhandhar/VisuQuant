@@ -280,3 +280,34 @@ def load_nifty500_symbols() -> List[str]:
         "https://www.niftyindices.com/IndexConstituent/ind_nifty500list.csv",
     ]
     return _load_symbols_from_csv_urls(urls, column_name="Symbol")
+
+def get_ohlcv(symbol: str, start: date, end: date) -> Optional[pd.DataFrame]:
+    """
+    Wrapper for screening engine. Fetches OHLCV, handles circuits and corporate action gaps.
+    Returns DataFrame indexed by date with columns [Open, High, Low, Close, Volume, is_circuit_day].
+    """
+    lookback = (end - start).days
+    if lookback < 0:
+        return None
+        
+    df = fetch_daily_candles(symbol, end, lookback_days=lookback)
+    if df is None or df.empty:
+        return None
+        
+    # Trim to exact start date (since lookback includes weekends/holidays)
+    df = df[df.index >= pd.to_datetime(start)]
+    
+    if df.empty:
+        return None
+        
+    # 2. Handle NSE-specific issues
+    # Flag circuit days: High == Low (no trading range, usually stuck at upper/lower circuit)
+    df["is_circuit_day"] = df["High"] == df["Low"]
+    
+    # Flag corporate actions (large overnight gaps > 20% indicative of splits/bonuses)
+    prev_close = df["Close"].shift(1)
+    gap_pct = abs((df["Open"] - prev_close) / prev_close)
+    df["is_corporate_action_gap"] = gap_pct > 0.20
+    
+    return df
+
