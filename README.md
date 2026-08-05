@@ -20,7 +20,7 @@ graph TD
     C --> E(Unified Trend Engine)
     D --> E
     E --> F(Confluence & Evidence Synthesis)
-    A -->|News Fetcher| News("Fetch Announcements <br> & Gemini Dual-POV")
+    A -->|News Fetcher| News("Fetch Announcements, Transcripts <br> & Google News (Gemini Dual-POV)")
     News --> F
     F --> G(Risk Management Engine)
     G --> H(Decision Engine & Scoring)
@@ -50,7 +50,7 @@ The core logic resides in the `src/` directory.
 - **`nodes.py`**: The heart of the application containing the LLM invocation functions for Vision, Unified Trend, Confluence, and Decision generation.
 - **`quant_calculations.py`**: The mathematical engine that computes Moving Averages, RSI, MACD, ADX, ATR, Bollinger Bands, and Volume/Liquidity metrics.
 - **`nse_fetcher.py` / `scraper.py`**: Handles live market data scraping (NSE Bhavcopy) and TradingView chart screenshot capture via headless browser.
-- **`news_fetcher.py`**: Fetches the latest corporate announcements (specifically targeting "Outcome of Board Meeting" and "Financial Results") from the NSE. It parses up to 15 pages of the attached PDF and leverages **Gemini 3.6 Flash** (via direct REST API) to strictly extract structured JSON containing **Short-Term POV** (financial metrics/catalysts) and **Long-Term POV** (structural/strategic updates), avoiding boilerplate legal jargon.
+- **`news_fetcher.py`**: Fetches the latest corporate announcements (targeting "Outcome of Board Meeting", "Financial Results", and "Earnings Call Transcripts") from the NSE. It also aggregates the latest top 5 headlines from Google News RSS. It parses up to 15 pages of the attached PDFs and leverages **Gemini 3.6 Flash** (via direct REST API, with graceful degradation to 3.5-flash-lite on 429/503 errors) to strictly extract structured JSON containing **Short-Term POV** (financial metrics/catalysts) and **Long-Term POV** (structural/strategic updates), avoiding boilerplate legal jargon.
 - **`risk_calculations.py`**: Computes entry price, optimal stop losses (using ATR logic), position sizing, and Risk/Reward targets.
 - **`trade_validation.py`**: Performs institutional baseline safety checks (e.g. Absolute Liquidity > $10M ADV) and flags systemic execution risks before the report prints.
 - **`llm.py`**: Standardized wrapper for LLM calls supporting fallback mechanisms (e.g. Qwen2.5-VL for vision).
@@ -70,7 +70,7 @@ The core logic resides in the `src/` directory.
 3. **Data Acquisition**:
    - `NSE Bhavcopy Scraper`: Grabs end-of-day history for Quantitative logic directly from NSE servers.
    - `Playwright`: Headless automation to capture live interactive TradingView charts.
-   - `Fundamental Scraper`: Fetches real-time corporate announcements and extracts text from attached PDFs (via PyMuPDF), routing it to Gemini for strict dual-POV structured JSON extraction.
+   - `Fundamental Scraper`: Fetches real-time corporate announcements & transcripts (via PyMuPDF) and live Google News RSS feeds, routing them to Gemini for strict dual-POV structured JSON extraction.
 4. **Data Science / Quantitative**:
    - `Pandas` and `NumPy` for native deterministic technical indicator math.
 5. **Presentation & Reporting**:
