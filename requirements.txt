@@ -5,3 +5,4 @@ pandas
 langchain-core
 pandas-ta
 PyMuPDF
+pytest
