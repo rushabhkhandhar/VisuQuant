@@ -6,3 +6,4 @@ langchain-core
 pandas-ta
 PyMuPDF
 pytest
+scipy

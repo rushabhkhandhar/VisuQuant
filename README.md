@@ -56,8 +56,13 @@ The core logic resides in a domain-driven `src/` directory.
 - **`risk_calculations.py`**: Computes entry price, optimal stop losses (using ATR logic), position sizing, and Risk/Reward targets.
 - **`trade_validation.py`**: Performs institutional baseline safety checks (e.g. Absolute Liquidity > $10M ADV) and flags systemic execution risks.
 
+### `screener/` (Vectorized Stock Screening)
+- **`config.py`**: Holds strategy thresholds (liquidity, ATR, Bollinger Band lookbacks) and universe definitions.
+- **`indicators/core.py`**: High-performance, pure vectorized functions for SMA, EMA, ATR, Bollinger Bands, RSI, MACD, and Swing Detection using `pandas-ta` and `scipy`. Actively excludes circuit days to prevent distorted readings.
+- **`screens/`**: Directory for deploying individual quantitative screening strategies.
+
 ### `data/` (Acquisition & Fetching)
-- **`nse_fetcher.py`**: Handles live market data scraping from NSE Bhavcopy and implements highly-optimized caching for massive historical lookbacks.
+- **`nse_fetcher.py`**: Handles live market data scraping from NSE Bhavcopy and implements highly-optimized caching for massive historical lookbacks. It also exposes the `get_ohlcv` wrapper that serves clean data to the screener, automatically flagging circuit limits and corporate action gaps.
 - **`scraper.py`**: Playwright headless browser automation to capture interactive TradingView charts as base64 images.
 - **`news_fetcher.py`**: Fetches the latest corporate announcements (targeting "Outcome of Board Meeting", "Financial Results", and "Earnings Call Transcripts") from the NSE. It also aggregates the latest top 5 headlines from Google News RSS. It leverages **Gemini 3.6 Flash** (via direct REST API, with graceful degradation to 3.5-flash-lite on 429/503 errors) to strictly extract structured JSON containing **Short-Term POV** and **Long-Term POV**.
 
