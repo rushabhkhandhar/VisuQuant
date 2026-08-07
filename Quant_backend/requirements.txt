@@ -7,3 +7,5 @@ pandas-ta
 PyMuPDF
 pytest
 scipy
+fastapi
+uvicorn
