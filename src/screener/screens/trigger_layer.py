@@ -3,17 +3,20 @@ import numpy as np
 from src.screener import config
 from src.screener.indicators.core import bollinger_bands, ema
 
-def bollinger_squeeze_breakout(df: pd.DataFrame, bb_lookback_months: int = config.BB_LOOKBACK_MONTHS, volume_mult: float = config.VOLUME_BREAKOUT_MULT) -> dict:
+def bollinger_squeeze_breakout(df: pd.DataFrame, bb_lookback_months: int = config.BB_LOOKBACK_MONTHS, volume_mult: float = config.VOLUME_BREAKOUT_MULT, disabled_triggers: list = None) -> dict:
     """
     Detects a Bollinger Band squeeze breakout.
     - Squeeze: Bandwidth is in the bottom 10th percentile over the last 6 months.
     - Breakout: Close breaks upper band.
     - Volume: Breakout volume >= volume_mult * 20-day avg volume.
     """
+    if disabled_triggers is None:
+        disabled_triggers = []
+        
     # 6 months of trading days is approximately 126 days
     lookback_days = bb_lookback_months * 21
     
-    if "bollinger_breakout" in getattr(config, "DISABLED_TRIGGERS", []):
+    if "bollinger_breakout" in disabled_triggers:
         return {"passed": False, "bandwidth": None, "bandwidth_pctile": None, "volume_ratio": None}
         
     if df.empty or len(df) < lookback_days + 20: # Need enough data for rolling metrics
@@ -100,7 +103,7 @@ def _is_morning_star(p2_o, p2_c, p1_o, p1_c, o, c):
     
     return p2_red and p1_small and (p1_gap_down or max(p1_o, p1_c) < p2_c) and curr_green and curr_closes_deep
 
-def ma_pullback_bounce(df: pd.DataFrame) -> dict:
+def ma_pullback_bounce(df: pd.DataFrame, disabled_triggers: list = None) -> dict:
     """
     Detects a pullback bounce off the 50 EMA.
     - Confirms 20 EMA > 50 EMA > 200 EMA.
@@ -108,6 +111,9 @@ def ma_pullback_bounce(df: pd.DataFrame) -> dict:
     - Reversal candlestick (Hammer, Bullish Engulfing, Morning Star) on the touch day.
     - Volume on reversal candle > 10-day average.
     """
+    if disabled_triggers is None:
+        disabled_triggers = []
+        
     if df.empty or len(df) < 200:
         return {"passed": False, "reversal_type": None, "touch_day_index": None}
         
@@ -157,14 +163,14 @@ def ma_pullback_bounce(df: pd.DataFrame) -> dict:
             if v > v10:
                 # Check reversal candles
                 # 1. Hammer
-                if "hammer" not in getattr(config, "DISABLED_TRIGGERS", []) and _is_hammer(o, h, l, c):
+                if "hammer" not in disabled_triggers and _is_hammer(o, h, l, c):
                     touch_found = True
                     reversal_type = "Hammer"
                     touch_day_idx = offset
                     break
                     
                 # 2. Bullish Engulfing (needs prev day)
-                if "bullish_engulfing" not in getattr(config, "DISABLED_TRIGGERS", []) and len(df) >= offset + 1:
+                if "bullish_engulfing" not in disabled_triggers and len(df) >= offset + 1:
                     prev_o = df['Open'].iloc[idx - 1]
                     prev_c = df['Close'].iloc[idx - 1]
                     if _is_bullish_engulfing(prev_o, prev_c, o, c):
@@ -174,7 +180,7 @@ def ma_pullback_bounce(df: pd.DataFrame) -> dict:
                         break
                         
                 # 3. Morning Star (needs prev 2 days)
-                if "morning_star" not in getattr(config, "DISABLED_TRIGGERS", []) and len(df) >= offset + 2:
+                if "morning_star" not in disabled_triggers and len(df) >= offset + 2:
                     p2_o = df['Open'].iloc[idx - 2]
                     p2_c = df['Close'].iloc[idx - 2]
                     p1_o = df['Open'].iloc[idx - 1]

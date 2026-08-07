@@ -8,11 +8,30 @@ UNIVERSE = "NIFTY500"
 STAGE1_FILTER_ENABLED = True      # If True, heavily filters for Stage 2 uptrends & ATR contraction before looking for triggers
 DEDUP_WINDOW_DAYS = 10            # Number of trading days before the same trigger can fire again for a symbol
 
-# --- Trigger Configuration ---
-ACTIVE_TRIGGERS = ["bollinger_breakout", "bullish_engulfing"]
-WATCHLIST_TRIGGERS = ["morning_star"]
-DISABLED_TRIGGERS = ["hammer"]
-GOLDEN_POCKET_SCORING_ENABLED = False
+# --- Dynamic Regime Trigger Configuration ---
+REGIME_STRATEGIES = {
+    "TRENDING UP": {
+        "active": ["bollinger_breakout", "bullish_engulfing"],
+        "watchlist": ["morning_star"],
+        "disabled": ["hammer"]
+    },
+    "TRENDING DOWN": {
+        "active": ["hammer"], # Look for deep oversold bounce/capitulation
+        "watchlist": ["bullish_engulfing"],
+        "disabled": ["bollinger_breakout", "morning_star"]
+    },
+    "CHOPPY": {
+        "active": ["morning_star"], # Mean reversion
+        "watchlist": ["bollinger_breakout", "bullish_engulfing"],
+        "disabled": ["hammer"]
+    }
+}
+
+GOLDEN_POCKET_SCORING_ENABLED = {
+    "TRENDING UP": False,
+    "TRENDING DOWN": False,
+    "CHOPPY": True
+}
 
 # --- Strategy Thresholds ---
 ROUND_TRIP_COST_PCT = 0.002       # 0.2% round-trip cost (brokerage, STT, slippage)

@@ -130,7 +130,19 @@ def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5,
         return []
         
     # 4 & 5. Stage 2: Trigger Layer & Fib Confluence
-    logger.info("Running Stage 2: Trigger Layer (Bollinger Squeeze / MA Pullback)...")
+    if "TRENDING UP" in current_regime:
+        base_regime = "TRENDING UP"
+    elif "TRENDING DOWN" in current_regime:
+        base_regime = "TRENDING DOWN"
+    else:
+        base_regime = "CHOPPY"
+        
+    logger.info(f"Running Stage 2: Trigger Layer (Dynamic Regime: {base_regime})...")
+    
+    active_config = config.REGIME_STRATEGIES.get(base_regime, {}).get("active", [])
+    watchlist_config = config.REGIME_STRATEGIES.get(base_regime, {}).get("watchlist", [])
+    disabled_config = config.REGIME_STRATEGIES.get(base_regime, {}).get("disabled", [])
+    
     final_candidates = []
     watchlist_candidates = []
     
@@ -139,8 +151,8 @@ def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5,
         trend_metrics = data["trend_metrics"]
         
         # Run independent triggers
-        bb_trigger = bollinger_squeeze_breakout(df, config.BB_LOOKBACK_MONTHS, config.VOLUME_BREAKOUT_MULT)
-        ma_trigger = ma_pullback_bounce(df)
+        bb_trigger = bollinger_squeeze_breakout(df, config.BB_LOOKBACK_MONTHS, config.VOLUME_BREAKOUT_MULT, disabled_triggers=disabled_config)
+        ma_trigger = ma_pullback_bounce(df, disabled_triggers=disabled_config)
         
         passed_bb = bb_trigger.get("passed", False)
         passed_ma = ma_trigger.get("passed", False)
@@ -153,18 +165,18 @@ def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5,
         watchlist_triggers = []
         
         if passed_bb:
-            if "bollinger_breakout" in getattr(config, 'ACTIVE_TRIGGERS', []):
+            if "bollinger_breakout" in active_config:
                 active_triggers.append("Bollinger Breakout")
-            elif "bollinger_breakout" in getattr(config, 'WATCHLIST_TRIGGERS', []):
+            elif "bollinger_breakout" in watchlist_config:
                 watchlist_triggers.append("Bollinger Breakout")
                 
         if passed_ma:
             ma_type = ma_trigger.get('reversal_type')
             if ma_type:
                 ma_key = ma_type.lower().replace(" ", "_")
-                if ma_key in getattr(config, 'ACTIVE_TRIGGERS', []):
+                if ma_key in active_config:
                     active_triggers.append(ma_type)
-                elif ma_key in getattr(config, 'WATCHLIST_TRIGGERS', []):
+                elif ma_key in watchlist_config:
                     watchlist_triggers.append(ma_type)
             else:
                 active_triggers.append("MA Bounce")
@@ -213,7 +225,8 @@ def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5,
             
             # Confluence Bonus
             if in_golden_pocket:
-                if getattr(config, 'GOLDEN_POCKET_SCORING_ENABLED', True):
+                gp_scoring = getattr(config, 'GOLDEN_POCKET_SCORING_ENABLED', {})
+                if isinstance(gp_scoring, dict) and gp_scoring.get(base_regime, False):
                     score += config.FIB_CONFLUENCE_BONUS
                 trigger_type_str += " (Golden Pocket Bounce)"
                 
