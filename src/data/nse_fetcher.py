@@ -1,12 +1,17 @@
 import os
 import time
+import json
 from datetime import date, datetime, timedelta
 from io import StringIO
+import logging
 from typing import Any, Dict, List, Optional, Sequence
 import urllib.error
 from urllib.request import Request, urlopen
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
 
 # Global in-memory cache to avoid repeated network requests in the same run
 _BHAVCOPY_CACHE: Dict[str, Optional[pd.DataFrame]] = {}
@@ -226,6 +231,51 @@ def fetch_bulk_history(symbols: List[str], end_date: date, lookback_days: int) -
     for symbol, group in master_df.groupby("SYMBOL"):
         daily = group.set_index("Date")[["Open", "High", "Low", "Close", "Volume"]]
         if len(daily) >= 10:
+            
+            # --- Exact Corporate Action Adjustments ---
+            # Create a separate Raw_Close column before any adjustment
+            daily['Raw_Close'] = daily['Close']
+            
+            # Load real corporate actions
+            actions_lookup = {}
+            try:
+                actions_file = os.path.join(os.path.dirname(__file__), "corporate_actions.json")
+                if os.path.exists(actions_file):
+                    with open(actions_file, "r") as f:
+                        all_actions = json.load(f)
+                        actions_lookup = all_actions.get(symbol, {})
+            except Exception as e:
+                # logger.warning(f"Failed to load corporate actions for {symbol}: {e}")
+                pass
+                
+            for d_str, factor in actions_lookup.items():
+                ex_date = pd.to_datetime(d_str)
+                # Apply backward multiplicative adjustment
+                mask = daily.index < ex_date
+                if mask.any():
+                    for col in ['Open', 'High', 'Low', 'Close']:
+                        daily.loc[mask, col] = daily.loc[mask, col] / factor
+                    daily.loc[mask, 'Volume'] = daily.loc[mask, 'Volume'] * factor
+                    # logger.info(f"Auto-Adjusted {symbol} on {d_str} for exact 1:{factor} split via lookup")
+
+            # --- Corporate Action Sanity Check ---
+            # Calculate daily returns to find unverified gaps after adjustments
+            daily['Return'] = daily['Close'].pct_change()
+            
+            # Find significant jumps (>20% absolute)
+            anomalies = daily[daily['Return'].abs() > 0.20]
+            
+            if not anomalies.empty:
+                for date_idx, row in anomalies.iterrows():
+                    d_str = date_idx.strftime("%Y-%m-%d")
+                    # If this date wasn't already handled as a split
+                    if d_str not in actions_lookup:
+                        ret = row['Return']
+                        # logger.warning(f"Unverified Data Anomaly: {symbol} on {d_str} jumped {ret*100:.1f}%. Not auto-adjusting.")
+                    
+            # Drop the temp column to keep df clean
+            daily = daily.drop(columns=['Return'])
+            
             history[symbol] = daily
             
     return history

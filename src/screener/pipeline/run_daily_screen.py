@@ -2,6 +2,9 @@ import argparse
 import logging
 from datetime import date
 from typing import List, Dict, Any
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..')))
 
 from src.screener import config
 from src.data.nse_fetcher import load_nifty500_symbols, fetch_bulk_history
@@ -39,23 +42,62 @@ def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5)
     logger.info("Fetching bulk historical data for liquid universe (~300 days)...")
     bulk_data = fetch_bulk_history(liquid_symbols, as_of_date, lookback_days=300)
     
-    # 3. Stage 1: VCP Trend Template
-    stage1_survivors = {}
-    logger.info("Running Stage 1: Minervini VCP Trend Template...")
+    import numpy as np
     
-    for symbol, df in bulk_data.items():
-        if df.empty:
-            continue
+    # 3. Stage 1: VCP Trend Template
+    pre_atr_survivors = {}
+    stage1_survivors = {}
+    cond_counts = {"c1": 0, "c2": 0, "c3": 0, "c5": 0, "all_trend": 0}
+    
+    if config.STAGE1_FILTER_ENABLED:
+        logger.info("Running Stage 1: Minervini VCP Trend Template...")
+        
+        for symbol, df in bulk_data.items():
+            if df.empty:
+                continue
+                
+            trend_metrics = evaluate_vcp_trend(df, config.NEAR_52W_HIGH_PCT)
             
-        trend_metrics = evaluate_vcp_trend(df, config.NEAR_52W_HIGH_PCT)
-        if trend_metrics.get("passed", False):
-            stage1_survivors[symbol] = {
-                "df": df,
-                "trend_metrics": trend_metrics
-            }
+            # Log counts
+            if trend_metrics.get("c1_sma", False): cond_counts["c1"] += 1
+            if trend_metrics.get("c2_sma200_up", False): cond_counts["c2"] += 1
+            if trend_metrics.get("c3_52w_high", False): cond_counts["c3"] += 1
+            if trend_metrics.get("c5_vol_dry", False): cond_counts["c5"] += 1
             
+            if trend_metrics.get("passed", False):
+                cond_counts["all_trend"] += 1
+                pre_atr_survivors[symbol] = {
+                    "df": df,
+                    "trend_metrics": trend_metrics
+                }
+                
+        logger.info("--- VCP Diagnostic Counts ---")
+        logger.info(f"C1 (SMA Stack): {cond_counts['c1']} passed")
+        logger.info(f"C2 (200 SMA Up): {cond_counts['c2']} passed")
+        logger.info(f"C3 (Near 52W High): {cond_counts['c3']} passed")
+        logger.info(f"C5 (Vol Dry Up): {cond_counts['c5']} passed")
+        logger.info(f"Passed All Core Trend: {cond_counts['all_trend']} passed")
+        
+        # Cross-sectional ATR filtration
+        if pre_atr_survivors:
+            atr_ratios = [data["trend_metrics"]["atr_ratio"] for data in pre_atr_survivors.values()]
+            dynamic_cutoff = np.percentile(atr_ratios, config.ATR_CONTRACTION_PERCENTILE)
+            logger.info(f"Dynamic ATR Threshold (Bottom {config.ATR_CONTRACTION_PERCENTILE}% of {len(atr_ratios)} survivors): {dynamic_cutoff:.2f}")
+            
+            for symbol, data in pre_atr_survivors.items():
+                if data["trend_metrics"]["atr_ratio"] <= dynamic_cutoff:
+                    stage1_survivors[symbol] = data
+    else:
+        logger.info("Skipping Stage 1 (VCP Trend Template) as STAGE1_FILTER_ENABLED is False.")
+        for symbol, df in bulk_data.items():
+            if not df.empty:
+                stage1_survivors[symbol] = {"df": df, "trend_metrics": {}}
+                
     stage1_count = len(stage1_survivors)
-    logger.info(f"Stage 1 (VCP Trend) Survivors: {stage1_count} symbols.")
+    if config.STAGE1_FILTER_ENABLED:
+        logger.info(f"Stage 1 Final (Post-ATR) Survivors: {stage1_count} symbols.")
+    else:
+        logger.info(f"Candidates bypassing Stage 1: {stage1_count} symbols.")
     
     if stage1_count == 0:
         logger.warning("Pipeline halted: 0 symbols survived Stage 1.")

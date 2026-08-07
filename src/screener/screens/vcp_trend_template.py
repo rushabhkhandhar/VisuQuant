@@ -39,7 +39,7 @@ def evaluate_vcp_trend(df: pd.DataFrame, near_52w_high_pct: float = config.NEAR_
     
     # Condition 2: 200 SMA has been trending up for at least the last 20 trading days
     # (i.e. monotonically increasing or at least higher than 20 days ago, we check rigorous consecutive up days)
-    sma200_diff = sma200.diff().tail(60) # check up to 60 days back
+    sma200_diff = sma200.diff().tail(60).values # check up to 60 days back
     trend_up_days = 0
     for val in reversed(sma200_diff):
         if val > 0:
@@ -53,9 +53,8 @@ def evaluate_vcp_trend(df: pd.DataFrame, near_52w_high_pct: float = config.NEAR_
     pct_from_high = (curr_high_52w - current_close) / curr_high_52w
     cond3 = pct_from_high <= near_52w_high_pct
     
-    # Condition 4: ATR(10) / ATR(50) ratio is below a contraction threshold (e.g. < 0.75)
+    # Condition 4: ATR(10) / ATR(50) ratio (Now evaluated cross-sectionally later)
     atr_ratio = curr_atr10 / curr_atr50 if curr_atr50 > 0 else 1.0
-    cond4 = atr_ratio < 0.75
     
     # Condition 5: Average down-day volume over the last 10 days is below the 20-day average volume
     prev_close = df['Close'].shift(1)
@@ -67,11 +66,15 @@ def evaluate_vcp_trend(df: pd.DataFrame, near_52w_high_pct: float = config.NEAR_
     
     cond5 = avg_down_vol_10d < avg_vol_20d
     
-    passed = bool(cond1 and cond2 and cond3 and cond4 and cond5)
+    passed = bool(cond1 and cond2 and cond3 and cond5)
     
     return {
         "passed": passed,
         "atr_ratio": float(atr_ratio),
         "pct_from_high": float(pct_from_high),
-        "trend_up_days": trend_up_days
+        "trend_up_days": trend_up_days,
+        "c1_sma": bool(cond1),
+        "c2_sma200_up": bool(cond2),
+        "c3_52w_high": bool(cond3),
+        "c5_vol_dry": bool(cond5)
     }
