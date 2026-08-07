@@ -80,11 +80,21 @@ flowchart TB
 
 ##  Project Structure & Key Modules
 
-The core logic resides in a domain-driven `src/` directory.
+VisuQuant is structured as a **Monorepo** to cleanly separate the backend quantitative engine from the frontend visual dashboard.
 
-- **`main.py`**: The grand orchestrator. It features an interactive CLI that automatically verifies Ollama status and allows you to either run the automated daily screener across the entire market, or run the deep-dive pipeline on a single ticker.
+```text
+finvison_tech_analysis/
+├── Quant_backend/          <-- (Python algorithmic engine & AI orchestration)
+│   ├── src/
+│   ├── main.py
+│   └── requirements.txt
+│
+└── visuquant_frontend/     <-- (Next.js web dashboard)
+    ├── src/app/
+    └── package.json
+```
 
-### `workflow/` (LangGraph Orchestration)
+### `Quant_backend/src/workflow/` (LangGraph Orchestration)
 - **`graph.py`**: Compiles the nodes into a LangGraph state machine, enforcing execution order.
 - **`state.py`**: Defines the `TypedDict` schema representing the memory passed between nodes.
 - **`nodes.py`**: The heart of the application containing the LLM invocation functions for Vision, Unified Trend, Confluence, and Decision generation.
@@ -147,8 +157,9 @@ Unlike most AI wrappers, FinVison features strict **Mathematical Gating** to pre
 
 ##  Execution
 
-To run the pipeline, simply execute the main orchestrator:
+To run the pipeline backend, navigate to the backend directory and execute the main orchestrator:
 ```bash
+cd Quant_backend
 python3 src/main.py
 ```
 This will launch an interactive menu:
