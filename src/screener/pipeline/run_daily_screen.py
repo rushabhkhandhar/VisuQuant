@@ -16,7 +16,8 @@ from src.screener.screens.fib_confluence import get_golden_pocket
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5, check_regime: bool = False) -> List[Dict[str, Any]]:
+def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5, check_regime: bool = False) -> Dict[str, Any]:
+    current_regime = "UNKNOWN"
     if as_of_date is None:
         as_of_date = date.today()
         
@@ -292,7 +293,11 @@ def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5,
             except Exception as e:
                 logger.error(f"Failed to write watchlist file: {e}")
             
-    return top_candidates
+    return {
+        "candidates": top_candidates,
+        "watchlist": watchlist_candidates,
+        "regime": current_regime
+    }
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the quantitative screening pipeline.")
@@ -302,4 +307,7 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     
-    run_screener(dry_run=args.dry_run, top_n=args.top, check_regime=args.regime_check)
+    results = run_screener(dry_run=args.dry_run, top_n=args.top, check_regime=args.regime_check)
+    # Print if dry run or directly invoked
+    if not args.dry_run:
+        pass # Logging already handled inside

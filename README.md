@@ -11,31 +11,65 @@ FinVison acts as a fully autonomous algorithmic analyst. It fetches live market 
 The system is built on a directed acyclic graph (DAG) state machine using **LangGraph**. Data flows linearly from market scraping to the final PDF generation.
 
 ```mermaid
-graph TD
-    %% Main Pipeline
-    Start([fa:fa-play Start Run]) --> A(Scrape NSE Data & Capture Chart)
-    A --> B{Parallel Processing}
-    B -->|Quantitative Engine| C(Calculate Tech Indicators)
-    B -->|Vision AI Engine| D(Extract Visual Features)
-    C --> E(Unified Trend Engine)
-    D --> E
-    E --> F(Confluence & Evidence Synthesis)
-    A -->|News Fetcher| News("Fetch Announcements & Transcripts<br>& Google News<br>(Gemini Dual-POV)")
-    News --> F
-    F --> G(Risk Management Engine)
-    G --> H(Decision Engine & Scoring)
-    H --> I(Trade Validation)
-    I --> J(Generate PDF Report)
-    J --> End([fa:fa-stop Complete])
+flowchart TB
+    Start([main.py orchestrator]) --> Menu{Interactive menu}
 
-    %% Styling
-    classDef node fill:#1e293b,stroke:#3b82f6,stroke-width:2px,color:#fff;
-    classDef startend fill:#059669,stroke:#047857,stroke-width:2px,color:#fff;
-    classDef parallel fill:#6366f1,stroke:#4f46e5,stroke-width:2px,color:#fff;
-    
-    class A,C,D,E,F,G,H,I,J node;
-    class Start,End startend;
-    class B parallel;
+    Menu -->|Option 2: manual override| MT[Single ticker input]
+    Menu -->|Option 1: automated| S1
+
+    subgraph Screener["Quantitative Screener Engine"]
+        direction TB
+        S1[NSE 500 liquidity filter<br/>Drop stocks below ₹50 Cr/day] --> S2[Macro regime analysis<br/>NIFTYBEES trend classification]
+        S2 --> S3[Stage 1: VCP trend template<br/>SMA stack + dynamic ATR contraction]
+        S3 --> S4[Stage 2: active triggers<br/>Bollinger breakout + bullish engulfing]
+        S4 -. watchlist, not scored .-> S4w[Morning star: watchlist only]
+        S4 -. disabled .-> S4d[Hammer: disabled]
+        S4 --> S5[Confluence scoring<br/>Golden pocket tagged as metadata only]
+        S5 --> S6[Validated handoff payload<br/>Top 3-5 ranked candidates]
+    end
+
+    S6 --> VQ_Init
+    MT --> VQ_Init
+
+    subgraph VisuQuant["VisuQuant LangGraph Workflow"]
+        direction TB
+        VQ_Init((Graph init)) --> Capture[Scrape live NSE data<br/>+ capture chart]
+
+        Capture --> Quant[Quant engine<br/>Indicators, ATR stops]
+        Capture --> Vision[Vision AI engine<br/>Chart pattern recognition]
+        Capture --> Fund[Fundamental engine<br/>Gemini dual-POV]
+
+        Quant --> Unified[Unified trend engine]
+        Vision --> Unified
+
+        Unified --> Confluence[Confluence synthesis]
+        Fund --> Confluence
+
+        Confluence --> Risk[Risk management<br/>ATR-based stop levels]
+        Risk --> Decision[Decision engine + scoring<br/>Composite trade score]
+        Decision --> Safety[Trade safety validation]
+        Safety --> PDF[Generate PDF dashboard]
+    end
+
+    PDF --> End([Complete])
+
+    classDef screener fill:#0f766e,stroke:#0d9488,stroke-width:2px,color:#fff
+    classDef watchlist fill:#78716c,stroke:#57534e,stroke-width:1px,color:#fff,stroke-dasharray: 4 3
+    classDef disabled fill:#44403c,stroke:#292524,stroke-width:1px,color:#a8a29e,stroke-dasharray: 2 2
+    classDef node fill:#1e293b,stroke:#3b82f6,stroke-width:2px,color:#fff
+    classDef synthesis fill:#4c1d95,stroke:#7c3aed,stroke-width:2px,color:#fff
+    classDef output fill:#9a3412,stroke:#c2410c,stroke-width:2px,color:#fff
+    classDef startend fill:#b91c1c,stroke:#991b1b,stroke-width:2px,color:#fff
+    classDef menu fill:#6366f1,stroke:#4f46e5,stroke-width:2px,color:#fff
+
+    class S1,S2,S3,S4,S5,S6 screener
+    class S4w watchlist
+    class S4d disabled
+    class Capture,Quant,Vision,Fund node
+    class Unified,Confluence synthesis
+    class Risk,Decision,Safety,PDF output
+    class Start,End,VQ_Init startend
+    class Menu,MT menu
 ```
 
 ---
@@ -44,7 +78,7 @@ graph TD
 
 The core logic resides in a domain-driven `src/` directory.
 
-- **`main.py`**: The main entry point. Automatically verifies Ollama status and triggers the pipeline.
+- **`main.py`**: The grand orchestrator. It features an interactive CLI that automatically verifies Ollama status and allows you to either run the automated daily screener across the entire market, or run the deep-dive pipeline on a single ticker.
 
 ### `workflow/` (LangGraph Orchestration)
 - **`graph.py`**: Compiles the nodes into a LangGraph state machine, enforcing execution order.
@@ -57,9 +91,13 @@ The core logic resides in a domain-driven `src/` directory.
 - **`trade_validation.py`**: Performs institutional baseline safety checks (e.g. Absolute Liquidity > $10M ADV) and flags systemic execution risks.
 
 ### `screener/` (Vectorized Stock Screening)
-- **`config.py`**: Holds strategy thresholds (liquidity, ATR, Bollinger Band lookbacks) and universe definitions.
+The foundational quantitative filtering layer that scans the entire market (500 symbols) to find high-probability setups *before* they are sent to the Vision AI.
+- **`pipeline/run_daily_screen.py`**: The orchestrator for the screener. It applies sequential filtering: Liquidity -> Stage 1 (Minervini VCP Template with dynamic ATR percentile thresholds) -> Stage 2 (Trigger Layer for active setups like Bollinger Breakout or Engulfing). It also runs a market regime check on the NIFTY500 to dynamically tag the macro environment (Trending Up, Trending Down, or Choppy).
+- **`pipeline/handoff.py`**: Packages the strictly validated signals (trigger type, composite score, regime, and quantitative metrics) into a VisuQuant payload and pipes them directly into the generative Chart Capture workflow.
+- **`pipeline/backtest.py`**: Contains strict statistical significance tests, including placebo/shuffle loops and walk-forward block validation, to ensure that the alpha of any trigger logic is durable and not curve-fitted.
+- **`screens/trigger_layer.py`**: The specific pattern matching logic (Bollinger Squeeze breakouts, Bullish Engulfing, MA Pullback Bounce) segmented by Active, Watchlist, or Disabled tiers.
 - **`indicators/core.py`**: High-performance, pure vectorized functions for SMA, EMA, ATR, Bollinger Bands, RSI, MACD, and Swing Detection using `pandas-ta` and `scipy`. Actively excludes circuit days to prevent distorted readings.
-- **`screens/`**: Directory for deploying individual quantitative screening strategies.
+- **`config.py`**: Holds strategy thresholds (liquidity, ATR, Bollinger Band lookbacks) and universe definitions.
 
 ### `data/` (Acquisition & Fetching)
 - **`nse_fetcher.py`**: Handles live market data scraping from NSE Bhavcopy and implements highly-optimized caching for massive historical lookbacks. It also exposes the `get_ohlcv` wrapper that serves clean data to the screener, automatically flagging circuit limits and corporate action gaps.
@@ -105,8 +143,12 @@ Unlike most AI wrappers, FinVison features strict **Mathematical Gating** to pre
 
 ##  Execution
 
-To run the pipeline on a ticker (e.g., `CARTRADE`):
+To run the pipeline, simply execute the main orchestrator:
 ```bash
-python3 src/main.py CARTRADE
+python3 src/main.py
 ```
-This will autonomously fetch data, analyze the chart, reason through the indicators, and dump a production-grade PDF into the `outputs/` folder!
+This will launch an interactive menu:
+1. **Run automated daily screener**: Scans the market for pristine setups and dynamically generates reports for the top survivors.
+2. **Analyze a specific ticker**: Bypasses the screener and runs the deep-dive pipeline on a single stock (e.g., `RELIANCE`).
+
+The system will autonomously fetch data, analyze the chart, reason through the indicators, and dump a production-grade PDF into the `outputs/` folder!
