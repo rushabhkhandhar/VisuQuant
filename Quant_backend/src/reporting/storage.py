@@ -7,8 +7,8 @@ def create_output_directory(ticker: str) -> str:
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     folder_name = f"{timestamp}_{ticker}"
     
-    # Project root is one level up from src
-    root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    # Project root is two levels up from src/reporting
+    root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     output_dir = os.path.join(root_dir, "outputs", folder_name)
     
     os.makedirs(output_dir, exist_ok=True)
@@ -99,6 +99,9 @@ def persist_pipeline_results(final_state: dict, start_time: float, end_time: flo
         print(f"Saved to: {pdf_path}")
         print("="*50)
         
+        return pdf_path
+        
     except Exception as e:
         print("\nFailed to persist pipeline results!")
         traceback.print_exc()
+        return None
