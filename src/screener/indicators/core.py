@@ -77,18 +77,36 @@ def rolling_52w_high(series: pd.Series) -> pd.Series:
     """Calculate rolling 52-week (approx 252 trading days) high."""
     return series.rolling(window=252, min_periods=1).max()
 
-def find_swing_points(df: pd.DataFrame, order: int = 5) -> dict:
+def find_swing_points(df: pd.DataFrame, as_of_date: pd.Timestamp = None, order: int = 5) -> list:
     """
     Detects swing highs and lows using scipy.signal.argrelextrema.
-    Returns a dict with 'highs' and 'lows' containing the (date, price) tuples.
+    To avoid lookahead bias, a swing point at index N is only confirmed if there 
+    are at least `order` bars AFTER it in the provided dataframe slice.
+    Returns a list of (date, price, type) tuples, sorted by date.
+    type is either 'high' or 'low'.
     """
-    if df.empty or len(df) < (order * 2 + 1):
-        return {"highs": [], "lows": []}
+    if as_of_date is not None:
+        df_slice = df.loc[:as_of_date]
+    else:
+        df_slice = df
         
-    high_idx = argrelextrema(df['High'].values, np.greater, order=order)[0]
-    low_idx = argrelextrema(df['Low'].values, np.less, order=order)[0]
+    if df_slice.empty or len(df_slice) < (order * 2 + 1):
+        return []
+        
+    high_idx = argrelextrema(df_slice['High'].values, np.greater, order=order)[0]
+    low_idx = argrelextrema(df_slice['Low'].values, np.less, order=order)[0]
     
-    highs = [(df.index[i], df['High'].iloc[i]) for i in high_idx]
-    lows = [(df.index[i], df['Low'].iloc[i]) for i in low_idx]
+    # Filter out unconfirmed swings at the end (lookahead bias prevention)
+    max_valid_idx = len(df_slice) - 1 - order
+    high_idx = [i for i in high_idx if i <= max_valid_idx]
+    low_idx = [i for i in low_idx if i <= max_valid_idx]
     
-    return {"highs": highs, "lows": lows}
+    swings = []
+    for i in high_idx:
+        swings.append((df_slice.index[i], df_slice['High'].iloc[i], 'high'))
+    for i in low_idx:
+        swings.append((df_slice.index[i], df_slice['Low'].iloc[i], 'low'))
+        
+    # Sort by date
+    swings.sort(key=lambda x: x[0])
+    return swings

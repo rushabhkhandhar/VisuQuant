@@ -1,61 +1,95 @@
 import pytest
 import pandas as pd
 import numpy as np
-from src.screener.screens.fib_confluence import score_fib_confluence
+import sys
+import os
 
-def test_score_fib_confluence_uptrend_pocket():
-    # Construct a synthetic upswing and pullback
-    dates = pd.date_range(start="2026-01-01", periods=30, freq="B")
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from src.screener.indicators.core import find_swing_points
+from src.screener.screens.fib_confluence import get_golden_pocket
+
+def create_synthetic_data():
+    """
+    Create a 30-day synthetic price series.
+    Low at day 5 (price = 100)
+    High at day 15 (price = 150)
+    Pullback at day 22 (price = 120)
+    """
+    dates = pd.date_range("2026-01-01", periods=30, freq="B")
     
-    # Days 1-10: Consolidation around 100
-    prices = [100.0] * 10
+    # Base price 125
+    prices = np.full(30, 125.0)
     
-    # Days 11-15: Rally from 100 to 200 (Swing Low -> Swing High)
-    prices += [120, 140, 160, 180, 200]
+    # Create the swing low at day 5 (index 4)
+    prices[0:5] = np.linspace(125, 100, 5)
     
-    # Days 16-20: Pullback. 
-    # The 0.5 level is 150. The 0.618 level is 138.2.
-    # We want it to bottom at 145 (inside the golden pocket).
-    prices += [190, 170, 155, 145, 160]
+    # Create the swing high at day 15 (index 14)
+    prices[5:15] = np.linspace(105, 150, 10)
     
-    # Days 21-30: Consolidating near the pocket
-    prices += [148, 150, 149, 151, 147, 150, 148, 152, 149, 150]
+    # Create pullback at day 22 (index 21)
+    prices[15:22] = np.linspace(145, 120, 7)
+    
+    # Bounce
+    prices[22:30] = np.linspace(122, 135, 8)
     
     df = pd.DataFrame({
         "Open": prices,
-        "High": prices,
-        "Low": prices,
+        "High": prices + 2,
+        "Low": prices - 2,
         "Close": prices,
-        "Volume": [1000] * 30
+        "Volume": 1000000
     }, index=dates)
     
-    # For the 200 -> 145 downswing:
-    # Diff = 55.
-    # 0.5 level = 145 + 27.5 = 172.5
-    # 0.618 level = 145 + 33.99 = 178.99
-    # So the golden pocket is [172.5, 178.99]
+    return df
+
+def test_find_swing_points_lookahead():
+    df = create_synthetic_data()
     
-    # We will make the recent bars rally up to exactly 175, testing the downtrend pocket!
-    df = pd.DataFrame({
-        "Open": prices,
-        "High": prices,
-        "Low": prices,
-        "Close": prices,
-        "Volume": [1000] * 30
-    }, index=dates)
+    # The high is at index 14. 
+    # To confirm the high with order=5, we need at least 5 bars after index 14, 
+    # which means up to index 19.
     
-    # Ensure there is a distinct High at 200 (index 14) and distinct Low at 145 (index 18)
+    # If as_of_date is index 16, the high at 14 should NOT be returned!
+    as_of_date_unconfirmed = df.index[16]
+    swings = find_swing_points(df, as_of_date=as_of_date_unconfirmed, order=5)
     
-    # After the low at 145 (day 19), let's create a rally up to 175
-    # Day 21-30
-    rally_prices = [150, 160, 170, 175, 170, 165, 160, 160, 160, 160]
-    for i, p in enumerate(rally_prices):
-        df.loc[df.index[20 + i], ["Open", "High", "Low", "Close"]] = p
+    # Check if any swing is at index 14
+    for swing in swings:
+        assert swing[0] != df.index[14], "Lookahead bias! High was returned before confirmation."
         
-    res = score_fib_confluence(df, min_swing_magnitude_pct=0.10)
+    # If as_of_date is index 19 (14 + 5), the high at 14 SHOULD be returned!
+    as_of_date_confirmed = df.index[19]
+    swings_confirmed = find_swing_points(df, as_of_date=as_of_date_confirmed, order=5)
     
-    assert res["in_golden_pocket"] is True
-    assert res["swing_p1_type"] == "low"
-    assert res["swing_p1_price"] == 145.0
-    assert res["swing_p2_price"] == 175.0
-    assert abs(res["pullback_extreme"] - 160.0) < 0.1
+    high_found = False
+    for swing in swings_confirmed:
+        if swing[0] == df.index[14]:
+            high_found = True
+            break
+            
+    assert high_found, "Confirmed swing high was not found."
+
+def test_get_golden_pocket():
+    df = create_synthetic_data()
+    
+    # Confirm it after index 19
+    as_of_date = df.index[25]
+    
+    pocket = get_golden_pocket(df, as_of_date=as_of_date, min_swing_pct=8.0, order=5)
+    
+    assert pocket is not None
+    assert pocket['swing_start'] == df.index[4]
+    assert pocket['swing_end'] == df.index[14]
+    
+    # Start price (Low at index 4) = 98.0
+    # End price (High at index 14) = 152.0
+    # Swing diff = 152 - 98 = 54
+    # 50% = 152 - 0.5 * 54 = 125.0
+    # 61.8% = 152 - 0.618 * 54 = 118.628
+    
+    assert np.isclose(pocket['fib_50'], 125.0)
+    assert np.isclose(pocket['fib_618'], 118.628)
+    assert np.isclose(pocket['pocket_low'], 118.628)
+    assert np.isclose(pocket['pocket_high'], 125.0)
+
