@@ -1,0 +1,9 @@
+{
+    "ticker": "BELRISE",
+    "execution_time": "2026-08-07T13:28:15",
+    "pipeline_version": "1.0",
+    "llm_provider": "Ollama",
+    "model": "Qwen2.5-VL",
+    "status": "SUCCESS",
+    "execution_duration_seconds": 391.85
+}
