@@ -1,49 +1,183 @@
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
-html {
-  height: 100%;
-}
-
-html,
-body {
-  max-width: 100vw;
-  overflow-x: hidden;
-}
-
-body {
-  min-height: 100%;
-  display: flex;
-  flex-direction: column;
-  color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  --background: #050505;
+  --surface: rgba(20, 20, 20, 0.6);
+  --surface-border: rgba(255, 255, 255, 0.08);
+  --text-primary: #f0f0f0;
+  --text-secondary: #a0a0a0;
+  --accent-cyan: #00f0ff;
+  --accent-cyan-glow: rgba(0, 240, 255, 0.3);
+  --accent-magenta: #ff0055;
+  --success: #00ff88;
+  --danger: #ff3333;
 }
 
 * {
   box-sizing: border-box;
-  padding: 0;
+}
+
+body {
   margin: 0;
+  background-color: var(--background);
+  color: var(--text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
 
-a {
-  color: inherit;
-  text-decoration: none;
+/* Glassmorphism Panel */
+.glass-panel {
+  background: var(--surface);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--surface-border);
+  border-radius: 16px;
+  padding: 32px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
 }
 
-@media (prefers-color-scheme: dark) {
-  html {
-    color-scheme: dark;
-  }
+/* Cyberpunk Glow Button */
+.btn-primary {
+  background: transparent;
+  color: var(--accent-cyan);
+  border: 1px solid var(--accent-cyan);
+  padding: 12px 24px;
+  font-size: 16px;
+  font-weight: 600;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 0 10px var(--accent-cyan-glow);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-cyan);
+  color: #000;
+  box-shadow: 0 0 20px var(--accent-cyan-glow), 0 0 40px var(--accent-cyan-glow);
+}
+
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  box-shadow: none;
+  color: var(--text-secondary);
+  border-color: var(--text-secondary);
+}
+
+/* Input Fields */
+.input-glass {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--surface-border);
+  color: var(--text-primary);
+  padding: 12px 16px;
+  border-radius: 8px;
+  font-size: 16px;
+  outline: none;
+  transition: border-color 0.3s ease;
+}
+
+.input-glass:focus {
+  border-color: var(--accent-cyan);
+}
+
+/* Table */
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 24px;
+}
+
+.data-table th {
+  text-align: left;
+  padding: 12px;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--surface-border);
+  font-weight: 500;
+}
+
+.data-table td {
+  padding: 16px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+/* Utilities */
+.text-cyan { color: var(--accent-cyan); }
+.text-success { color: var(--success); }
+.text-danger { color: var(--danger); }
+.text-secondary { color: var(--text-secondary); }
+
+.flex { display: flex; }
+.flex-col { flex-direction: column; }
+.flex-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.flex-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.gap-4 { gap: 16px; }
+.gap-2 { gap: 8px; }
+.mt-2 { margin-top: 8px; }
+.mt-4 { margin-top: 16px; }
+.mb-4 { margin-bottom: 16px; }
+.mt-8 { margin-top: 32px; }
+
+/* Gradient Text */
+.gradient-text {
+  background: linear-gradient(90deg, var(--accent-cyan), var(--success));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.loader {
+  border: 3px solid rgba(0, 240, 255, 0.1);
+  border-radius: 50%;
+  border-top: 3px solid var(--accent-cyan);
+  width: 20px;
+  height: 20px;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.page-container {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 60px 20px;
+  width: 100%;
+}
+
+.badge {
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  background: rgba(255,255,255,0.1);
+}
+
+.badge-bullish {
+  background: rgba(0, 255, 136, 0.1);
+  color: var(--success);
+  border: 1px solid var(--success);
+}
+
+.badge-bearish {
+  background: rgba(255, 51, 51, 0.1);
+  color: var(--danger);
+  border: 1px solid var(--danger);
 }
