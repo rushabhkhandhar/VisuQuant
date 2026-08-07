@@ -21,10 +21,16 @@ flowchart TB
         direction TB
         S1[NSE 500 liquidity filter<br/>Drop stocks below ₹50 Cr/day] --> S2[Macro regime analysis<br/>NIFTYBEES trend classification]
         S2 --> S3[Stage 1: VCP trend template<br/>SMA stack + dynamic ATR contraction]
-        S3 --> S4[Stage 2: active triggers<br/>Bollinger breakout + bullish engulfing]
-        S4 -. watchlist, not scored .-> S4w[Morning star: watchlist only]
-        S4 -. disabled .-> S4d[Hammer: disabled]
-        S4 --> S5[Confluence scoring<br/>Golden pocket tagged as metadata only]
+        S3 --> S4_Regime{Dynamic Strategy Allocation<br/>Based on Regime}
+        
+        S4_Regime -.->|TRENDING UP| S4_Bull[Active: BB Breakout, Engulfing<br/>Disabled: Hammer]
+        S4_Regime -.->|TRENDING DOWN| S4_Bear[Active: Hammer<br/>Disabled: Breakouts]
+        S4_Regime -.->|CHOPPY| S4_Chop[Active: Morning Star<br/>Enabled: Golden Pocket Scoring]
+        
+        S4_Bull --> S5[Confluence scoring<br/>Golden pocket active only in CHOPPY]
+        S4_Bear --> S5
+        S4_Chop --> S5
+        
         S5 --> S6[Validated handoff payload<br/>Top 3-5 ranked candidates]
     end
 
@@ -62,9 +68,7 @@ flowchart TB
     classDef startend fill:#b91c1c,stroke:#991b1b,stroke-width:2px,color:#fff
     classDef menu fill:#6366f1,stroke:#4f46e5,stroke-width:2px,color:#fff
 
-    class S1,S2,S3,S4,S5,S6 screener
-    class S4w watchlist
-    class S4d disabled
+    class S1,S2,S3,S4_Regime,S4_Bull,S4_Bear,S4_Chop,S5,S6 screener
     class Capture,Quant,Vision,Fund node
     class Unified,Confluence synthesis
     class Risk,Decision,Safety,PDF output
@@ -95,9 +99,9 @@ The foundational quantitative filtering layer that scans the entire market (500 
 - **`pipeline/run_daily_screen.py`**: The orchestrator for the screener. It applies sequential filtering: Liquidity -> Stage 1 (Minervini VCP Template with dynamic ATR percentile thresholds) -> Stage 2 (Trigger Layer for active setups like Bollinger Breakout or Engulfing). It also runs a market regime check on the NIFTY500 to dynamically tag the macro environment (Trending Up, Trending Down, or Choppy).
 - **`pipeline/handoff.py`**: Packages the strictly validated signals (trigger type, composite score, regime, and quantitative metrics) into a VisuQuant payload and pipes them directly into the generative Chart Capture workflow.
 - **`pipeline/backtest.py`**: Contains strict statistical significance tests, including placebo/shuffle loops and walk-forward block validation, to ensure that the alpha of any trigger logic is durable and not curve-fitted.
-- **`screens/trigger_layer.py`**: The specific pattern matching logic (Bollinger Squeeze breakouts, Bullish Engulfing, MA Pullback Bounce) segmented by Active, Watchlist, or Disabled tiers.
+- **`screens/trigger_layer.py`**: The specific pattern matching logic (Bollinger Squeeze breakouts, Bullish Engulfing, MA Pullback Bounce) that accepts dynamic active/disabled rules based on the current regime playbook.
 - **`indicators/core.py`**: High-performance, pure vectorized functions for SMA, EMA, ATR, Bollinger Bands, RSI, MACD, and Swing Detection using `pandas-ta` and `scipy`. Actively excludes circuit days to prevent distorted readings.
-- **`config.py`**: Holds strategy thresholds (liquidity, ATR, Bollinger Band lookbacks) and universe definitions.
+- **`config.py`**: Holds strategy thresholds (liquidity, ATR, BB lookbacks) and the core `REGIME_STRATEGIES` dictionary that dynamically maps trigger patterns to the Bullish, Bearish, or Choppy market environments.
 
 ### `data/` (Acquisition & Fetching)
 - **`nse_fetcher.py`**: Handles live market data scraping from NSE Bhavcopy and implements highly-optimized caching for massive historical lookbacks. It also exposes the `get_ohlcv` wrapper that serves clean data to the screener, automatically flagging circuit limits and corporate action gaps.
