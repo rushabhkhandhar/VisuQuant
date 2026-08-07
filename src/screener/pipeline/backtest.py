@@ -11,6 +11,7 @@ from src.screener import config
 from src.data.nse_fetcher import load_nifty500_symbols, fetch_bulk_history
 from src.screener.screens.vcp_trend_template import evaluate_vcp_trend
 from src.screener.screens.trigger_layer import bollinger_squeeze_breakout, ma_pullback_bounce
+from src.screener.screens.fib_confluence import get_golden_pocket
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -138,11 +139,21 @@ def run_backtest(months: int = 3):
                 
                 t_idx = historical_df.index.get_loc(current_date)
                 
+                trigger_high = historical_df['High'].iloc[-1]
+                trigger_low = historical_df['Low'].iloc[-1]
+                fib_metrics = get_golden_pocket(historical_df, as_of_date=current_date, min_swing_pct=config.FIB_MIN_SWING_PCT)
+                
+                in_golden_pocket = False
+                if fib_metrics:
+                    if trigger_low <= fib_metrics["pocket_high"] and trigger_high >= fib_metrics["pocket_low"]:
+                        in_golden_pocket = True
+                
                 for tt in trigger_types:
                     sig_dict = {
                         "date": current_date,
                         "symbol": symbol,
-                        "trigger_type": tt
+                        "trigger_type": tt,
+                        "in_golden_pocket": in_golden_pocket
                     }
                     
                     # Always add to raw
@@ -219,7 +230,8 @@ def run_backtest(months: int = 3):
                 "exc_5d": excess_5d,
                 "exc_10d": excess_10d,
                 "exc_20d": excess_20d,
-                "mdd": max_drawdown
+                "mdd": max_drawdown,
+                "in_golden_pocket": sig.get("in_golden_pocket", False)
             })
             
         return results
@@ -295,6 +307,64 @@ def run_backtest(months: int = 3):
             for _, row in sym_stats.iterrows():
                 avg_pct = row['avg_r20'] * 100
                 logger.info(f"    - {row['symbol']:<12}: {row['trades']} trades | {avg_pct:+.2f}%")
+                
+            logger.info("  --- Fibonacci Confluence Split (Exploratory, Low Sample Size) ---")
+            for pocket_status in [True, False]:
+                subgroup = group[group["in_golden_pocket"] == pocket_status]
+                n_sub = len(subgroup)
+                if n_sub == 0:
+                    continue
+                
+                r20_sub = subgroup["ret_20d"].dropna()
+                if len(r20_sub) == 0:
+                    continue
+                    
+                hr20_sub = (r20_sub > 0).mean() * 100
+                avg_r20_sub = r20_sub.mean() * 100
+                avg_e20_sub = subgroup["exc_20d"].dropna().mean() * 100
+                
+                label = "in golden pocket" if pocket_status else "not in golden pocket"
+                warning = " [WARNING: n<10]" if n_sub < 10 else ""
+                
+                logger.info(f"    - {label} (n={n_sub}){warning}: Hit Rate 20d: {hr20_sub:.1f}% | Avg Ret 20d: {avg_r20_sub:+.2f}% | Avg Exc 20d: {avg_e20_sub:+.2f}%")
+                
+            # Placebo Test for statistical significance
+            if count >= 10:
+                valid_group = group.dropna(subset=["exc_20d"])
+                if len(valid_group) > 0:
+                    in_group = valid_group[valid_group["in_golden_pocket"] == True]
+                    out_group = valid_group[valid_group["in_golden_pocket"] == False]
+                    
+                    n_in = len(in_group)
+                    n_out = len(out_group)
+                    
+                    if n_in > 0 and n_out > 0:
+                        real_in_exc = in_group["exc_20d"].mean()
+                        real_out_exc = out_group["exc_20d"].mean()
+                        real_gap = real_in_exc - real_out_exc
+                        
+                        all_exc = valid_group["exc_20d"].values
+                        gaps = []
+                        
+                        # Use a fixed seed for reproducibility across runs
+                        np.random.seed(42)
+                        for _ in range(1000):
+                            shuffled = np.random.permutation(all_exc)
+                            sim_in = shuffled[:n_in].mean()
+                            sim_out = shuffled[n_in:].mean()
+                            gaps.append(sim_in - sim_out)
+                            
+                        gaps = np.array(gaps)
+                        percentile = (gaps < real_gap).mean() * 100
+                        
+                        logger.info(f"  --- Placebo Test (1000 Shuffles) ---")
+                        logger.info(f"    - Real Excess Gap: {real_gap*100:+.2f} pts")
+                        logger.info(f"    - Significance: {percentile:.1f}th percentile vs random shuffles")
+                        if percentile > 90:
+                            logger.info(f"    - [SIGNIFICANT] The golden pocket edge is likely real.")
+                        else:
+                            logger.info(f"    - [NOT SIGNIFICANT] Indistinguishable from randomly splitting the same signals.")
+                            
             logger.info("\n")
 
     raw_results = compute_metrics(raw_signals)
@@ -302,6 +372,8 @@ def run_backtest(months: int = 3):
     
     report_statistics(raw_results, "RAW (NON-DEDUPED)")
     report_statistics(dedup_results, "DEDUPED")
+    
+    return dedup_results
 
 if __name__ == "__main__":
     import argparse

@@ -13,6 +13,9 @@ def bollinger_squeeze_breakout(df: pd.DataFrame, bb_lookback_months: int = confi
     # 6 months of trading days is approximately 126 days
     lookback_days = bb_lookback_months * 21
     
+    if "bollinger_breakout" in getattr(config, "DISABLED_TRIGGERS", []):
+        return {"passed": False, "bandwidth": None, "bandwidth_pctile": None, "volume_ratio": None}
+        
     if df.empty or len(df) < lookback_days + 20: # Need enough data for rolling metrics
         return {"passed": False, "bandwidth": None, "bandwidth_pctile": None, "volume_ratio": None}
         
@@ -154,14 +157,14 @@ def ma_pullback_bounce(df: pd.DataFrame) -> dict:
             if v > v10:
                 # Check reversal candles
                 # 1. Hammer
-                if _is_hammer(o, h, l, c):
+                if "hammer" not in getattr(config, "DISABLED_TRIGGERS", []) and _is_hammer(o, h, l, c):
                     touch_found = True
                     reversal_type = "Hammer"
                     touch_day_idx = offset
                     break
                     
                 # 2. Bullish Engulfing (needs prev day)
-                if len(df) >= offset + 1:
+                if "bullish_engulfing" not in getattr(config, "DISABLED_TRIGGERS", []) and len(df) >= offset + 1:
                     prev_o = df['Open'].iloc[idx - 1]
                     prev_c = df['Close'].iloc[idx - 1]
                     if _is_bullish_engulfing(prev_o, prev_c, o, c):
@@ -171,7 +174,7 @@ def ma_pullback_bounce(df: pd.DataFrame) -> dict:
                         break
                         
                 # 3. Morning Star (needs prev 2 days)
-                if len(df) >= offset + 2:
+                if "morning_star" not in getattr(config, "DISABLED_TRIGGERS", []) and len(df) >= offset + 2:
                     p2_o = df['Open'].iloc[idx - 2]
                     p2_c = df['Close'].iloc[idx - 2]
                     p1_o = df['Open'].iloc[idx - 1]

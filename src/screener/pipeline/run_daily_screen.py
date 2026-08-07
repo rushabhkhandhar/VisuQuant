@@ -11,12 +11,12 @@ from src.data.nse_fetcher import load_nifty500_symbols, fetch_bulk_history
 from src.screener.screens.liquidity import filter_by_liquidity
 from src.screener.screens.vcp_trend_template import evaluate_vcp_trend
 from src.screener.screens.trigger_layer import bollinger_squeeze_breakout, ma_pullback_bounce
-from src.screener.screens.fib_confluence import score_fib_confluence
+from src.screener.screens.fib_confluence import get_golden_pocket
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5) -> List[Dict[str, Any]]:
+def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5, check_regime: bool = False) -> List[Dict[str, Any]]:
     if as_of_date is None:
         as_of_date = date.today()
         
@@ -27,6 +27,31 @@ def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5)
         
     initial_count = len(universe)
     logger.info(f"Loaded initial universe: {initial_count} symbols.")
+    
+    if check_regime:
+        logger.info("Checking current market regime (NIFTYBEES)...")
+        bulk_data_nifty = fetch_bulk_history(["NIFTYBEES"], as_of_date, lookback_days=100)
+        nifty = bulk_data_nifty.get("NIFTYBEES")
+        if nifty is not None and not nifty.empty and len(nifty) >= 50:
+            sma_50 = nifty["Close"].rolling(50).mean()
+            sma_50_diff = sma_50.diff()
+            
+            curr_close = nifty["Close"].iloc[-1]
+            curr_sma50 = sma_50.iloc[-1]
+            curr_sma50_diff = sma_50_diff.iloc[-1]
+            
+            if curr_close > curr_sma50 and curr_sma50_diff > 0:
+                current_regime = "TRENDING UP (Bullish)"
+            elif curr_close < curr_sma50 and curr_sma50_diff < 0:
+                current_regime = "TRENDING DOWN (Bearish)"
+            else:
+                current_regime = "CHOPPY (Neutral)"
+                
+            logger.info("=========================================")
+            logger.info(f"   MARKET REGIME: {current_regime}   ")
+            logger.info("=========================================")
+        else:
+            logger.warning("Could not fetch sufficient NIFTYBEES data to determine regime.")
     
     # 2. Liquidity Pre-Filter
     logger.info(f"Applying Liquidity Filter (>= {config.LIQUIDITY_MIN_VALUE_CR} Cr/day)...")
@@ -106,6 +131,7 @@ def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5)
     # 4 & 5. Stage 2: Trigger Layer & Fib Confluence
     logger.info("Running Stage 2: Trigger Layer (Bollinger Squeeze / MA Pullback)...")
     final_candidates = []
+    watchlist_candidates = []
     
     for symbol, data in stage1_survivors.items():
         df = data["df"]
@@ -122,53 +148,115 @@ def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5)
             continue
             
         # Determine trigger type string for final output
-        trigger_types = []
-        if passed_bb: trigger_types.append("Bollinger Breakout")
-        if passed_ma: trigger_types.append(f"{ma_trigger.get('reversal_type', 'MA Bounce')}")
-        trigger_type_str = " + ".join(trigger_types)
+        active_triggers = []
+        watchlist_triggers = []
         
-        # Enrih with Fibonacci Confluence
-        fib_metrics = score_fib_confluence(df)
+        if passed_bb:
+            if "bollinger_breakout" in getattr(config, 'ACTIVE_TRIGGERS', []):
+                active_triggers.append("Bollinger Breakout")
+            elif "bollinger_breakout" in getattr(config, 'WATCHLIST_TRIGGERS', []):
+                watchlist_triggers.append("Bollinger Breakout")
+                
+        if passed_ma:
+            ma_type = ma_trigger.get('reversal_type')
+            if ma_type:
+                ma_key = ma_type.lower().replace(" ", "_")
+                if ma_key in getattr(config, 'ACTIVE_TRIGGERS', []):
+                    active_triggers.append(ma_type)
+                elif ma_key in getattr(config, 'WATCHLIST_TRIGGERS', []):
+                    watchlist_triggers.append(ma_type)
+            else:
+                active_triggers.append("MA Bounce")
+                
+        if not active_triggers and not watchlist_triggers:
+            continue
+        
+        # Enrich with Fibonacci Confluence
+        # Slice DataFrame up to as_of_date
+        import pandas as pd
+        historical_df = df.loc[df.index <= pd.Timestamp(as_of_date)]
+        if not historical_df.empty:
+            trigger_high = historical_df['High'].iloc[-1]
+            trigger_low = historical_df['Low'].iloc[-1]
+        else:
+            trigger_high, trigger_low = 0, 0
+            
+        fib_metrics = get_golden_pocket(historical_df, as_of_date=as_of_date, min_swing_pct=config.FIB_MIN_SWING_PCT)
+        
+        in_golden_pocket = False
+        if fib_metrics:
+            p_high = fib_metrics["pocket_high"]
+            p_low = fib_metrics["pocket_low"]
+            # Intersection logic: Does the trigger bar touch the pocket?
+            if trigger_low <= p_high and trigger_high >= p_low:
+                in_golden_pocket = True
+                
+            fib_metrics["in_golden_pocket"] = in_golden_pocket
+        else:
+            fib_metrics = {"in_golden_pocket": False}
         
         # 6. Build Composite Score
-        score = 0.0
-        
-        # Base Points
-        if passed_bb: score += 2.0
-        if passed_ma: score += 2.0
-        
-        # Confluence Bonus
-        if fib_metrics.get("in_golden_pocket", False):
-            score += 1.5
-            trigger_type_str += " (Golden Pocket Bounce)"
+        if active_triggers:
+            trigger_type_str = " + ".join(active_triggers)
+            score = 0.0
             
-        # Trend Quality Bonuses
-        trend_up_days = trend_metrics.get("trend_up_days", 0)
-        if trend_up_days > 40:
-            score += 1.0 # Extra mature trend
-        elif trend_up_days > 20:
-            score += 0.5
+            # Base Points (weighted by Phase 3 Walk-Forward validation)
+            if "Bollinger Breakout" in active_triggers: 
+                score += 1.0  # Fragile edge, dragged down by down-trending months
+            if "Bullish Engulfing" in active_triggers: 
+                score += 3.0  # Durable edge, consistently positive across all walk-forward blocks
+            if "Morning Star" in active_triggers:
+                score += 1.5  # Reversal pattern, needs more data but logically sound
+            if "MA Bounce" in active_triggers:
+                score += 1.0
             
-        atr_ratio = trend_metrics.get("atr_ratio", 1.0)
-        if atr_ratio < 0.5:
-            score += 1.0 # Extreme volatility contraction
-        elif atr_ratio < 0.75:
-            score += 0.5
+            # Confluence Bonus
+            if in_golden_pocket:
+                if getattr(config, 'GOLDEN_POCKET_SCORING_ENABLED', True):
+                    score += config.FIB_CONFLUENCE_BONUS
+                trigger_type_str += " (Golden Pocket Bounce)"
+                
+            # Trend Quality Bonuses
+            trend_up_days = trend_metrics.get("trend_up_days", 0)
+            if trend_up_days > 40:
+                score += 1.0 # Extra mature trend
+            elif trend_up_days > 20:
+                score += 0.5
+                
+            atr_ratio = trend_metrics.get("atr_ratio", 1.0)
+            if atr_ratio < 0.5:
+                score += 1.0 # Extreme volatility contraction
+            elif atr_ratio < 0.75:
+                score += 0.5
+                
+            # Compile candidate
+            final_candidates.append({
+                "symbol": symbol,
+                "trigger_type": trigger_type_str,
+                "score": round(score, 2),
+                "metrics": {
+                    "trend_up_days": trend_up_days,
+                    "atr_ratio": round(atr_ratio, 2) if atr_ratio else None,
+                    "pct_from_high": round(trend_metrics.get("pct_from_high", 0), 3),
+                    "bb_breakout": bb_trigger,
+                    "ma_bounce": ma_trigger,
+                    "fibonacci": fib_metrics
+                }
+            })
             
-        # Compile candidate
-        final_candidates.append({
-            "symbol": symbol,
-            "trigger_type": trigger_type_str,
-            "score": round(score, 2),
-            "metrics": {
-                "trend_up_days": trend_up_days,
-                "atr_ratio": round(atr_ratio, 2) if atr_ratio else None,
-                "pct_from_high": round(trend_metrics.get("pct_from_high", 0), 3),
-                "bb_breakout": bb_trigger,
-                "ma_bounce": ma_trigger,
-                "fibonacci": fib_metrics
-            }
-        })
+        if watchlist_triggers:
+            watchlist_type_str = " + ".join(watchlist_triggers)
+            if in_golden_pocket:
+                watchlist_type_str += " (Golden Pocket Bounce)"
+            watchlist_candidates.append({
+                "symbol": symbol,
+                "trigger_type": watchlist_type_str,
+                "metrics": {
+                    "bb_breakout": bb_trigger,
+                    "ma_bounce": ma_trigger,
+                    "fibonacci": fib_metrics
+                }
+            })
         
     final_count = len(final_candidates)
     logger.info(f"Stage 2 (Trigger Layer) Survivors: {final_count} symbols.")
@@ -192,13 +280,26 @@ def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5)
         for rank, cand in enumerate(top_candidates, 1):
             logger.info(f"#{rank} {cand['symbol']} - Score: {cand['score']} - Trigger: {cand['trigger_type']}")
             
+        if watchlist_candidates:
+            watchlist_file = f"watchlist_{as_of_date}.txt"
+            try:
+                with open(watchlist_file, "w") as f:
+                    f.write(f"Watchlist Candidates for {as_of_date}\n")
+                    f.write("="*40 + "\n")
+                    for cand in watchlist_candidates:
+                        f.write(f"- {cand['symbol']} ({cand['trigger_type']})\n")
+                logger.info(f"Saved {len(watchlist_candidates)} watchlist candidates to {watchlist_file}")
+            except Exception as e:
+                logger.error(f"Failed to write watchlist file: {e}")
+            
     return top_candidates
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the quantitative screening pipeline.")
     parser.add_argument("--dry-run", action="store_true", help="Print funnel counts without executing trades/outputs.")
     parser.add_argument("--top", type=int, default=5, help="Number of top candidates to return.")
+    parser.add_argument("--regime-check", action="store_true", help="Check and print current market regime before screening.")
     
     args = parser.parse_args()
     
-    run_screener(dry_run=args.dry_run, top_n=args.top)
+    run_screener(dry_run=args.dry_run, top_n=args.top, check_regime=args.regime_check)

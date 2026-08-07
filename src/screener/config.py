@@ -8,6 +8,12 @@ UNIVERSE = "NIFTY500"
 STAGE1_FILTER_ENABLED = True      # If True, heavily filters for Stage 2 uptrends & ATR contraction before looking for triggers
 DEDUP_WINDOW_DAYS = 10            # Number of trading days before the same trigger can fire again for a symbol
 
+# --- Trigger Configuration ---
+ACTIVE_TRIGGERS = ["bollinger_breakout", "bullish_engulfing"]
+WATCHLIST_TRIGGERS = ["morning_star"]
+DISABLED_TRIGGERS = ["hammer"]
+GOLDEN_POCKET_SCORING_ENABLED = False
+
 # --- Strategy Thresholds ---
 ROUND_TRIP_COST_PCT = 0.002       # 0.2% round-trip cost (brokerage, STT, slippage)
 
@@ -23,3 +29,7 @@ ATR_CONTRACTION_PERCENTILE = 30   # Keep bottom Nth percentile of ATR ratios (cr
 # Price Action / Momentum
 NEAR_52W_HIGH_PCT = 0.20          # Max percentage distance from 52-week high
 BB_LOOKBACK_MONTHS = 6            # Lookback for Bollinger Band squeeze (months)
+
+# Fibonacci Confluence
+FIB_CONFLUENCE_BONUS = 0.1        # Additive bonus to composite score if in golden pocket
+FIB_MIN_SWING_PCT = 8.0           # Minimum swing magnitude % to be considered for fib retracement
