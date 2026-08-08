@@ -7,6 +7,9 @@ class TradingState(TypedDict):
     ticker: str
     as_of_date: Optional[str]
     screener_context: Optional[dict]
+    entry_price: Optional[float]
+    target: Optional[float]
+    stop_loss: Optional[float]
     chart_image_base64: Optional[str]
     scraped_data: Optional[dict]
     vision_analysis: Optional[str]

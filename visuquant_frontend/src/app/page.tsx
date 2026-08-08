@@ -288,6 +288,9 @@ export default function Home() {
                   <th>Symbol</th>
                   <th>Composite Score</th>
                   <th>Trigger</th>
+                  <th>Entry</th>
+                  <th>Target</th>
+                  <th>Stop Loss</th>
                   <th>Trend Status</th>
                   <th>5Y Win Rate</th>
                   <th>5Y CAGR</th>
@@ -303,7 +306,10 @@ export default function Home() {
                       <td style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{c.symbol}</td>
                       <td className="text-cyan">{c.score !== undefined ? c.score.toFixed(1) : '-'}</td>
                       <td>{c.trigger_type}</td>
-                      <td className="text-success">{c.metrics?.trend_up_days} Days UP</td>
+                      <td>₹{c.entry_price || '-'}</td>
+                      <td className="text-cyan">₹{c.target || '-'}</td>
+                      <td className="text-danger">₹{c.stop_loss || '-'}</td>
+                      <td className="text-success">{c.trend_status || (c.metrics?.trend_up_days ? `${c.metrics.trend_up_days} Days UP` : '-')}</td>
                       <td style={{ color: c.metrics?.backtest?.['Win Rate (%)'] >= 50 ? 'var(--success)' : 'var(--text-secondary)' }}>
                         {c.metrics?.backtest?.['Win Rate (%)'] !== undefined ? `${c.metrics.backtest['Win Rate (%)']}%` : '-'}
                       </td>

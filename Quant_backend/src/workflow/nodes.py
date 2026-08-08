@@ -109,7 +109,12 @@ def node_run_nse_scraper(state: TradingState) -> dict:
     ticker = state["ticker"]
     as_of_date = state.get("as_of_date")
     data = fetch_nse_data(ticker, as_of_date=as_of_date)
-    return {"scraped_data": data}
+    return {
+        "scraped_data": data,
+        "entry_price": data.get("entry_price"),
+        "target": data.get("target"),
+        "stop_loss": data.get("stop_loss")
+    }
 
 from src.data.news_fetcher import fetch_latest_announcements
 
@@ -1065,6 +1070,9 @@ def node_report_generator(state: TradingState) -> dict:
     risk = state.get("risk_analysis", {})
     decision = state.get("decision", {})
     validation = state.get("trade_validation", {})
+    entry = state.get("entry_price")
+    target = state.get("target")
+    stop_loss = state.get("stop_loss")
     
     # Strip raw numerical noise to prevent LLM hallucinations
     simplified_quantitative = {
@@ -1073,6 +1081,10 @@ def node_report_generator(state: TradingState) -> dict:
     }
     
     print(f"[{ticker}] Generating final institutional report...")
+    
+    trade_execution_str = ""
+    if entry and target and stop_loss:
+        trade_execution_str = f"Calculated Trade Parameters -> Entry: {entry:.2f}, Target: {target:.2f}, Stop Loss: {stop_loss:.2f}"
     
     prompt = f"""
     You are an expert institutional quantitative analyst. 
@@ -1085,6 +1097,11 @@ def node_report_generator(state: TradingState) -> dict:
     Risk: {json.dumps(risk)}
     Decision: {json.dumps(decision)}
     Validation: {json.dumps(validation)}
+    
+    {trade_execution_str}
+    
+    EXECUTION RULE:
+    If 'Calculated Trade Parameters' are provided above, you MUST explicitly state the Entry, Target, and Stop Loss prominently in Section 1 (Executive Summary) and Section 6 (Decision Summary).
     
     NARRATIVE RULE (CRITICAL):
     Do NOT simply list facts or output raw JSON values. Generate professional, analyst-style explanations that synthesize the data.

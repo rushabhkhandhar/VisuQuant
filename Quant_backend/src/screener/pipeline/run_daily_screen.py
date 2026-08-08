@@ -243,11 +243,39 @@ def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5,
             elif atr_ratio < 0.75:
                 score += 0.5
                 
+            # --- Dynamic Target & Stop Loss Calculation ---
+            # Calculate ATR(22)
+            high_low = historical_df['High'] - historical_df['Low']
+            high_close = np.abs(historical_df['High'] - historical_df['Close'].shift())
+            low_close = np.abs(historical_df['Low'] - historical_df['Close'].shift())
+            ranges = pd.concat([high_low, high_close, low_close], axis=1)
+            true_range = np.max(ranges, axis=1)
+            atr_22 = true_range.rolling(22).mean().iloc[-1]
+            
+            entry_price = historical_df['Close'].iloc[-1]
+            highest_high = historical_df['High'].iloc[-1] # For immediate entry, highest high is just the current high
+            
+            if pd.notna(atr_22) and atr_22 > 0:
+                stop_loss = highest_high - (3 * atr_22)
+                # Ensure SL is below entry, otherwise fallback
+                if stop_loss >= entry_price:
+                    stop_loss = entry_price - atr_22
+                
+                risk = entry_price - stop_loss
+                target = entry_price + (2 * risk) # 1:2 Risk Reward
+            else:
+                stop_loss = entry_price * 0.95
+                target = entry_price * 1.10
+                
             # Compile candidate
             final_candidates.append({
                 "symbol": symbol,
                 "trigger_type": trigger_type_str,
                 "score": round(score, 2),
+                "trend_status": f"{trend_up_days} Days UP",
+                "entry_price": round(entry_price, 2),
+                "target": round(target, 2),
+                "stop_loss": round(stop_loss, 2),
                 "metrics": {
                     "trend_up_days": trend_up_days,
                     "atr_ratio": round(atr_ratio, 2) if atr_ratio else None,

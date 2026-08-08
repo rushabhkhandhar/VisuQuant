@@ -28,14 +28,36 @@ def fetch_nse_data(ticker: str, as_of_date: str = None) -> dict:
         if 'Date' in df_history.columns:
             df_history['Date'] = df_history['Date'].astype(str)
             
-        data = {
-            "ticker": ticker,
-            "last_price": round(latest["Close"], 2),
-            "vwap": round((latest["High"] + latest["Low"] + latest["Close"]) / 3, 2), # simple approximation
-            "volume": int(latest["Volume"]),
-            "day_high": round(latest["High"], 2),
-            "day_low": round(latest["Low"], 2),
-            "history": df_history.to_dict(orient="records")
+        import pandas as pd
+        import numpy as np
+        high_low = df['High'] - df['Low']
+        high_close = np.abs(df['High'] - df['Close'].shift())
+        low_close = np.abs(df['Low'] - df['Close'].shift())
+        ranges = pd.concat([high_low, high_close, low_close], axis=1)
+        true_range = np.max(ranges, axis=1)
+        atr_22 = true_range.rolling(22).mean().iloc[-1]
+        
+        entry_price = latest['Close']
+        highest_high = latest['High']
+        
+        if pd.notna(atr_22) and atr_22 > 0:
+            stop_loss = highest_high - (3 * atr_22)
+            if stop_loss >= entry_price:
+                stop_loss = entry_price - atr_22
+            risk = entry_price - stop_loss
+            target = entry_price + (2 * risk)
+        else:
+            stop_loss = entry_price * 0.95
+            target = entry_price * 1.10
+        
+        return {
+            "current_price": float(latest['Close']),
+            "vwap": float(latest.get('VWAP', 0.0)),
+            "volume": int(latest['Volume']),
+            "entry_price": float(entry_price),
+            "target": float(target),
+            "stop_loss": float(stop_loss),
+            "history": df_history.tail(50).to_dict(orient="records")
         }
     else:
         raise ValueError(f"Failed to fetch actual data from NSE for ticker {ticker}")
