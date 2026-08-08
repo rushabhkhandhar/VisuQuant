@@ -398,8 +398,9 @@ def run_backtest(months: int = 3, symbols: List[str] = None, return_json: bool =
             max_drawdown = min(mdds) * 100 if mdds else 0
             
             years = months / 12
-            total_return = np.sum(returns_series)
-            cagr = ((1 + total_return) ** (1/years) - 1) * 100 if years > 0 else 0
+            compounded_growth = np.prod(1 + returns_series)
+            total_return = compounded_growth - 1
+            cagr = (compounded_growth ** (1/years) - 1) * 100 if years > 0 else 0
             
             daily_rf = 0.05 / 252
             daily_returns = returns_series # Approximate trade returns as daily for ratio estimation in JSON

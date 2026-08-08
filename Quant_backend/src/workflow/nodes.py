@@ -4,53 +4,120 @@ import base64
 import pandas as pd
 import ollama
 from playwright.sync_api import sync_playwright
+from datetime import datetime
+import mplfinance as mpf
+import matplotlib
+matplotlib.use('Agg')
 
 from src.workflow.state import TradingState
 from src.data.scraper import fetch_nse_data
+from src.data.nse_fetcher import fetch_bulk_history
 
 def node_capture_chart(state: TradingState) -> dict:
     ticker = state["ticker"]
-    print(f"[{ticker}] Capturing TradingView chart...")
+    as_of_date = state.get("as_of_date")
     
-    b64_image = None
+    today_str = datetime.today().strftime("%Y-%m-%d")
     
-    # Use playwright to capture the chart
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
+    if as_of_date and as_of_date != today_str:
+        print(f"[{ticker}] Historical date requested: {as_of_date}. Generating chart via mplfinance...")
         
-        urls_to_try = [
-            f"https://in.tradingview.com/chart/?symbol=NSE%3A{ticker}",
-            f"https://www.google.com/finance/quote/{ticker}:NSE"
-        ]
+        # Ensure outputs directory exists
+        outputs_dir = os.path.join(os.path.dirname(__file__), '../../outputs')
+        os.makedirs(outputs_dir, exist_ok=True)
         
-        for url in urls_to_try:
-            try:
-                print(f"[{ticker}] Attempting to capture chart from {url}...")
-                page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                page.wait_for_timeout(5000)
-                screenshot_bytes = page.screenshot()
-                b64_image = base64.b64encode(screenshot_bytes).decode('utf-8')
-                print(f"[{ticker}] Chart captured successfully as base64 string.")
-                break
-            except Exception as e:
-                print(f"[{ticker}] Failed to capture chart from {url}: {e}")
-                
-        browser.close()
+        chart_path = os.path.join(outputs_dir, f"{ticker}_{as_of_date}_chart.png")
+        b64_image = None
+        
+        try:
+            # Fetch data up to the as_of_date
+            bulk_data = fetch_bulk_history([ticker], datetime.strptime(as_of_date, "%Y-%m-%d").date(), lookback_days=300)
+            df = bulk_data.get(ticker)
             
-    return {"chart_image_base64": b64_image}
+            if df is not None and not df.empty:
+                # Filter to ensure we only have data up to the requested date
+                df = df.loc[df.index <= pd.Timestamp(as_of_date)]
+                
+                # Take the last 150 days to make the chart readable
+                plot_df = df.tail(150).copy()
+                
+                # We need to map standard columns to what mplfinance expects
+                plot_df.index.name = 'Date'
+                
+                # Create a custom style (dark theme to match our aesthetic)
+                mc = mpf.make_marketcolors(up='#00ff88', down='#ff3366', edge='inherit', wick='inherit', volume='in')
+                s  = mpf.make_mpf_style(marketcolors=mc, gridstyle=':', y_on_right=True, base_mpf_style='nightclouds')
+                
+                # Plot with 50 SMA and 200 SMA
+                apdict = []
+                if len(df) >= 50:
+                    plot_df['SMA50'] = plot_df['Close'].rolling(50, min_periods=1).mean()
+                    apdict.append(mpf.make_addplot(plot_df['SMA50'], color='#00eeff', width=1.5))
+                if len(df) >= 200:
+                    plot_df['SMA200'] = plot_df['Close'].rolling(200, min_periods=1).mean()
+                    apdict.append(mpf.make_addplot(plot_df['SMA200'], color='#ffaa00', width=2.0))
+                    
+                print(f"[{ticker}] Saving historical chart to {chart_path}...")
+                mpf.plot(plot_df, type='candle', style=s, volume=True, addplot=apdict, 
+                         title=f"{ticker} (As of {as_of_date})", 
+                         savefig=dict(fname=chart_path, dpi=150, bbox_inches='tight'))
+                         
+                with open(chart_path, "rb") as image_file:
+                    b64_image = base64.b64encode(image_file.read()).decode('utf-8')
+                    
+                print(f"[{ticker}] Historical chart generated successfully.")
+            else:
+                print(f"[{ticker}] No historical data found to generate chart.")
+                
+        except Exception as e:
+            print(f"[{ticker}] Failed to generate historical chart: {e}")
+            
+        return {"chart_image_base64": b64_image}
+        
+    else:
+        print(f"[{ticker}] Capturing live TradingView chart...")
+        
+        b64_image = None
+        
+        # Use playwright to capture the chart
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            
+            urls_to_try = [
+                f"https://in.tradingview.com/chart/?symbol=NSE%3A{ticker}",
+                f"https://www.google.com/finance/quote/{ticker}:NSE"
+            ]
+            
+            for url in urls_to_try:
+                try:
+                    print(f"[{ticker}] Attempting to capture chart from {url}...")
+                    page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                    page.wait_for_timeout(5000)
+                    screenshot_bytes = page.screenshot()
+                    b64_image = base64.b64encode(screenshot_bytes).decode('utf-8')
+                    print(f"[{ticker}] Chart captured successfully as base64 string.")
+                    break
+                except Exception as e:
+                    print(f"[{ticker}] Failed to capture chart from {url}: {e}")
+                    
+            browser.close()
+                
+        return {"chart_image_base64": b64_image}
 
 def node_run_nse_scraper(state: TradingState) -> dict:
     ticker = state["ticker"]
-    data = fetch_nse_data(ticker)
+    as_of_date = state.get("as_of_date")
+    data = fetch_nse_data(ticker, as_of_date=as_of_date)
     return {"scraped_data": data}
 
 from src.data.news_fetcher import fetch_latest_announcements
 
 def node_fetch_announcements(state: TradingState) -> dict:
     ticker = state["ticker"]
-    print(f"[{ticker}] Fetching latest corporate announcements...")
-    announcements = fetch_latest_announcements(ticker, limit=3)
+    as_of_date = state.get("as_of_date")
+    print(f"[{ticker}] Fetching latest corporate announcements (as_of_date: {as_of_date or 'today'})...")
+    announcements = fetch_latest_announcements(ticker, limit=3, as_of_date=as_of_date)
     print(f"[{ticker}] Found {len(announcements)} announcements.")
     return {"announcements": announcements}
 

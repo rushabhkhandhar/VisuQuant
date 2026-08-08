@@ -5,6 +5,7 @@ class TradingState(TypedDict):
     Represents the state of the trading pipeline at any point in the graph.
     """
     ticker: str
+    as_of_date: Optional[str]
     screener_context: Optional[dict]
     chart_image_base64: Optional[str]
     scraped_data: Optional[dict]

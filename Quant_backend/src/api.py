@@ -2,10 +2,14 @@ from fastapi import FastAPI, BackgroundTasks
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 import os
+import sys
 import shutil
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
+
+# Add the project root (Quant_backend) to sys.path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.screener.pipeline.run_daily_screen import run_screener
 
@@ -47,6 +51,7 @@ def health_check():
 
 class AnalyzeRequest(BaseModel):
     symbol: str
+    date: Optional[str] = None
 
 @app.post("/api/analyze")
 def run_analysis(req: AnalyzeRequest):
@@ -55,7 +60,7 @@ def run_analysis(req: AnalyzeRequest):
     import time
     
     app_graph = build_graph()
-    payload = {"ticker": req.symbol}
+    payload = {"ticker": req.symbol, "as_of_date": req.date}
     
     start_time = time.time()
     final_state = app_graph.invoke(payload)
@@ -65,7 +70,7 @@ def run_analysis(req: AnalyzeRequest):
     
     if pdf_path:
         rel_path = os.path.relpath(pdf_path, outputs_dir)
-        return {"status": "success", "pdf_url": f"http://localhost:8000/api/download_report?path={rel_path}"}
+        return {"status": "success", "pdf_url": f"http://localhost:5000/api/download_report?path={rel_path}"}
     
     return {"status": "error", "message": "Failed to generate PDF"}
 
@@ -111,3 +116,8 @@ def run_strategy_backtest(req: BacktestRequest):
         return {"status": "success", "data": results}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+if __name__ == "__main__":
+    import uvicorn
+    # When run directly with 'python3 src/api.py', start the server
+    uvicorn.run("src.api:app", host="0.0.0.0", port=5000, reload=True)

@@ -279,6 +279,18 @@ def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5,
     final_candidates.sort(key=lambda x: x["score"], reverse=True)
     top_candidates = final_candidates[:top_n]
     
+    # 8. Enrich top candidates with 5-Year Historical Backtest
+    if top_candidates:
+        logger.info(f"Running 5-Year historical backtest for top {len(top_candidates)} candidates...")
+        from src.screener.pipeline.backtest import run_backtest
+        for cand in top_candidates:
+            try:
+                bt_results = run_backtest(months=60, symbols=[cand["symbol"]], return_json=True)
+                cand["metrics"]["backtest"] = bt_results.get("metrics", {})
+            except Exception as e:
+                logger.error(f"Failed to backtest {cand['symbol']}: {e}")
+                cand["metrics"]["backtest"] = {}
+    
     # Log funnel summary
     logger.info("=========================================")
     logger.info("           SCREENER FUNNEL SUMMARY       ")

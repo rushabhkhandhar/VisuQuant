@@ -9,3 +9,5 @@ pytest
 scipy
 fastapi
 uvicorn
+mplfinance
+matplotlib

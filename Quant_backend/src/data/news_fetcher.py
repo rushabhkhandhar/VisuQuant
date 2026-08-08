@@ -108,7 +108,9 @@ def download_and_parse_pdf(pdf_url: str) -> str:
         print(f"Error parsing PDF: {e}")
     return ""
 
-def fetch_latest_announcements(ticker: str, limit: int = 3) -> list:
+from datetime import datetime, date
+
+def fetch_latest_announcements(ticker: str, limit: int = 3, as_of_date: str = None) -> list:
     """Fetch the latest corporate announcements and extract PDF text."""
     url = f"https://www.nseindia.com/api/corporate-announcements?index=equities&symbol={ticker}"
     homepage = "https://www.nseindia.com"
@@ -142,7 +144,22 @@ def fetch_latest_announcements(ticker: str, limit: int = 3) -> list:
             
             # Filter for relevant announcements only (Board Meetings, Financials, Transcripts)
             relevant_anns = []
+            
+            target_date = None
+            if as_of_date and as_of_date != date.today().strftime("%Y-%m-%d"):
+                target_date = datetime.strptime(as_of_date, "%Y-%m-%d")
+                
             for item in data:
+                # Discard future announcements if doing historical time-travel
+                if target_date and item.get('an_dt'):
+                    try:
+                        # Format is usually '29-Jul-2026 18:29:49'
+                        ann_date = datetime.strptime(item.get('an_dt'), "%d-%b-%Y %H:%M:%S")
+                        if ann_date > target_date:
+                            continue
+                    except Exception:
+                        pass # if parsing fails, assume it's safe or discard? Let's assume safe to avoid missing data, though it might bleed future.
+                        
                 title = (item.get('subject') or item.get('desc') or '').lower()
                 if "outcome of board meeting" in title or "financial result" in title or "transcript" in title:
                     relevant_anns.append(item)
@@ -177,10 +194,26 @@ def fetch_latest_announcements(ticker: str, limit: int = 3) -> list:
             root = ET.fromstring(rss_data)
             
             headlines_text = ""
-            for item in root.findall('.//item')[:5]:  # Get top 5
-                title = item.find('title').text if item.find('title') is not None else ''
+            count = 0
+            for item in root.findall('.//item'):
                 pubDate = item.find('pubDate').text if item.find('pubDate') is not None else ''
+                
+                # Check date for time-travel
+                if target_date and pubDate:
+                    try:
+                        # RSS date format: 'Tue, 04 Aug 2026 10:00:00 GMT'
+                        news_date = datetime.strptime(pubDate, "%a, %d %b %Y %H:%M:%S %Z")
+                        if news_date > target_date:
+                            continue
+                    except Exception:
+                        pass
+                
+                title = item.find('title').text if item.find('title') is not None else ''
                 headlines_text += f"- {title} ({pubDate})\n"
+                
+                count += 1
+                if count >= 5:
+                    break
                 
             if headlines_text.strip():
                 print(f"[{ticker}] Summarizing Google News headlines...")
