@@ -972,8 +972,57 @@ def node_decision_engine(state: TradingState) -> dict:
             continue
             
     if parsed_json is None:
+        # Deterministic fallback: Build a valid decision from available quantitative data
+        print(f"[{ticker}] WARNING: LLM failed to produce valid JSON. Using deterministic fallback.")
+        
+        # Compute a basic score from available indicators
+        fallback_score = 50.0  # Neutral baseline
+        interps = technical_indicators.get("interpretations", {})
+        
+        bullish_count = sum(1 for v in interps.values() if isinstance(v, dict) and v.get("Impact") == "Bullish")
+        bearish_count = sum(1 for v in interps.values() if isinstance(v, dict) and v.get("Impact") == "Bearish")
+        total_signals = bullish_count + bearish_count
+        
+        if total_signals > 0:
+            fallback_score = (bullish_count / total_signals) * 100.0
+        
+        # Determine recommendation from score
+        if fallback_score >= 85:
+            fallback_rec = "STRONG BUY"
+        elif fallback_score >= 65:
+            fallback_rec = "BUY"
+        elif fallback_score >= 40:
+            fallback_rec = "HOLD"
+        elif fallback_score >= 20:
+            fallback_rec = "SELL"
+        else:
+            fallback_rec = "AVOID"
+            
+        fallback_confidence = round(fallback_score / 100.0, 2)
+        
+        # Get execution params from risk analysis
+        fallback_execution = {
+            "entry": risk_analysis.get("entry"),
+            "stop_loss": risk_analysis.get("stop_loss"),
+            "targets": risk_analysis.get("targets", {}),
+            "info": "Deterministic fallback (LLM JSON parse failed)."
+        }
+        
         parsed_json = {
-            "error": "Failed to parse JSON output after retries.",
+            "decision": {
+                "component_scores": {},
+                "top_3_bullish_factors": [],
+                "top_3_bearish_factors": [],
+                "institutional_narrative": "Decision generated via deterministic fallback due to LLM JSON parsing failure.",
+                "key_risks": ["LLM analysis unavailable — decision based solely on quantitative indicators."],
+                "recommendation": fallback_rec,
+                "confidence": fallback_confidence,
+                "overall_score": round(fallback_score, 1),
+                "strength": "Moderate" if 40 <= fallback_score <= 60 else ("Strong" if fallback_score > 60 else "Weak"),
+                "score_breakdown": [],
+                "execution": fallback_execution
+            },
+            "fallback_note": "LLM failed to produce valid JSON after 2 attempts. This decision was computed deterministically from available quantitative indicators.",
             "raw_output": raw_analysis
         }
         
