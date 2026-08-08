@@ -27,6 +27,10 @@ class ScreenerRequest(BaseModel):
     date: Optional[str] = None # format: YYYY-MM-DD
     top_n: int = 5
 
+class BacktestRequest(BaseModel):
+    symbol: str
+    months: int = 60
+
 @app.post("/api/screener")
 def trigger_screener(req: ScreenerRequest):
     as_of_date = None
@@ -95,5 +99,15 @@ def download_report(path: str, background_tasks: BackgroundTasks):
             
     background_tasks.add_task(cleanup)
     
+    
     filename = os.path.basename(full_path)
     return FileResponse(path=full_path, filename=filename, media_type="application/pdf")
+
+@app.post("/api/backtest")
+def run_strategy_backtest(req: BacktestRequest):
+    from src.screener.pipeline.backtest import run_backtest
+    try:
+        results = run_backtest(months=req.months, symbols=[req.symbol], return_json=True)
+        return {"status": "success", "data": results}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
