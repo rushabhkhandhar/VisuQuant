@@ -1,7 +1,6 @@
 # Configuration for Quantitative Screener
 
 # Universe Definitions
-# List of symbols to scan, or function references (e.g. load_nifty500_symbols)
 UNIVERSE = "NIFTY500"
 
 # --- Pipeline Execution Flags ---
@@ -9,21 +8,22 @@ STAGE1_FILTER_ENABLED = True      # If True, heavily filters for Stage 2 uptrend
 DEDUP_WINDOW_DAYS = 10            # Number of trading days before the same trigger can fire again for a symbol
 
 # --- Dynamic Regime Trigger Configuration ---
+# Each trigger can be "active" (scores for ranking), "watchlist" (flagged only), or "disabled"
 REGIME_STRATEGIES = {
     "TRENDING UP": {
-        "active": ["bollinger_breakout", "bullish_engulfing"],
+        "active": ["donchian_breakout", "connors_rsi_pullback", "bollinger_breakout", "bullish_engulfing"],
         "watchlist": ["morning_star"],
         "disabled": ["hammer"]
     },
     "TRENDING DOWN": {
-        "active": ["hammer"], # Look for deep oversold bounce/capitulation
-        "watchlist": ["bullish_engulfing"],
-        "disabled": ["bollinger_breakout", "morning_star"]
+        "active": ["hammer"],
+        "watchlist": ["connors_rsi_pullback", "bullish_engulfing"],
+        "disabled": ["bollinger_breakout", "morning_star", "donchian_breakout"]
     },
     "CHOPPY": {
-        "active": ["morning_star"], # Mean reversion
+        "active": ["connors_rsi_pullback", "morning_star"],
         "watchlist": ["bollinger_breakout", "bullish_engulfing"],
-        "disabled": ["hammer"]
+        "disabled": ["hammer", "donchian_breakout"]
     }
 }
 
@@ -56,22 +56,48 @@ FIB_MIN_SWING_PCT = 8.0           # Minimum swing magnitude % to be considered f
 # --- Chandelier Exit / Trade Execution Parameters ---
 CHANDELIER_ATR_PERIOD = 22        # ATR period for Chandelier Exit
 CHANDELIER_ATR_MULT = 3.0         # ATR multiplier for trailing stop (Highest High - MULT * ATR)
-RISK_REWARD_RATIO = 2.0           # Risk-to-Reward ratio for target calculation (Target = Entry + RR * Risk)
+RISK_REWARD_RATIO = 2.0           # Risk-to-Reward ratio for target calculation
 FALLBACK_SL_PCT = 0.05            # 5% fallback stop-loss when ATR is unavailable
 FALLBACK_TARGET_PCT = 0.10        # 10% fallback target when ATR is unavailable
 
 # --- Volatility Classification Thresholds ---
-VOLATILITY_LOW_ATR_PCT = 1.0      # ATR% below this → "Low" volatility
-VOLATILITY_HIGH_ATR_PCT = 3.0     # ATR% above this → "High" volatility
+VOLATILITY_LOW_ATR_PCT = 1.0
+VOLATILITY_HIGH_ATR_PCT = 3.0
 
 # --- Bollinger Band Interpretation Thresholds ---
-BB_SQUEEZE_THRESHOLD = 0.05       # Bandwidth below this → Squeeze detected
-BB_WIDE_THRESHOLD = 0.15          # Bandwidth above this → High volatility
+BB_SQUEEZE_THRESHOLD = 0.05
+BB_WIDE_THRESHOLD = 0.15
 
 # --- Relative Volume Thresholds ---
-RELATIVE_VOLUME_HIGH = 1.2        # Above this → Volume expansion
-RELATIVE_VOLUME_LOW = 0.8         # Below this → Volume contraction
+RELATIVE_VOLUME_HIGH = 1.2
+RELATIVE_VOLUME_LOW = 0.8
 
 # --- Institutional Liquidity Filters ---
-INSTITUTIONAL_ADV_SHARES = 100000   # Minimum average daily volume (shares)
-INSTITUTIONAL_ADV_CURRENCY = 10000000  # Minimum average daily turnover (INR)
+INSTITUTIONAL_ADV_SHARES = 100000
+INSTITUTIONAL_ADV_CURRENCY = 10000000
+
+# ===================================================================
+# NEW STRATEGY PARAMETERS
+# ===================================================================
+
+# --- Donchian Channel Breakout (Turtle Trading) ---
+DONCHIAN_ENTRY_PERIOD = 20        # Buy when Close > highest High of last N days
+DONCHIAN_EXIT_PERIOD = 10         # Exit when Close < lowest Low of last N days
+DONCHIAN_VOLUME_MULT = 1.5        # Volume must be >= this * 20-day avg (looser than BB)
+
+# --- ConnorsRSI Pullback ---
+CONNORS_RSI_PERIOD = 3            # Ultra-short RSI period for mean-reversion
+CONNORS_STREAK_PERIOD = 2         # Streak length for up/down day counting
+CONNORS_PCTRANK_PERIOD = 100      # Percentile rank lookback
+CONNORS_RSI_OVERSOLD = 10         # ConnorsRSI below this = oversold pullback signal
+CONNORS_RSI_OVERBOUGHT = 90       # ConnorsRSI above this = overbought (for exits)
+CONNORS_MAX_HOLD_DAYS = 5         # Time-based exit: close after N days if no target/SL hit
+
+# --- Relative Strength Ranking ---
+RS_LOOKBACK_DAYS = 126            # ~6 months of trading days for momentum calculation
+RS_SKIP_RECENT_DAYS = 21          # Skip last ~1 month to avoid short-term mean reversion
+RS_TOP_PCT = 20                   # Keep top N% of stocks by RS rank (applied after Stage 1)
+
+# --- Portfolio Risk Management ---
+MAX_PORTFOLIO_HEAT_PCT = 6.0      # Max total portfolio risk across all open positions
+MAX_SECTOR_CONCENTRATION = 2      # Max stocks from same sector in active positions

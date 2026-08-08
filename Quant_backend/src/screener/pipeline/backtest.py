@@ -12,6 +12,8 @@ from src.data.nse_fetcher import load_nifty500_symbols, fetch_bulk_history
 from src.screener.screens.vcp_trend_template import evaluate_vcp_trend
 from src.screener.screens.trigger_layer import bollinger_squeeze_breakout, ma_pullback_bounce
 from src.screener.screens.fib_confluence import get_golden_pocket
+from src.screener.screens.donchian_breakout import donchian_breakout
+from src.screener.screens.connors_rsi import connors_rsi_pullback
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -148,13 +150,19 @@ def run_backtest(months: int = 3, symbols: List[str] = None, return_json: bool =
             # Stage 2: Triggers
             bb_trigger = bollinger_squeeze_breakout(historical_df, config.BB_LOOKBACK_MONTHS, config.VOLUME_BREAKOUT_MULT)
             ma_trigger = ma_pullback_bounce(historical_df)
+            dc_trigger = donchian_breakout(historical_df)
+            crsi_trigger = connors_rsi_pullback(historical_df)
             
             passed_bb = bb_trigger.get("passed", False)
             passed_ma = ma_trigger.get("passed", False)
+            passed_dc = dc_trigger.get("passed", False)
+            passed_crsi = crsi_trigger.get("passed", False)
             
-            if passed_bb or passed_ma:
+            if passed_bb or passed_ma or passed_dc or passed_crsi:
                 trigger_types = []
                 if passed_bb: trigger_types.append("Bollinger Breakout")
+                if passed_dc: trigger_types.append("Donchian Breakout")
+                if passed_crsi: trigger_types.append("ConnorsRSI Pullback")
                 if passed_ma: trigger_types.append(f"{ma_trigger.get('reversal_type', 'MA Bounce')}")
                 
                 t_idx = historical_df.index.get_loc(current_date)

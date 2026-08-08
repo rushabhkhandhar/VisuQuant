@@ -12,6 +12,9 @@ from src.screener.screens.liquidity import filter_by_liquidity
 from src.screener.screens.vcp_trend_template import evaluate_vcp_trend
 from src.screener.screens.trigger_layer import bollinger_squeeze_breakout, ma_pullback_bounce
 from src.screener.screens.fib_confluence import get_golden_pocket
+from src.screener.screens.donchian_breakout import donchian_breakout
+from src.screener.screens.connors_rsi import connors_rsi_pullback
+from src.screener.screens.relative_strength import compute_relative_strength
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -150,14 +153,18 @@ def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5,
         df = data["df"]
         trend_metrics = data["trend_metrics"]
         
-        # Run independent triggers
+        # Run ALL independent triggers
         bb_trigger = bollinger_squeeze_breakout(df, config.BB_LOOKBACK_MONTHS, config.VOLUME_BREAKOUT_MULT, disabled_triggers=disabled_config)
         ma_trigger = ma_pullback_bounce(df, disabled_triggers=disabled_config)
+        dc_trigger = donchian_breakout(df, disabled_triggers=disabled_config)
+        crsi_trigger = connors_rsi_pullback(df, disabled_triggers=disabled_config)
         
         passed_bb = bb_trigger.get("passed", False)
         passed_ma = ma_trigger.get("passed", False)
+        passed_dc = dc_trigger.get("passed", False)
+        passed_crsi = crsi_trigger.get("passed", False)
         
-        if not passed_bb and not passed_ma:
+        if not passed_bb and not passed_ma and not passed_dc and not passed_crsi:
             continue
             
         # Determine trigger type string for final output
@@ -169,6 +176,18 @@ def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5,
                 active_triggers.append("Bollinger Breakout")
             elif "bollinger_breakout" in watchlist_config:
                 watchlist_triggers.append("Bollinger Breakout")
+                
+        if passed_dc:
+            if "donchian_breakout" in active_config:
+                active_triggers.append("Donchian Breakout")
+            elif "donchian_breakout" in watchlist_config:
+                watchlist_triggers.append("Donchian Breakout")
+                
+        if passed_crsi:
+            if "connors_rsi_pullback" in active_config:
+                active_triggers.append("ConnorsRSI Pullback")
+            elif "connors_rsi_pullback" in watchlist_config:
+                watchlist_triggers.append("ConnorsRSI Pullback")
                 
         if passed_ma:
             ma_type = ma_trigger.get('reversal_type')
@@ -185,7 +204,6 @@ def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5,
             continue
         
         # Enrich with Fibonacci Confluence
-        # Slice DataFrame up to as_of_date
         import pandas as pd
         historical_df = df.loc[df.index <= pd.Timestamp(as_of_date)]
         if not historical_df.empty:
@@ -200,30 +218,39 @@ def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5,
         if fib_metrics:
             p_high = fib_metrics["pocket_high"]
             p_low = fib_metrics["pocket_low"]
-            # Intersection logic: Does the trigger bar touch the pocket?
             if trigger_low <= p_high and trigger_high >= p_low:
                 in_golden_pocket = True
-                
             fib_metrics["in_golden_pocket"] = in_golden_pocket
         else:
             fib_metrics = {"in_golden_pocket": False}
+        
+        # Compute Relative Strength Score for this symbol
+        rs_score = compute_relative_strength(df)
         
         # 6. Build Composite Score
         if active_triggers:
             trigger_type_str = " + ".join(active_triggers)
             score = 0.0
             
-            # Base Points (weighted by Phase 3 Walk-Forward validation)
+            # Base Points per trigger
             if "Bollinger Breakout" in active_triggers: 
-                score += 1.0  # Fragile edge, dragged down by down-trending months
+                score += 1.0
+            if "Donchian Breakout" in active_triggers:
+                score += 2.0  # High conviction breakout
+            if "ConnorsRSI Pullback" in active_triggers:
+                score += 2.5  # High win-rate pullback
             if "Bullish Engulfing" in active_triggers: 
-                score += 3.0  # Durable edge, consistently positive across all walk-forward blocks
+                score += 3.0
             if "Morning Star" in active_triggers:
-                score += 1.5  # Reversal pattern, needs more data but logically sound
+                score += 1.5
             if "MA Bounce" in active_triggers:
                 score += 1.0
             
-            # Confluence Bonus
+            # Multi-trigger confluence bonus
+            if len(active_triggers) >= 2:
+                score += 1.5  # Bonus for multiple triggers firing simultaneously
+            
+            # Confluence Bonus (Fibonacci)
             if in_golden_pocket:
                 gp_scoring = getattr(config, 'GOLDEN_POCKET_SCORING_ENABLED', {})
                 if isinstance(gp_scoring, dict) and gp_scoring.get(base_regime, False):
@@ -233,18 +260,25 @@ def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5,
             # Trend Quality Bonuses
             trend_up_days = trend_metrics.get("trend_up_days", 0)
             if trend_up_days > 40:
-                score += 1.0 # Extra mature trend
+                score += 1.0
             elif trend_up_days > 20:
                 score += 0.5
                 
             atr_ratio = trend_metrics.get("atr_ratio", 1.0)
             if atr_ratio < 0.5:
-                score += 1.0 # Extreme volatility contraction
+                score += 1.0
             elif atr_ratio < 0.75:
                 score += 0.5
                 
+            # Relative Strength Bonus (top momentum stocks get extra points)
+            if rs_score > 0.30:      # > 30% return in 6 months
+                score += 2.0
+            elif rs_score > 0.15:    # > 15% return
+                score += 1.0
+            elif rs_score > 0.05:    # > 5% return
+                score += 0.5
+                
             # --- Dynamic Target & Stop Loss Calculation ---
-            # Calculate ATR using centralized config
             high_low = historical_df['High'] - historical_df['Low']
             high_close = np.abs(historical_df['High'] - historical_df['Close'].shift())
             low_close = np.abs(historical_df['Low'] - historical_df['Close'].shift())
@@ -253,14 +287,12 @@ def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5,
             atr_22 = true_range.rolling(config.CHANDELIER_ATR_PERIOD).mean().iloc[-1]
             
             entry_price = historical_df['Close'].iloc[-1]
-            highest_high = historical_df['High'].iloc[-1] # For immediate entry, highest high is just the current high
+            highest_high = historical_df['High'].iloc[-1]
             
             if pd.notna(atr_22) and atr_22 > 0:
                 stop_loss = highest_high - (config.CHANDELIER_ATR_MULT * atr_22)
-                # Ensure SL is below entry, otherwise fallback
                 if stop_loss >= entry_price:
                     stop_loss = entry_price - atr_22
-                
                 risk = entry_price - stop_loss
                 target = entry_price + (config.RISK_REWARD_RATIO * risk)
             else:
@@ -276,12 +308,16 @@ def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5,
                 "entry_price": round(entry_price, 2),
                 "target": round(target, 2),
                 "stop_loss": round(stop_loss, 2),
+                "rs_rank": round(rs_score * 100, 1),  # As percentage
                 "metrics": {
                     "trend_up_days": trend_up_days,
                     "atr_ratio": round(atr_ratio, 2) if atr_ratio else None,
                     "pct_from_high": round(trend_metrics.get("pct_from_high", 0), 3),
+                    "rs_6m_return": round(rs_score * 100, 1),
                     "bb_breakout": bb_trigger,
                     "ma_bounce": ma_trigger,
+                    "donchian_breakout": dc_trigger,
+                    "connors_rsi": crsi_trigger,
                     "fibonacci": fib_metrics
                 }
             })
