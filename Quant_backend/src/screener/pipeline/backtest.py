@@ -61,10 +61,30 @@ def run_backtest(months: int = 3, symbols: List[str] = None, return_json: bool =
     deduped_signals = []
     last_signal_idx = {} # (symbol, trigger_type) -> t_idx
     
+    # Pre-compute NIFTY 200 SMA for regime filtering
+    nifty_df = bulk_data.get("NIFTYBEES")
+    if nifty_df is not None and not nifty_df.empty:
+        nifty_df['SMA_200'] = nifty_df['Close'].rolling(window=200).mean()
+    
     # 2. Iterate chronologically
     for i, current_date in enumerate(test_dates):
         if i % 10 == 0:
             logger.info(f"Processing date {current_date.date()} ({i}/{len(test_dates)})...")
+            
+        # Regime Filter Check
+        is_bull_regime = True
+        if nifty_df is not None:
+            try:
+                t_idx = nifty_df.index.get_loc(current_date)
+                nifty_close = nifty_df['Close'].iloc[t_idx]
+                nifty_sma200 = nifty_df['SMA_200'].iloc[t_idx]
+                if pd.notna(nifty_sma200) and nifty_close < nifty_sma200:
+                    is_bull_regime = False
+            except KeyError:
+                pass
+                
+        if not is_bull_regime:
+            continue  # Skip taking ANY new trades if broader market is in a bear regime
             
         daily_trend_survivors = []
         for symbol, df in bulk_data.items():
@@ -191,18 +211,33 @@ def run_backtest(months: int = 3, symbols: List[str] = None, return_json: bool =
             if pd.isna(entry_price) or entry_price == 0:
                 continue
                 
-            # Calculate 20 SMA on the fly for the forward slice
+            # Calculate ATR(22) for the forward slice manually to avoid pandas_ta dependency issues
             df_forward = df.copy()
-            df_forward['SMA_20'] = df_forward['Close'].rolling(window=20).mean()
+            high_low = df_forward['High'] - df_forward['Low']
+            high_close = np.abs(df_forward['High'] - df_forward['Close'].shift())
+            low_close = np.abs(df_forward['Low'] - df_forward['Close'].shift())
+            ranges = pd.concat([high_low, high_close, low_close], axis=1)
+            true_range = np.max(ranges, axis=1)
+            df_forward['ATR_22'] = true_range.rolling(22).mean()
             
             exit_idx = -1
-            # Check exit (Close < 20 SMA)
+            highest_high = df_forward['High'].iloc[t_idx + 1]
+            
+            # Check exit (Chandelier Exit: Close < Highest High - 3*ATR)
             for j in range(t_idx + 1, len(df_forward)):
                 close = df_forward['Close'].iloc[j]
-                sma20 = df_forward['SMA_20'].iloc[j]
-                if pd.notna(sma20) and close < sma20:
-                    exit_idx = j
-                    break
+                high = df_forward['High'].iloc[j]
+                atr = df_forward['ATR_22'].iloc[j]
+                
+                # Update highest high since entry
+                if high > highest_high:
+                    highest_high = high
+                    
+                if pd.notna(atr):
+                    stop_loss = highest_high - (3 * atr)
+                    if close < stop_loss:
+                        exit_idx = j
+                        break
             
             if exit_idx == -1:
                 # Still open, exit at the last bar
@@ -259,33 +294,13 @@ def run_backtest(months: int = 3, symbols: List[str] = None, return_json: bool =
         
         for trigger, group in groups:
             count = len(group)
-            # Drop NaNs for active trades
-            r5 = group["ret_5d"].dropna()
-            r10 = group["ret_10d"].dropna()
-            r20 = group["ret_20d"].dropna()
-            e5 = group["exc_5d"].dropna()
-            e10 = group["exc_10d"].dropna()
-            e20 = group["exc_20d"].dropna()
+            
+            dyn_rets = group["ret_dyn"].dropna()
             mdds = group["mdd"].dropna()
             
-            n_5d = len(r5)
-            n_10d = len(r10)
-            n_20d = len(r20)
-            
-            assert n_5d == n_10d == n_20d, f"CRITICAL: Sample size mismatch! 5d: {n_5d}, 10d: {n_10d}, 20d: {n_20d}"
-            
-            hr5 = (r5 > 0).mean() * 100 if n_5d > 0 else 0
-            hr10 = (r10 > 0).mean() * 100 if n_10d > 0 else 0
-            hr20 = (r20 > 0).mean() * 100 if n_20d > 0 else 0
-            
-            avg_r5 = r5.mean() * 100 if n_5d > 0 else 0
-            avg_r10 = r10.mean() * 100 if n_10d > 0 else 0
-            avg_r20 = r20.mean() * 100 if n_20d > 0 else 0
-            
-            avg_e5 = e5.mean() * 100 if n_5d > 0 else 0
-            avg_e10 = e10.mean() * 100 if n_10d > 0 else 0
-            avg_e20 = e20.mean() * 100 if n_20d > 0 else 0
-            
+            n_trades = len(dyn_rets)
+            win_rate = (dyn_rets > 0).mean() * 100 if n_trades > 0 else 0
+            avg_ret = dyn_rets.mean() * 100 if n_trades > 0 else 0
             avg_mdd = mdds.mean() * 100 if len(mdds) > 0 else 0
             
             # Calculate clustering
@@ -293,24 +308,23 @@ def run_backtest(months: int = 3, symbols: List[str] = None, return_json: bool =
             pairs.sort(key=lambda x: x[1])  # sort by date
             unique_dates = len(set([d for s, d in pairs]))
             
-            logger.info(f"Trigger: [{trigger}] (Total Signals: {count} | Valid Forward N: {n_20d})")
+            logger.info(f"Trigger: [{trigger}] (Total Signals: {count})")
             logger.info(f"  Clustering: {count} signals occurred across {unique_dates} unique dates")
-            logger.info(f"  Hit Rate (Win %):  5d(n={n_5d}): {hr5:.1f}% | 10d(n={n_10d}): {hr10:.1f}% | 20d(n={n_20d}): {hr20:.1f}%")
-            logger.info(f"  Avg Return (%):    5d(n={n_5d}): {avg_r5:+.2f}% | 10d(n={n_10d}): {avg_r10:+.2f}% | 20d(n={n_20d}): {avg_r20:+.2f}%")
-            logger.info(f"  Avg Excess Ret:    5d(n={n_5d}): {avg_e5:+.2f}% | 10d(n={n_10d}): {avg_e10:+.2f}% | 20d(n={n_20d}): {avg_e20:+.2f}%")
+            logger.info(f"  Hit Rate (Win %): {win_rate:.1f}%")
+            logger.info(f"  Avg Return (%): {avg_ret:+.2f}%")
             logger.info(f"  Avg Max Drawdown: {avg_mdd:.2f}%")
             logger.info("  Signal Instances:")
             for s, d in pairs:
                 logger.info(f"    - {s} on {d.date()}")
                 
-            logger.info("  Symbol Breakdown (Trades | Avg 20d Return):")
+            logger.info("  Symbol Breakdown (Trades | Avg Return):")
             sym_stats = group.groupby("symbol").agg(
-                trades=("ret_20d", "count"),
-                avg_r20=("ret_20d", "mean")
+                trades=("ret_dyn", "count"),
+                avg_ret=("ret_dyn", "mean")
             ).reset_index()
-            sym_stats.sort_values(by=["trades", "avg_r20"], ascending=[False, False], inplace=True)
+            sym_stats.sort_values(by=["trades", "avg_ret"], ascending=[False, False], inplace=True)
             for _, row in sym_stats.iterrows():
-                avg_pct = row['avg_r20'] * 100
+                avg_pct = row['avg_ret'] * 100
                 logger.info(f"    - {row['symbol']:<12}: {row['trades']} trades | {avg_pct:+.2f}%")
                 
             logger.info("  --- Fibonacci Confluence Split (Exploratory, Low Sample Size) ---")
@@ -320,55 +334,17 @@ def run_backtest(months: int = 3, symbols: List[str] = None, return_json: bool =
                 if n_sub == 0:
                     continue
                 
-                r20_sub = subgroup["ret_20d"].dropna()
-                if len(r20_sub) == 0:
+                dyn_sub = subgroup["ret_dyn"].dropna()
+                if len(dyn_sub) == 0:
                     continue
                     
-                hr20_sub = (r20_sub > 0).mean() * 100
-                avg_r20_sub = r20_sub.mean() * 100
-                avg_e20_sub = subgroup["exc_20d"].dropna().mean() * 100
+                hr_sub = (dyn_sub > 0).mean() * 100
+                avg_ret_sub = dyn_sub.mean() * 100
                 
                 label = "in golden pocket" if pocket_status else "not in golden pocket"
                 warning = " [WARNING: n<10]" if n_sub < 10 else ""
                 
-                logger.info(f"    - {label} (n={n_sub}){warning}: Hit Rate 20d: {hr20_sub:.1f}% | Avg Ret 20d: {avg_r20_sub:+.2f}% | Avg Exc 20d: {avg_e20_sub:+.2f}%")
-                
-            # Placebo Test for statistical significance
-            if count >= 10:
-                valid_group = group.dropna(subset=["exc_20d"])
-                if len(valid_group) > 0:
-                    in_group = valid_group[valid_group["in_golden_pocket"] == True]
-                    out_group = valid_group[valid_group["in_golden_pocket"] == False]
-                    
-                    n_in = len(in_group)
-                    n_out = len(out_group)
-                    
-                    if n_in > 0 and n_out > 0:
-                        real_in_exc = in_group["exc_20d"].mean()
-                        real_out_exc = out_group["exc_20d"].mean()
-                        real_gap = real_in_exc - real_out_exc
-                        
-                        all_exc = valid_group["exc_20d"].values
-                        gaps = []
-                        
-                        # Use a fixed seed for reproducibility across runs
-                        np.random.seed(42)
-                        for _ in range(1000):
-                            shuffled = np.random.permutation(all_exc)
-                            sim_in = shuffled[:n_in].mean()
-                            sim_out = shuffled[n_in:].mean()
-                            gaps.append(sim_in - sim_out)
-                            
-                        gaps = np.array(gaps)
-                        percentile = (gaps < real_gap).mean() * 100
-                        
-                        logger.info(f"  --- Placebo Test (1000 Shuffles) ---")
-                        logger.info(f"    - Real Excess Gap: {real_gap*100:+.2f} pts")
-                        logger.info(f"    - Significance: {percentile:.1f}th percentile vs random shuffles")
-                        if percentile > 90:
-                            logger.info(f"    - [SIGNIFICANT] The golden pocket edge is likely real.")
-                        else:
-                            logger.info(f"    - [NOT SIGNIFICANT] Indistinguishable from randomly splitting the same signals.")
+                logger.info(f"    - {label} (n={n_sub}){warning}: Hit Rate: {hr_sub:.1f}% | Avg Ret: {avg_ret_sub:+.2f}%")
                             
             logger.info("\n")
 
