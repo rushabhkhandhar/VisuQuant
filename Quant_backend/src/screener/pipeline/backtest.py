@@ -218,7 +218,7 @@ def run_backtest(months: int = 3, symbols: List[str] = None, return_json: bool =
             low_close = np.abs(df_forward['Low'] - df_forward['Close'].shift())
             ranges = pd.concat([high_low, high_close, low_close], axis=1)
             true_range = np.max(ranges, axis=1)
-            df_forward['ATR_22'] = true_range.rolling(22).mean()
+            df_forward['ATR_22'] = true_range.rolling(config.CHANDELIER_ATR_PERIOD).mean()
             
             exit_idx = -1
             highest_high = df_forward['High'].iloc[t_idx + 1]
@@ -234,7 +234,7 @@ def run_backtest(months: int = 3, symbols: List[str] = None, return_json: bool =
                     highest_high = high
                     
                 if pd.notna(atr):
-                    stop_loss = highest_high - (3 * atr)
+                    stop_loss = highest_high - (config.CHANDELIER_ATR_MULT * atr)
                     if close < stop_loss:
                         exit_idx = j
                         break

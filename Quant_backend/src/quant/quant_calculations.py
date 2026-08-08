@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import math
+from src.screener import config
 
 UNAVAILABLE = {"status": "Unavailable", "reason": "Insufficient historical candles"}
 
@@ -432,12 +433,12 @@ def calculate_technical_indicators(df: pd.DataFrame) -> dict:
             val_str = f"Upper: {round(upper, 2)} | Lower: {round(lower, 2)}"
             
             band_width = (upper - lower) / lower
-            squeeze = band_width < 0.05
+            squeeze = band_width < config.BB_SQUEEZE_THRESHOLD
             
             impact = "Neutral"
             if squeeze:
                 interp = "Band compression (Volatility squeeze) detected; high probability of imminent volatility expansion/breakout."
-            elif band_width > 0.15:
+            elif band_width > config.BB_WIDE_THRESHOLD:
                 interp = "Wide bands indicating high volatility."
             elif current_price >= upper * 0.995:
                 if "Bull" in regime:
@@ -510,14 +511,14 @@ def calculate_technical_indicators(df: pd.DataFrame) -> dict:
     if isinstance(rel_vol, (int, float)) and not df.empty:
         last_c = df['Close'].iloc[-1]
         last_o = df['Open'].iloc[-1]
-        if rel_vol > 1.2:
+        if rel_vol > config.RELATIVE_VOLUME_HIGH:
             if last_c > last_o:
                 interp = "Increasing (Volume expanding on up-move)"
                 impact = "Bullish"
             else:
                 interp = "Increasing (Volume expanding on down-move)"
                 impact = "Bearish"
-        elif rel_vol < 0.8:
+        elif rel_vol < config.RELATIVE_VOLUME_LOW:
             interp = "Decreasing (Low participation)"
             impact = "Neutral"
         else:
@@ -529,7 +530,7 @@ def calculate_technical_indicators(df: pd.DataFrame) -> dict:
         val_str = f"Rel Vol: {round(rel_vol, 2)}"
         if isinstance(adv_currency, (int, float)) and isinstance(adv_shares, (int, float)):
             val_str += f"<br>ADV: {int(adv_shares/1000)}K<br>T/O: {int(adv_currency/1000000)}M"
-            if adv_shares < 100000 or adv_currency < 10000000:
+            if adv_shares < config.INSTITUTIONAL_ADV_SHARES or adv_currency < config.INSTITUTIONAL_ADV_CURRENCY:
                 liquidity_warning = " [SYSTEM WARNING: Fails baseline institutional liquidity filters. Low Tradeability.]"
                 
         interpretations["Volume"] = {

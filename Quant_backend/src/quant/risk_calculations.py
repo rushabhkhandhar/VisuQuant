@@ -1,12 +1,14 @@
+from src.screener import config
+
 def calculate_risk_parameters(tech_ind: dict, confluence: dict, scraped: dict, unified_trend: dict = None) -> dict:
     warnings = []
     
     # 1. Base Price (Entry)
     entry = None
-    if scraped and "last_price" in scraped:
-        entry = float(scraped["last_price"])
-    elif tech_ind.get("vwap"):
-        entry = float(tech_ind["vwap"])
+    if scraped and "current_price" in scraped:
+        entry = float(scraped["current_price"])
+    elif scraped and "entry_price" in scraped:
+        entry = float(scraped["entry_price"])
     elif tech_ind.get("pivot_points") and tech_ind["pivot_points"].get("P"):
         entry = float(tech_ind["pivot_points"]["P"])
         
@@ -28,9 +30,9 @@ def calculate_risk_parameters(tech_ind: dict, confluence: dict, scraped: dict, u
     volatility = "Medium"
     if atr:
         atr_pct = (atr / entry) * 100
-        if atr_pct < 1.0:
+        if atr_pct < config.VOLATILITY_LOW_ATR_PCT:
             volatility = "Low"
-        elif atr_pct > 3.0:
+        elif atr_pct > config.VOLATILITY_HIGH_ATR_PCT:
             volatility = "High"
     else:
         warnings.append("ATR unavailable. Volatility assessment is falling back to Bollinger Bands.")
@@ -55,26 +57,26 @@ def calculate_risk_parameters(tech_ind: dict, confluence: dict, scraped: dict, u
     stop_loss = None
     if direction == "Bullish":
         if atr:
-            stop_loss = round(entry - (1.5 * atr), 2)
+            stop_loss = round(entry - (config.CHANDELIER_ATR_MULT * atr), 2)
         elif tech_ind.get("swing_low"):
             stop_loss = round(tech_ind["swing_low"], 2)
         elif tech_ind.get("pivot_points") and tech_ind["pivot_points"].get("S1"):
             stop_loss = round(tech_ind["pivot_points"]["S1"], 2)
             
         if not stop_loss or stop_loss >= entry:
-            stop_loss = round(entry * 0.95, 2) # 5% fallback
-            warnings.append("Using 5% fallback stop loss due to lack of support indicators.")
+            stop_loss = round(entry * (1 - config.FALLBACK_SL_PCT), 2)
+            warnings.append("Using fallback stop loss due to lack of support indicators.")
     else: # Bearish
         if atr:
-            stop_loss = round(entry + (1.5 * atr), 2)
+            stop_loss = round(entry + (config.CHANDELIER_ATR_MULT * atr), 2)
         elif tech_ind.get("swing_high"):
             stop_loss = round(tech_ind["swing_high"], 2)
         elif tech_ind.get("pivot_points") and tech_ind["pivot_points"].get("R1"):
             stop_loss = round(tech_ind["pivot_points"]["R1"], 2)
             
         if not stop_loss or stop_loss <= entry:
-            stop_loss = round(entry * 1.05, 2) # 5% fallback
-            warnings.append("Using 5% fallback stop loss due to lack of resistance indicators.")
+            stop_loss = round(entry * (1 + config.FALLBACK_SL_PCT), 2)
+            warnings.append("Using fallback stop loss due to lack of resistance indicators.")
         
     risk_amount = abs(entry - stop_loss)
     
@@ -82,9 +84,9 @@ def calculate_risk_parameters(tech_ind: dict, confluence: dict, scraped: dict, u
     t1, t2, t3 = None, None, None
     if direction == "Bullish":
         if atr:
-            t1 = round(entry + (1.5 * atr), 2)
-            t2 = round(entry + (3.0 * atr), 2)
-            t3 = round(entry + (5.0 * atr), 2)
+            t1 = round(entry + (config.CHANDELIER_ATR_MULT * atr), 2)
+            t2 = round(entry + (config.CHANDELIER_ATR_MULT * 2 * atr), 2)
+            t3 = round(entry + (config.CHANDELIER_ATR_MULT * 3.33 * atr), 2)
         elif tech_ind.get("pivot_points"):
             pp = tech_ind["pivot_points"]
             t1 = pp.get("R1", round(entry * 1.02, 2))
@@ -97,9 +99,9 @@ def calculate_risk_parameters(tech_ind: dict, confluence: dict, scraped: dict, u
             warnings.append("Using fixed percentage targets due to lack of volatility/pivot indicators.")
     else: # Bearish
         if atr:
-            t1 = round(entry - (1.5 * atr), 2)
-            t2 = round(entry - (3.0 * atr), 2)
-            t3 = round(entry - (5.0 * atr), 2)
+            t1 = round(entry - (config.CHANDELIER_ATR_MULT * atr), 2)
+            t2 = round(entry - (config.CHANDELIER_ATR_MULT * 2 * atr), 2)
+            t3 = round(entry - (config.CHANDELIER_ATR_MULT * 3.33 * atr), 2)
         elif tech_ind.get("pivot_points"):
             pp = tech_ind["pivot_points"]
             t1 = pp.get("S1", round(entry * 0.98, 2))

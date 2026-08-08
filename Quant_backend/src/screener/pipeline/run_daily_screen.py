@@ -244,28 +244,28 @@ def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5,
                 score += 0.5
                 
             # --- Dynamic Target & Stop Loss Calculation ---
-            # Calculate ATR(22)
+            # Calculate ATR using centralized config
             high_low = historical_df['High'] - historical_df['Low']
             high_close = np.abs(historical_df['High'] - historical_df['Close'].shift())
             low_close = np.abs(historical_df['Low'] - historical_df['Close'].shift())
             ranges = pd.concat([high_low, high_close, low_close], axis=1)
             true_range = np.max(ranges, axis=1)
-            atr_22 = true_range.rolling(22).mean().iloc[-1]
+            atr_22 = true_range.rolling(config.CHANDELIER_ATR_PERIOD).mean().iloc[-1]
             
             entry_price = historical_df['Close'].iloc[-1]
             highest_high = historical_df['High'].iloc[-1] # For immediate entry, highest high is just the current high
             
             if pd.notna(atr_22) and atr_22 > 0:
-                stop_loss = highest_high - (3 * atr_22)
+                stop_loss = highest_high - (config.CHANDELIER_ATR_MULT * atr_22)
                 # Ensure SL is below entry, otherwise fallback
                 if stop_loss >= entry_price:
                     stop_loss = entry_price - atr_22
                 
                 risk = entry_price - stop_loss
-                target = entry_price + (2 * risk) # 1:2 Risk Reward
+                target = entry_price + (config.RISK_REWARD_RATIO * risk)
             else:
-                stop_loss = entry_price * 0.95
-                target = entry_price * 1.10
+                stop_loss = entry_price * (1 - config.FALLBACK_SL_PCT)
+                target = entry_price * (1 + config.FALLBACK_TARGET_PCT)
                 
             # Compile candidate
             final_candidates.append({
