@@ -89,6 +89,138 @@ def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5,
     bulk_data = fetch_bulk_history(liquid_symbols, as_of_date, lookback_days=300)
     
     import numpy as np
+
+    # Run the core evaluation pipeline
+    final_candidates, watchlist_candidates, funnel_stats = run_evaluation_pipeline(
+        bulk_data, current_regime, is_bearish_regime, as_of_date, config, progress_callback, is_peer_run=False
+    )
+    
+    top_candidates = final_candidates[:top_n] if top_n else final_candidates
+    
+    # ---------------------------------------------------------
+    # PEER ANALYSIS (For top N candidates)
+    # ---------------------------------------------------------
+    from src.data.screener_in_client import get_peers_sync
+    for cand in top_candidates:
+        sym = cand["symbol"]
+        log_progress(f"Fetching peers for {sym}...")
+        peers = get_peers_sync(sym)
+        if peers:
+            log_progress(f"Found {len(peers)} peers for {sym}: {peers}")
+            log_progress(f"Fetching historical data for {sym} peers...")
+            peer_bulk = fetch_bulk_history(peers, as_of_date, lookback_days=300)
+            if peer_bulk:
+                log_progress(f"Evaluating {len(peer_bulk)} peers for {sym}...")
+                display_peers = []
+                for p_sym, df in peer_bulk.items():
+                    if df.empty: continue
+                    
+                    p_score = 0
+                    p_trigger = "Failed Setup"
+                    p_entry = None
+                    p_target = None
+                    p_stop = None
+                    
+                    if is_bearish_regime:
+                        trend_metrics = evaluate_stage4_downtrend(df, config.NEAR_52W_LOW_PCT)
+                    else:
+                        trend_metrics = evaluate_vcp_trend(df, config.NEAR_52W_HIGH_PCT)
+                        
+                    if not trend_metrics.get("passed", False):
+                        p_trigger = "Failed VCP Trend"
+                    else:
+                        f_eval = evaluate_fundamentals_short(p_sym) if is_bearish_regime else evaluate_fundamentals(p_sym)
+                        if not f_eval.get("passed", False):
+                            reasons = ", ".join(f_eval.get('reasons', []))
+                            p_trigger = f"Failed Fundamentals: {reasons}"
+                        else:
+                            single_peer_bulk = {p_sym: df}
+                            peer_final, _, _ = run_evaluation_pipeline(
+                                single_peer_bulk, current_regime, is_bearish_regime, as_of_date, config, progress_callback, is_peer_run=True
+                            )
+                            if peer_final:
+                                p_trigger = peer_final[0]["trigger_type"]
+                                p_score = peer_final[0]["score"]
+                                p_entry = peer_final[0]["entry_price"]
+                                p_target = peer_final[0]["target"]
+                                p_stop = peer_final[0]["stop_loss"]
+                            else:
+                                p_trigger = "Failed Trigger Layer"
+                                
+                    display_peers.append({
+                        "symbol": p_sym,
+                        "score": p_score,
+                        "trigger_type": p_trigger,
+                        "entry_price": p_entry,
+                        "target": p_target,
+                        "stop_loss": p_stop
+                    })
+                cand["peers"] = display_peers
+            else:
+                cand["peers"] = []
+        else:
+            cand["peers"] = []
+            
+    # 8. Enrich top candidates with 5-Year Historical Backtest
+    if top_candidates:
+        log_progress(f"Running 5-Year historical backtest for top {len(top_candidates)} candidates...")
+        from src.screener.pipeline.backtest import run_backtest
+        for cand in top_candidates:
+            try:
+                bt_results = run_backtest(months=60, symbols=[cand["symbol"]], return_json=True)
+                cand["metrics"]["backtest"] = bt_results.get("metrics", {})
+            except Exception as e:
+                logger.error(f"Failed to backtest {cand['symbol']}: {e}")
+                cand["metrics"]["backtest"] = {}
+    
+    # Log funnel summary
+    log_progress("=========================================")
+    log_progress("           SCREENER FUNNEL SUMMARY       ")
+    log_progress("=========================================")
+    log_progress(f"Initial Universe:     {initial_count}")
+    log_progress(f"Liquidity Filter:     {liquidity_count}")
+    log_progress(f"Stage 1 (VCP Trend):  {funnel_stats.get('stage1_count', 0)}")
+    log_progress(f"Stage 1.5 (Fundmnt):  {funnel_stats.get('stage1_5_count', 0)}")
+    log_progress(f"Stage 2 (Triggers):   {len(final_candidates)}")
+    log_progress("=========================================")
+    
+    if not dry_run:
+        log_progress(f"Top {len(top_candidates)} Candidates:")
+        for rank, cand in enumerate(top_candidates, 1):
+            log_progress(f"#{rank} {cand['symbol']} - Score: {cand['score']} - Trigger: {cand['trigger_type']}")
+            
+        if watchlist_candidates:
+            watchlist_file = f"watchlist_{as_of_date}.txt"
+            try:
+                with open(watchlist_file, "w") as f:
+                    f.write(f"Watchlist Candidates for {as_of_date}\n")
+                    f.write("="*40 + "\n")
+                    for cand in watchlist_candidates:
+                        f.write(f"- {cand['symbol']} ({cand['trigger_type']})\n")
+                log_progress(f"Saved {len(watchlist_candidates)} watchlist candidates to {watchlist_file}")
+            except Exception as e:
+                logger.error(f"Failed to write watchlist file: {e}")
+            
+    return {
+        "candidates": top_candidates,
+        "watchlist": watchlist_candidates,
+        "regime": current_regime
+    }
+
+
+def run_evaluation_pipeline(bulk_data, current_regime, is_bearish_regime, as_of_date, config, progress_callback=None, is_peer_run=False):
+    import numpy as np
+    def log_progress(msg, level="INFO"):
+        if level == "WARNING":
+            logger.warning(msg)
+        elif level == "ERROR":
+            logger.error(msg)
+        else:
+            logger.info(msg)
+            
+        if progress_callback:
+            progress_callback(msg, level)
+
     
     # 3. Stage 1: VCP Trend Template
     pre_atr_survivors = {}
@@ -131,6 +263,8 @@ def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5,
         if pre_atr_survivors:
             atr_ratios = [data["trend_metrics"]["atr_ratio"] for data in pre_atr_survivors.values()]
             dynamic_cutoff = np.percentile(atr_ratios, config.ATR_CONTRACTION_PERCENTILE)
+            if is_peer_run:
+                dynamic_cutoff = float('inf')  # Allow all peers through ATR
             log_progress(f"Dynamic ATR Threshold (Bottom {config.ATR_CONTRACTION_PERCENTILE}% of {len(atr_ratios)} survivors): {dynamic_cutoff:.2f}")
             
             for symbol, data in pre_atr_survivors.items():
@@ -150,7 +284,7 @@ def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5,
     
     if stage1_count == 0:
         log_progress("Pipeline halted: 0 symbols survived Stage 1.", level="WARNING")
-        return []
+        return [], [], {}
         
     # --- STAGE 1.5: Fundamental Quality Filter ---
     log_progress("Running Stage 1.5: Fundamental Quality (Screener.in)...")
@@ -169,7 +303,7 @@ def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5,
     
     if stage1_5_count == 0:
         log_progress("Pipeline halted: 0 symbols survived Stage 1.5.", level="WARNING")
-        return []
+        return [], [], {}
         
     # 4 & 5. Stage 2: Trigger Layer & Fib Confluence
     if "TRENDING UP" in current_regime:
@@ -344,16 +478,30 @@ def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5,
             
             entry_price = historical_df['Close'].iloc[-1]
             highest_high = historical_df['High'].iloc[-1]
+            lowest_low = historical_df['Low'].iloc[-1]
+            
+            is_short = "(Short)" in trigger_type_str
             
             if pd.notna(atr_22) and atr_22 > 0:
-                stop_loss = highest_high - (config.CHANDELIER_ATR_MULT * atr_22)
-                if stop_loss >= entry_price:
-                    stop_loss = entry_price - atr_22
-                risk = entry_price - stop_loss
-                target = entry_price + (config.RISK_REWARD_RATIO * risk)
+                if is_short:
+                    stop_loss = lowest_low + (config.CHANDELIER_ATR_MULT * atr_22)
+                    if stop_loss <= entry_price:
+                        stop_loss = entry_price + atr_22
+                    risk = stop_loss - entry_price
+                    target = entry_price - (config.RISK_REWARD_RATIO * risk)
+                else:
+                    stop_loss = highest_high - (config.CHANDELIER_ATR_MULT * atr_22)
+                    if stop_loss >= entry_price:
+                        stop_loss = entry_price - atr_22
+                    risk = entry_price - stop_loss
+                    target = entry_price + (config.RISK_REWARD_RATIO * risk)
             else:
-                stop_loss = entry_price * (1 - config.FALLBACK_SL_PCT)
-                target = entry_price * (1 + config.FALLBACK_TARGET_PCT)
+                if is_short:
+                    stop_loss = entry_price * (1 + config.FALLBACK_SL_PCT)
+                    target = entry_price * (1 - config.FALLBACK_TARGET_PCT)
+                else:
+                    stop_loss = entry_price * (1 - config.FALLBACK_SL_PCT)
+                    target = entry_price * (1 + config.FALLBACK_TARGET_PCT)
                 
             # Compile candidate
             final_candidates.append({
@@ -397,53 +545,13 @@ def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5,
     
     # 7. Sort by score descending and return top N
     final_candidates.sort(key=lambda x: x["score"], reverse=True)
-    top_candidates = final_candidates[:top_n]
-    
-    # 8. Enrich top candidates with 5-Year Historical Backtest
-    if top_candidates:
-        log_progress(f"Running 5-Year historical backtest for top {len(top_candidates)} candidates...")
-        from src.screener.pipeline.backtest import run_backtest
-        for cand in top_candidates:
-            try:
-                bt_results = run_backtest(months=60, symbols=[cand["symbol"]], return_json=True)
-                cand["metrics"]["backtest"] = bt_results.get("metrics", {})
-            except Exception as e:
-                logger.error(f"Failed to backtest {cand['symbol']}: {e}")
-                cand["metrics"]["backtest"] = {}
-    
-    # Log funnel summary
-    log_progress("=========================================")
-    log_progress("           SCREENER FUNNEL SUMMARY       ")
-    log_progress("=========================================")
-    log_progress(f"Initial Universe:     {initial_count}")
-    log_progress(f"Liquidity Filter:     {liquidity_count}")
-    log_progress(f"Stage 1 (VCP Trend):  {stage1_count}")
-    log_progress(f"Stage 1.5 (Fundmnt):  {stage1_5_count}")
-    log_progress(f"Stage 2 (Triggers):   {len(final_candidates)}")
-    log_progress("=========================================")
-    
-    if not dry_run:
-        log_progress(f"Top {len(top_candidates)} Candidates:")
-        for rank, cand in enumerate(top_candidates, 1):
-            log_progress(f"#{rank} {cand['symbol']} - Score: {cand['score']} - Trigger: {cand['trigger_type']}")
-            
-        if watchlist_candidates:
-            watchlist_file = f"watchlist_{as_of_date}.txt"
-            try:
-                with open(watchlist_file, "w") as f:
-                    f.write(f"Watchlist Candidates for {as_of_date}\n")
-                    f.write("="*40 + "\n")
-                    for cand in watchlist_candidates:
-                        f.write(f"- {cand['symbol']} ({cand['trigger_type']})\n")
-                log_progress(f"Saved {len(watchlist_candidates)} watchlist candidates to {watchlist_file}")
-            except Exception as e:
-                logger.error(f"Failed to write watchlist file: {e}")
-            
-    return {
-        "candidates": top_candidates,
-        "watchlist": watchlist_candidates,
-        "regime": current_regime
+    funnel_stats = {
+        "stage1_count": stage1_count,
+        "stage1_5_count": stage1_5_count
     }
+    return final_candidates, watchlist_candidates, funnel_stats
+    
+    
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the quantitative screening pipeline.")

@@ -18,7 +18,7 @@ async def fetch_screener_fundamentals(symbol: str) -> dict:
         "quarters": {},
         "investors": {}
     }
-    
+
     try:
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
@@ -85,7 +85,49 @@ def get_screener_data_sync(symbol: str) -> dict:
     """Synchronous wrapper for fetch_screener_fundamentals"""
     return asyncio.run(fetch_screener_fundamentals(symbol))
 
+async def fetch_peers(symbol: str) -> list:
+    """
+    Fetches the peers/competitors for a given symbol from screener.in.
+    Returns a list of symbols.
+    """
+    url = f"https://www.screener.in/company/{symbol}/consolidated/"
+    peers = []
+    
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            context = await browser.new_context(
+                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
+            )
+            page = await context.new_page()
+            
+            response = await page.goto(url, wait_until="domcontentloaded", timeout=15000)
+            if response and response.status == 404:
+                url = f"https://www.screener.in/company/{symbol}/"
+                await page.goto(url, wait_until="domcontentloaded", timeout=15000)
+                
+            links = await page.locator("section#peers tbody tr td a").all()
+            for link in links:
+                href = await link.get_attribute("href")
+                if href and href.startswith("/company/"):
+                    peer_sym = href.split("/")[2]
+                    if peer_sym != symbol and not peer_sym.isdigit(): # Exclude self and numeric BSE codes
+                        peers.append(peer_sym)
+                        
+            await browser.close()
+            await asyncio.sleep(random.uniform(2.0, 4.0)) ## to avoid rate limit issue 
+            
+    except Exception as e:
+        logger.error(f"Error fetching peers for {symbol} from screener.in: {e}")
+        
+    return list(set(peers)) # Remove duplicates if any
+
+def get_peers_sync(symbol: str) -> list:
+    return asyncio.run(fetch_peers(symbol))
+
 if __name__ == "__main__":
     import json
     data = get_screener_data_sync("SCI")
     print(json.dumps(data, indent=2))
+    peers = get_peers_sync("SCI")
+    print("Peers:", peers)

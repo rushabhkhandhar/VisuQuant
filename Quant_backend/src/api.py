@@ -56,8 +56,8 @@ def trigger_screener_stream(req: ScreenerRequest):
 
     q = queue.Queue()
 
-    def progress_callback(msg):
-        q.put({"type": "log", "message": msg})
+    def progress_callback(msg, level="INFO"):
+        q.put({"type": "log", "message": msg, "level": level})
 
     def run_engine():
         try:
