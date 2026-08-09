@@ -15,6 +15,7 @@ from src.screener.screens.fib_confluence import get_golden_pocket
 from src.screener.screens.donchian_breakout import donchian_breakout
 from src.screener.screens.connors_rsi import connors_rsi_pullback
 from src.screener.screens.relative_strength import compute_relative_strength
+from src.screener.screens.fundamental_quality import evaluate_fundamentals
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -132,6 +133,25 @@ def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5,
         logger.warning("Pipeline halted: 0 symbols survived Stage 1.")
         return []
         
+    # --- STAGE 1.5: Fundamental Quality Filter ---
+    logger.info("Running Stage 1.5: Fundamental Quality (Screener.in)...")
+    stage1_5_survivors = {}
+    for symbol, data in stage1_survivors.items():
+        logger.info(f"Checking fundamentals for {symbol}...")
+        f_eval = evaluate_fundamentals(symbol)
+        if f_eval.get("passed"):
+            logger.info(f"  [PASS] {symbol}: ROE {f_eval.get('roe')}%, OP Growth {f_eval.get('op_growth')}, Inst Buying {f_eval.get('inst_buying')}")
+            stage1_5_survivors[symbol] = data
+        else:
+            logger.info(f"  [FAIL] {symbol}: {', '.join(f_eval.get('reasons', []))}")
+            
+    stage1_5_count = len(stage1_5_survivors)
+    logger.info(f"Stage 1.5 Final Survivors: {stage1_5_count} symbols.")
+    
+    if stage1_5_count == 0:
+        logger.warning("Pipeline halted: 0 symbols survived Stage 1.5.")
+        return []
+        
     # 4 & 5. Stage 2: Trigger Layer & Fib Confluence
     if "TRENDING UP" in current_regime:
         base_regime = "TRENDING UP"
@@ -149,7 +169,7 @@ def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5,
     final_candidates = []
     watchlist_candidates = []
     
-    for symbol, data in stage1_survivors.items():
+    for symbol, data in stage1_5_survivors.items():
         df = data["df"]
         trend_metrics = data["trend_metrics"]
         
@@ -362,7 +382,8 @@ def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5,
     logger.info(f"Initial Universe:     {initial_count}")
     logger.info(f"Liquidity Filter:     {liquidity_count}")
     logger.info(f"Stage 1 (VCP Trend):  {stage1_count}")
-    logger.info(f"Stage 2 (Triggers):   {final_count}")
+    logger.info(f"Stage 1.5 (Fundmnt):  {stage1_5_count}")
+    logger.info(f"Stage 2 (Triggers):   {len(final_candidates)}")
     logger.info("=========================================")
     
     if not dry_run:
