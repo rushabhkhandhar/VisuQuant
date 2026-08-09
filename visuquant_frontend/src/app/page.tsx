@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import React, { useState } from "react";
 
 export default function Home() {
   const [date, setDate] = useState("");
@@ -8,6 +8,7 @@ export default function Home() {
   const [results, setResults] = useState<any>(null);
   const [error, setError] = useState("");
   const [streamLogs, setStreamLogs] = useState<string[]>([]);
+  const [expandedPeerRow, setExpandedPeerRow] = useState<number | null>(null);
   
   // Direct Analysis State
   const [directTicker, setDirectTicker] = useState("");
@@ -361,7 +362,8 @@ export default function Home() {
                   const status = analysisStatus[c.symbol];
                   
                   return (
-                    <tr key={idx}>
+                    <React.Fragment key={idx}>
+                      <tr>
                       <td style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{c.symbol}</td>
                       <td className="text-cyan">{c.score !== undefined ? c.score.toFixed(1) : '-'}</td>
                       <td>{c.trigger_type}</td>
@@ -375,7 +377,7 @@ export default function Home() {
                       <td style={{ color: c.metrics?.backtest?.['CAGR (%)'] > 0 ? 'var(--success)' : 'var(--danger)' }}>
                         {c.metrics?.backtest?.['CAGR (%)'] !== undefined ? `${c.metrics.backtest['CAGR (%)']}%` : '-'}
                       </td>
-                      <td style={{ textAlign: 'center' }}>
+                      <td style={{ textAlign: 'center', display: 'flex', gap: '8px', justifyContent: 'center' }}>
                         {status?.url ? (
                           <a href={status.url} download target="_blank" rel="noreferrer" style={{ color: 'var(--success)', textDecoration: 'none', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
                             ⬇️ Download PDF
@@ -392,8 +394,49 @@ export default function Home() {
                             {status?.loading ? <span className="loader" style={{ width: '14px', height: '14px', borderWidth: '2px' }}></span> : '⚡ Deep Dive'}
                           </button>
                         )}
+                        {c.peers && c.peers.length > 0 && (
+                          <button 
+                            className="btn-secondary" 
+                            style={{ padding: '6px 12px', fontSize: '13px', backgroundColor: '#334155', border: 'none', color: '#fff' }}
+                            onClick={() => setExpandedPeerRow(expandedPeerRow === idx ? null : idx)}
+                          >
+                            {expandedPeerRow === idx ? "Hide Peers" : `Peers (${c.peers.length})`}
+                          </button>
+                        )}
                       </td>
                     </tr>
+                    {expandedPeerRow === idx && c.peers && c.peers.length > 0 && (
+                      <tr key={`peers-${idx}`} style={{ backgroundColor: '#0f172a' }}>
+                        <td colSpan={10} style={{ padding: '20px' }}>
+                          <h4 style={{ margin: '0 0 12px 0', color: '#38bdf8', fontSize: '14px' }}>Peer Candidates (Comparative Analysis)</h4>
+                          <table className="data-table" style={{ backgroundColor: '#1e293b' }}>
+                            <thead>
+                              <tr>
+                                <th>Peer Symbol</th>
+                                <th>Score</th>
+                                <th>Trigger</th>
+                                <th>Entry</th>
+                                <th>Target</th>
+                                <th>Stop Loss</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {c.peers.map((peer: any, pIdx: number) => (
+                                <tr key={`peer-${pIdx}`}>
+                                  <td style={{ fontWeight: 600 }}>{peer.symbol}</td>
+                                  <td className="text-cyan">{peer.score !== undefined ? peer.score.toFixed(1) : '-'}</td>
+                                  <td>{peer.trigger_type}</td>
+                                  <td>₹{peer.entry_price || '-'}</td>
+                                  <td className="text-cyan">₹{peer.target || '-'}</td>
+                                  <td className="text-danger">₹{peer.stop_loss || '-'}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
                   );
                 })}
               </tbody>
