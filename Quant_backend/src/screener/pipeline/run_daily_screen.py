@@ -16,6 +16,10 @@ from src.screener.screens.donchian_breakout import donchian_breakout
 from src.screener.screens.connors_rsi import connors_rsi_pullback
 from src.screener.screens.relative_strength import compute_relative_strength
 from src.screener.screens.fundamental_quality import evaluate_fundamentals
+from src.screener.screens.stage4_downtrend_template import evaluate_stage4_downtrend
+from src.screener.screens.fundamental_junk_filter import evaluate_fundamentals_short
+from src.screener.screens.donchian_breakdown import donchian_breakdown
+from src.screener.screens.connors_rsi_fade import connors_rsi_fade
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -58,6 +62,10 @@ def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5,
         else:
             logger.warning("Could not fetch sufficient NIFTYBEES data to determine regime.")
     
+    is_bearish_regime = "TRENDING DOWN" in current_regime
+    if is_bearish_regime:
+        logger.info("Bearish Regime Detected: Pipeline switching to SHORT strategies (Stage 4, Junk Fundamentals).")
+    
     # 2. Liquidity Pre-Filter
     logger.info(f"Applying Liquidity Filter (>= {config.LIQUIDITY_MIN_VALUE_CR} Cr/day)...")
     liquid_symbols = filter_by_liquidity(universe, config.LIQUIDITY_MIN_VALUE_CR, as_of_date)
@@ -86,7 +94,10 @@ def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5,
             if df.empty:
                 continue
                 
-            trend_metrics = evaluate_vcp_trend(df, config.NEAR_52W_HIGH_PCT)
+            if is_bearish_regime:
+                trend_metrics = evaluate_stage4_downtrend(df, config.NEAR_52W_LOW_PCT)
+            else:
+                trend_metrics = evaluate_vcp_trend(df, config.NEAR_52W_HIGH_PCT)
             
             # Log counts
             if trend_metrics.get("c1_sma", False): cond_counts["c1"] += 1
@@ -138,7 +149,7 @@ def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5,
     stage1_5_survivors = {}
     for symbol, data in stage1_survivors.items():
         logger.info(f"Checking fundamentals for {symbol}...")
-        f_eval = evaluate_fundamentals(symbol)
+        f_eval = evaluate_fundamentals_short(symbol) if is_bearish_regime else evaluate_fundamentals(symbol)
         if f_eval.get("passed"):
             logger.info(f"  [PASS] {symbol}: ROE {f_eval.get('roe')}%, OP Growth {f_eval.get('op_growth')}, Inst Buying {f_eval.get('inst_buying')}")
             stage1_5_survivors[symbol] = data
@@ -179,12 +190,17 @@ def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5,
         dc_trigger = donchian_breakout(df, disabled_triggers=disabled_config)
         crsi_trigger = connors_rsi_pullback(df, disabled_triggers=disabled_config)
         
+        dc_down_trigger = donchian_breakdown(df, disabled_triggers=disabled_config)
+        crsi_fade_trigger = connors_rsi_fade(df, disabled_triggers=disabled_config)
+        
         passed_bb = bb_trigger.get("passed", False)
         passed_ma = ma_trigger.get("passed", False)
         passed_dc = dc_trigger.get("passed", False)
         passed_crsi = crsi_trigger.get("passed", False)
+        passed_dc_down = dc_down_trigger.get("passed", False)
+        passed_crsi_fade = crsi_fade_trigger.get("passed", False)
         
-        if not passed_bb and not passed_ma and not passed_dc and not passed_crsi:
+        if not passed_bb and not passed_ma and not passed_dc and not passed_crsi and not passed_dc_down and not passed_crsi_fade:
             continue
             
         # Determine trigger type string for final output
@@ -208,6 +224,18 @@ def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5,
                 active_triggers.append("ConnorsRSI Pullback")
             elif "connors_rsi_pullback" in watchlist_config:
                 watchlist_triggers.append("ConnorsRSI Pullback")
+                
+        if passed_dc_down:
+            if "donchian_breakdown" in active_config:
+                active_triggers.append("Donchian Breakdown (Short)")
+            elif "donchian_breakdown" in watchlist_config:
+                watchlist_triggers.append("Donchian Breakdown (Short)")
+                
+        if passed_crsi_fade:
+            if "connors_rsi_fade" in active_config:
+                active_triggers.append("ConnorsRSI Fade (Short)")
+            elif "connors_rsi_fade" in watchlist_config:
+                watchlist_triggers.append("ConnorsRSI Fade (Short)")
                 
         if passed_ma:
             ma_type = ma_trigger.get('reversal_type')

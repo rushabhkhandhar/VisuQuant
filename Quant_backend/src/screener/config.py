@@ -13,16 +13,16 @@ REGIME_STRATEGIES = {
     "TRENDING UP": {
         "active": ["donchian_breakout", "connors_rsi_pullback", "bollinger_breakout", "bullish_engulfing"],
         "watchlist": ["morning_star"],
-        "disabled": ["hammer"]
+        "disabled": ["hammer", "donchian_breakdown", "connors_rsi_fade"]
     },
     "TRENDING DOWN": {
-        "active": ["hammer"],
+        "active": ["hammer", "donchian_breakdown", "connors_rsi_fade"],
         "watchlist": ["connors_rsi_pullback", "bullish_engulfing"],
         "disabled": ["bollinger_breakout", "morning_star", "donchian_breakout"]
     },
     "CHOPPY": {
-        "active": ["connors_rsi_pullback", "morning_star"],
-        "watchlist": ["bollinger_breakout", "bullish_engulfing"],
+        "active": ["connors_rsi_pullback", "morning_star", "connors_rsi_fade"],
+        "watchlist": ["bollinger_breakout", "bullish_engulfing", "donchian_breakdown"],
         "disabled": ["hammer", "donchian_breakout"]
     }
 }
@@ -46,7 +46,8 @@ ATR_LONG = 50                     # Long-term ATR lookback (days)
 ATR_CONTRACTION_PERCENTILE = 30   # Keep bottom Nth percentile of ATR ratios (cross-sectional)
 
 # Price Action / Momentum
-NEAR_52W_HIGH_PCT = 0.20          # Max percentage distance from 52-week high
+NEAR_52W_HIGH_PCT = 0.20          # Max percentage distance from 52-week high (Long)
+NEAR_52W_LOW_PCT = 0.25           # Max percentage distance from 52-week low (Short)
 BB_LOOKBACK_MONTHS = 6            # Lookback for Bollinger Band squeeze (months)
 
 # Fibonacci Confluence
