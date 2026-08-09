@@ -21,7 +21,8 @@ flowchart TB
         direction TB
         S1[NSE 500 liquidity filter<br/>Drop stocks below ₹50 Cr/day] --> S2[Macro regime analysis<br/>NIFTYBEES trend classification]
         S2 --> S3[Stage 1: VCP trend template<br/>SMA stack + dynamic ATR contraction]
-        S3 --> S4_Regime{Dynamic Strategy Allocation<br/>Based on Regime}
+        S3 --> S3_5[Stage 1.5: Fundamental Quality<br/>Screener.in ROE, Earnings Growth, Inst Buying]
+        S3_5 --> S4_Regime{Dynamic Strategy Allocation<br/>Based on Regime}
         
         S4_Regime -.->|TRENDING UP| S4_Bull[Active: BB Breakout, Engulfing<br/>Disabled: Hammer]
         S4_Regime -.->|TRENDING DOWN| S4_Bear[Active: Hammer<br/>Disabled: Breakouts]
@@ -68,7 +69,7 @@ flowchart TB
     classDef startend fill:#b91c1c,stroke:#991b1b,stroke-width:2px,color:#fff
     classDef menu fill:#6366f1,stroke:#4f46e5,stroke-width:2px,color:#fff
 
-    class S1,S2,S3,S4_Regime,S4_Bull,S4_Bear,S4_Chop,S5,S6 screener
+    class S1,S2,S3,S3_5,S4_Regime,S4_Bull,S4_Bear,S4_Chop,S5,S6 screener
     class Capture,Quant,Vision,Fund node
     class Unified,Confluence synthesis
     class Risk,Decision,Safety,PDF output
@@ -106,15 +107,17 @@ finvison_tech_analysis/
 
 ### `screener/` (Vectorized Stock Screening)
 The foundational quantitative filtering layer that scans the entire market (500 symbols) to find high-probability setups *before* they are sent to the Vision AI.
-- **`pipeline/run_daily_screen.py`**: The orchestrator for the screener. It applies sequential filtering: Liquidity -> Stage 1 (Minervini VCP Template with dynamic ATR percentile thresholds) -> Stage 2 (Trigger Layer for active setups like Bollinger Breakout or Engulfing). It also runs a market regime check on the NIFTY500 to dynamically tag the macro environment (Trending Up, Trending Down, or Choppy).
+- **`pipeline/run_daily_screen.py`**: The orchestrator for the screener. It applies sequential filtering: Liquidity -> Stage 1 (Minervini VCP Template with dynamic ATR percentile thresholds) -> Stage 1.5 (Fundamental Quality filtering via Screener.in) -> Stage 2 (Trigger Layer for active setups like Bollinger Breakout or Engulfing). It also runs a market regime check on the NIFTY500 to dynamically tag the macro environment (Trending Up, Trending Down, or Choppy).
 - **`pipeline/handoff.py`**: Packages the strictly validated signals (trigger type, composite score, regime, and quantitative metrics) into a VisuQuant payload and pipes them directly into the generative Chart Capture workflow.
 - **`pipeline/backtest.py`**: Contains strict statistical significance tests, including placebo/shuffle loops and walk-forward block validation, to ensure that the alpha of any trigger logic is durable and not curve-fitted.
 - **`screens/trigger_layer.py`**: The specific pattern matching logic (Bollinger Squeeze breakouts, Bullish Engulfing, MA Pullback Bounce) that accepts dynamic active/disabled rules based on the current regime playbook.
 - **`indicators/core.py`**: High-performance, pure vectorized functions for SMA, EMA, ATR, Bollinger Bands, RSI, MACD, and Swing Detection using `pandas-ta` and `scipy`. Actively excludes circuit days to prevent distorted readings.
+- **`screens/fundamental_quality.py`**: A robust techno-funda filter that evaluates Earnings Growth (YoY), Profitability (ROE/ROCE), and Institutional Accumulation to drop low-quality companies before technical triggers are fired.
 - **`config.py`**: Holds strategy thresholds (liquidity, ATR, BB lookbacks) and the core `REGIME_STRATEGIES` dictionary that dynamically maps trigger patterns to the Bullish, Bearish, or Choppy market environments.
 
 ### `data/` (Acquisition & Fetching)
 - **`nse_fetcher.py`**: Handles live market data scraping from NSE Bhavcopy and implements highly-optimized caching for massive historical lookbacks. It also exposes the `get_ohlcv` wrapper that serves clean data to the screener, automatically flagging circuit limits and corporate action gaps.
+- **`screener_in_client.py`**: Uses asynchronous Playwright automation to scrape real-time financial tables (P&L, Quarters, Investors) directly from Screener.in to fuel the Stage 1.5 fundamental filter.
 - **`scraper.py`**: Playwright headless browser automation to capture interactive TradingView charts as base64 images.
 - **`news_fetcher.py`**: Fetches the latest corporate announcements (targeting "Outcome of Board Meeting", "Financial Results", and "Earnings Call Transcripts") from the NSE. It also aggregates the latest top 5 headlines from Google News RSS. It leverages **Gemini 3.6 Flash** (via direct REST API, with graceful degradation to 3.5-flash-lite on 429/503 errors) to strictly extract structured JSON containing **Short-Term POV** and **Long-Term POV**.
 
