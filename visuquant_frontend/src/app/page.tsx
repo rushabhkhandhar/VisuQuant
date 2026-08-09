@@ -279,9 +279,9 @@ export default function Home() {
 
       {results && (
         <div className="glass-panel">
-          <h2 style={{ margin: '0 0 16px 0', fontSize: '20px' }}>Candidates ({results.candidates.length})</h2>
+          <h2 style={{ margin: '0 0 16px 0', fontSize: '20px' }}>Candidates ({(results.candidates || []).length})</h2>
           
-          {results.candidates.length > 0 ? (
+          {results.candidates && results.candidates.length > 0 ? (
             <table className="data-table">
               <thead>
                 <tr>
