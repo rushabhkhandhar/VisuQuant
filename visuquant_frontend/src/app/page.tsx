@@ -7,6 +7,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState<any>(null);
   const [error, setError] = useState("");
+  const [streamLogs, setStreamLogs] = useState<string[]>([]);
   
   // Direct Analysis State
   const [directTicker, setDirectTicker] = useState("");
@@ -26,10 +27,11 @@ export default function Home() {
     setLoading(true);
     setError("");
     setResults(null);
+    setStreamLogs([]);
     
     try {
       const payload = date ? { date, top_n: 5 } : { top_n: 5 };
-      const res = await fetch("http://localhost:5000/api/screener", {
+      const res = await fetch("http://localhost:5000/api/screener_stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -39,8 +41,43 @@ export default function Home() {
         throw new Error("Failed to fetch data from engine");
       }
       
-      const data = await res.json();
-      setResults(data);
+      if (!res.body) throw new Error("ReadableStream not supported in this browser.");
+      
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      
+      let done = false;
+      let buffer = "";
+      while (!done) {
+        const { value, done: readerDone } = await reader.read();
+        done = readerDone;
+        if (value) {
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split('\n\n');
+          buffer = parts.pop() || ""; // keep the last incomplete chunk in the buffer
+          
+          for (const part of parts) {
+            const dataPrefix = "data: ";
+            if (part.startsWith(dataPrefix)) {
+              try {
+                const dataStr = part.substring(dataPrefix.length).trim();
+                if (!dataStr) continue;
+                const data = JSON.parse(dataStr);
+                if (data.type === 'log') {
+                  setStreamLogs(prev => [...prev, data.message]);
+                } else if (data.type === 'result') {
+                  setResults(data.data);
+                } else if (data.type === 'error') {
+                  setError(data.message);
+                }
+              } catch (e) {
+                console.error("Error parsing SSE JSON:", e, part);
+              }
+            }
+          }
+        }
+      }
+      
     } catch (err: any) {
       setError(err.message || "An error occurred");
     } finally {
@@ -274,6 +311,28 @@ export default function Home() {
           ) : (
             <p className="text-secondary">No trades generated for this strategy during the 5-year period.</p>
           )}
+        </div>
+      )}
+
+      {streamLogs.length > 0 && !results && (
+        <div className="glass-panel mb-4" style={{ backgroundColor: '#0f172a', border: '1px solid #334155' }}>
+          <h2 style={{ margin: '0 0 12px 0', fontSize: '16px', color: '#38bdf8' }}>Live Engine Progress</h2>
+          <div style={{ 
+            maxHeight: '300px', 
+            overflowY: 'auto', 
+            fontFamily: 'monospace', 
+            fontSize: '13px', 
+            color: '#94a3b8',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '4px'
+          }}>
+            {streamLogs.map((log, i) => (
+              <div key={i}>
+                 <span style={{color: '#64748b'}}>[{new Date().toLocaleTimeString()}]</span> {log}
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
