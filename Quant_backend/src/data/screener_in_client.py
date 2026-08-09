@@ -1,6 +1,7 @@
 import asyncio
 from playwright.async_api import async_playwright
 import logging
+import random
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +64,17 @@ async def fetch_screener_fundamentals(symbol: str) -> dict:
             if investors_table:
                 fundamentals["investors"] = investors_table
                 
+            if not fundamentals["ratios"]:
+                title = await page.title()
+                html = await page.content()
+                print(f"DEBUG {symbol} - Ratios empty! Title: {title}")
+                with open(f"/Users/rushabhkhandhar/Desktop/Trading/finvison_tech_analysis/Quant_backend/outputs/debug_{symbol}.html", "w") as f:
+                    f.write(html)
+                    
             await browser.close()
+            
+            # Anti-bot rate limit delay
+            await asyncio.sleep(random.uniform(2.0, 4.0))
             
     except Exception as e:
         logger.error(f"Error fetching fundamentals for {symbol} from screener.in: {e}")

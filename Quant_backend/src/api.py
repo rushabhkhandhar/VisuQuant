@@ -1,9 +1,12 @@
 from fastapi import FastAPI, BackgroundTasks
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 import os
 import sys
 import shutil
+import queue
+import threading
+import json
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
@@ -44,6 +47,38 @@ def trigger_screener(req: ScreenerRequest):
     # We use dry_run=True so it doesn't trigger side effects, just returns the data
     results = run_screener(as_of_date=as_of_date, dry_run=True, top_n=req.top_n, check_regime=True)
     return results
+
+@app.post("/api/screener_stream")
+def trigger_screener_stream(req: ScreenerRequest):
+    as_of_date = None
+    if req.date:
+        as_of_date = datetime.strptime(req.date, "%Y-%m-%d").date()
+
+    q = queue.Queue()
+
+    def progress_callback(msg):
+        q.put({"type": "log", "message": msg})
+
+    def run_engine():
+        try:
+            results = run_screener(as_of_date=as_of_date, dry_run=True, top_n=req.top_n, check_regime=True, progress_callback=progress_callback)
+            q.put({"type": "result", "data": results})
+        except Exception as e:
+            q.put({"type": "error", "message": str(e)})
+        finally:
+            q.put(None)  # Sentinel to stop stream
+
+    thread = threading.Thread(target=run_engine)
+    thread.start()
+
+    def event_generator():
+        while True:
+            item = q.get()
+            if item is None:
+                break
+            yield f"data: {json.dumps(item, default=str)}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 @app.get("/api/health")
 def health_check():

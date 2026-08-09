@@ -24,21 +24,29 @@ from src.screener.screens.connors_rsi_fade import connors_rsi_fade
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5, check_regime: bool = False) -> Dict[str, Any]:
+def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5, check_regime: bool = False, progress_callback=None) -> Dict[str, Any]:
+    def log_progress(msg, level="INFO"):
+        if level == "WARNING":
+            logger.warning(msg)
+        else:
+            logger.info(msg)
+        if progress_callback:
+            progress_callback(msg)
+
     current_regime = "UNKNOWN"
     if as_of_date is None:
         as_of_date = date.today()
         
-    logger.info(f"--- Starting Daily Quantitative Screen for {as_of_date} ---")
+    log_progress(f"--- Starting Daily Quantitative Screen for {as_of_date} ---")
     
     # 1. Load Universe
     universe = load_nifty500_symbols()
         
     initial_count = len(universe)
-    logger.info(f"Loaded initial universe: {initial_count} symbols.")
+    log_progress(f"Loaded initial universe: {initial_count} symbols.")
     
     if check_regime:
-        logger.info("Checking current market regime (NIFTYBEES)...")
+        log_progress("Checking current market regime (NIFTYBEES)...")
         bulk_data_nifty = fetch_bulk_history(["NIFTYBEES"], as_of_date, lookback_days=100)
         nifty = bulk_data_nifty.get("NIFTYBEES")
         if nifty is not None and not nifty.empty and len(nifty) >= 50:
@@ -56,28 +64,28 @@ def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5,
             else:
                 current_regime = "CHOPPY (Neutral)"
                 
-            logger.info("=========================================")
-            logger.info(f"   MARKET REGIME: {current_regime}   ")
-            logger.info("=========================================")
+            log_progress("=========================================")
+            log_progress(f"   MARKET REGIME: {current_regime}   ")
+            log_progress("=========================================")
         else:
-            logger.warning("Could not fetch sufficient NIFTYBEES data to determine regime.")
+            log_progress("Could not fetch sufficient NIFTYBEES data to determine regime.", level="WARNING")
     
     is_bearish_regime = "TRENDING DOWN" in current_regime
     if is_bearish_regime:
-        logger.info("Bearish Regime Detected: Pipeline switching to SHORT strategies (Stage 4, Junk Fundamentals).")
+        log_progress("Bearish Regime Detected: Pipeline switching to SHORT strategies (Stage 4, Junk Fundamentals).")
     
     # 2. Liquidity Pre-Filter
-    logger.info(f"Applying Liquidity Filter (>= {config.LIQUIDITY_MIN_VALUE_CR} Cr/day)...")
+    log_progress(f"Applying Liquidity Filter (>= {config.LIQUIDITY_MIN_VALUE_CR} Cr/day)...")
     liquid_symbols = filter_by_liquidity(universe, config.LIQUIDITY_MIN_VALUE_CR, as_of_date)
     liquidity_count = len(liquid_symbols)
-    logger.info(f"Liquidity Survivors: {liquidity_count} symbols.")
+    log_progress(f"Liquidity Survivors: {liquidity_count} symbols.")
     
     if liquidity_count == 0:
-        logger.warning("Pipeline halted: 0 symbols survived liquidity filter.")
+        log_progress("Pipeline halted: 0 symbols survived liquidity filter.", level="WARNING")
         return []
         
     # Fetch historical data for all liquid survivors (need ~300 days for 200 SMA + BB lookback)
-    logger.info("Fetching bulk historical data for liquid universe (~300 days)...")
+    log_progress("Fetching bulk historical data for liquid universe (~300 days)...")
     bulk_data = fetch_bulk_history(liquid_symbols, as_of_date, lookback_days=300)
     
     import numpy as np
@@ -88,7 +96,7 @@ def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5,
     cond_counts = {"c1": 0, "c2": 0, "c3": 0, "c5": 0, "all_trend": 0}
     
     if config.STAGE1_FILTER_ENABLED:
-        logger.info("Running Stage 1: Minervini VCP Trend Template...")
+        log_progress("Running Stage 1: Minervini VCP Trend Template...")
         
         for symbol, df in bulk_data.items():
             if df.empty:
@@ -112,55 +120,55 @@ def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5,
                     "trend_metrics": trend_metrics
                 }
                 
-        logger.info("--- VCP Diagnostic Counts ---")
-        logger.info(f"C1 (SMA Stack): {cond_counts['c1']} passed")
-        logger.info(f"C2 (200 SMA Up): {cond_counts['c2']} passed")
-        logger.info(f"C3 (Near 52W High): {cond_counts['c3']} passed")
-        logger.info(f"C5 (Vol Dry Up): {cond_counts['c5']} passed")
-        logger.info(f"Passed All Core Trend: {cond_counts['all_trend']} passed")
+        log_progress("--- VCP Diagnostic Counts ---")
+        log_progress(f"C1 (SMA Stack): {cond_counts['c1']} passed")
+        log_progress(f"C2 (200 SMA Up): {cond_counts['c2']} passed")
+        log_progress(f"C3 (Near 52W High): {cond_counts['c3']} passed")
+        log_progress(f"C5 (Vol Dry Up): {cond_counts['c5']} passed")
+        log_progress(f"Passed All Core Trend: {cond_counts['all_trend']} passed")
         
         # Cross-sectional ATR filtration
         if pre_atr_survivors:
             atr_ratios = [data["trend_metrics"]["atr_ratio"] for data in pre_atr_survivors.values()]
             dynamic_cutoff = np.percentile(atr_ratios, config.ATR_CONTRACTION_PERCENTILE)
-            logger.info(f"Dynamic ATR Threshold (Bottom {config.ATR_CONTRACTION_PERCENTILE}% of {len(atr_ratios)} survivors): {dynamic_cutoff:.2f}")
+            log_progress(f"Dynamic ATR Threshold (Bottom {config.ATR_CONTRACTION_PERCENTILE}% of {len(atr_ratios)} survivors): {dynamic_cutoff:.2f}")
             
             for symbol, data in pre_atr_survivors.items():
                 if data["trend_metrics"]["atr_ratio"] <= dynamic_cutoff:
                     stage1_survivors[symbol] = data
     else:
-        logger.info("Skipping Stage 1 (VCP Trend Template) as STAGE1_FILTER_ENABLED is False.")
+        log_progress("Skipping Stage 1 (VCP Trend Template) as STAGE1_FILTER_ENABLED is False.")
         for symbol, df in bulk_data.items():
             if not df.empty:
                 stage1_survivors[symbol] = {"df": df, "trend_metrics": {}}
                 
     stage1_count = len(stage1_survivors)
     if config.STAGE1_FILTER_ENABLED:
-        logger.info(f"Stage 1 Final (Post-ATR) Survivors: {stage1_count} symbols.")
+        log_progress(f"Stage 1 Final (Post-ATR) Survivors: {stage1_count} symbols.")
     else:
-        logger.info(f"Candidates bypassing Stage 1: {stage1_count} symbols.")
+        log_progress(f"Candidates bypassing Stage 1: {stage1_count} symbols.")
     
     if stage1_count == 0:
-        logger.warning("Pipeline halted: 0 symbols survived Stage 1.")
+        log_progress("Pipeline halted: 0 symbols survived Stage 1.", level="WARNING")
         return []
         
     # --- STAGE 1.5: Fundamental Quality Filter ---
-    logger.info("Running Stage 1.5: Fundamental Quality (Screener.in)...")
+    log_progress("Running Stage 1.5: Fundamental Quality (Screener.in)...")
     stage1_5_survivors = {}
     for symbol, data in stage1_survivors.items():
-        logger.info(f"Checking fundamentals for {symbol}...")
+        log_progress(f"Checking fundamentals for {symbol}...")
         f_eval = evaluate_fundamentals_short(symbol) if is_bearish_regime else evaluate_fundamentals(symbol)
         if f_eval.get("passed"):
-            logger.info(f"  [PASS] {symbol}: ROE {f_eval.get('roe')}%, OP Growth {f_eval.get('op_growth')}, Inst Buying {f_eval.get('inst_buying')}")
+            log_progress(f"  [PASS] {symbol}: ROE {f_eval.get('roe')}%, OP Growth {f_eval.get('op_growth')}, Inst Buying {f_eval.get('inst_buying')}")
             stage1_5_survivors[symbol] = data
         else:
-            logger.info(f"  [FAIL] {symbol}: {', '.join(f_eval.get('reasons', []))}")
+            log_progress(f"  [FAIL] {symbol}: {', '.join(f_eval.get('reasons', []))}")
             
     stage1_5_count = len(stage1_5_survivors)
-    logger.info(f"Stage 1.5 Final Survivors: {stage1_5_count} symbols.")
+    log_progress(f"Stage 1.5 Final Survivors: {stage1_5_count} symbols.")
     
     if stage1_5_count == 0:
-        logger.warning("Pipeline halted: 0 symbols survived Stage 1.5.")
+        log_progress("Pipeline halted: 0 symbols survived Stage 1.5.", level="WARNING")
         return []
         
     # 4 & 5. Stage 2: Trigger Layer & Fib Confluence
@@ -171,7 +179,7 @@ def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5,
     else:
         base_regime = "CHOPPY"
         
-    logger.info(f"Running Stage 2: Trigger Layer (Dynamic Regime: {base_regime})...")
+    log_progress(f"Running Stage 2: Trigger Layer (Dynamic Regime: {base_regime})...")
     
     active_config = config.REGIME_STRATEGIES.get(base_regime, {}).get("active", [])
     watchlist_config = config.REGIME_STRATEGIES.get(base_regime, {}).get("watchlist", [])
@@ -385,7 +393,7 @@ def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5,
             })
         
     final_count = len(final_candidates)
-    logger.info(f"Stage 2 (Trigger Layer) Survivors: {final_count} symbols.")
+    log_progress(f"Stage 2 (Trigger Layer) Survivors: {final_count} symbols.")
     
     # 7. Sort by score descending and return top N
     final_candidates.sort(key=lambda x: x["score"], reverse=True)
@@ -393,7 +401,7 @@ def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5,
     
     # 8. Enrich top candidates with 5-Year Historical Backtest
     if top_candidates:
-        logger.info(f"Running 5-Year historical backtest for top {len(top_candidates)} candidates...")
+        log_progress(f"Running 5-Year historical backtest for top {len(top_candidates)} candidates...")
         from src.screener.pipeline.backtest import run_backtest
         for cand in top_candidates:
             try:
@@ -404,20 +412,20 @@ def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5,
                 cand["metrics"]["backtest"] = {}
     
     # Log funnel summary
-    logger.info("=========================================")
-    logger.info("           SCREENER FUNNEL SUMMARY       ")
-    logger.info("=========================================")
-    logger.info(f"Initial Universe:     {initial_count}")
-    logger.info(f"Liquidity Filter:     {liquidity_count}")
-    logger.info(f"Stage 1 (VCP Trend):  {stage1_count}")
-    logger.info(f"Stage 1.5 (Fundmnt):  {stage1_5_count}")
-    logger.info(f"Stage 2 (Triggers):   {len(final_candidates)}")
-    logger.info("=========================================")
+    log_progress("=========================================")
+    log_progress("           SCREENER FUNNEL SUMMARY       ")
+    log_progress("=========================================")
+    log_progress(f"Initial Universe:     {initial_count}")
+    log_progress(f"Liquidity Filter:     {liquidity_count}")
+    log_progress(f"Stage 1 (VCP Trend):  {stage1_count}")
+    log_progress(f"Stage 1.5 (Fundmnt):  {stage1_5_count}")
+    log_progress(f"Stage 2 (Triggers):   {len(final_candidates)}")
+    log_progress("=========================================")
     
     if not dry_run:
-        logger.info(f"Top {len(top_candidates)} Candidates:")
+        log_progress(f"Top {len(top_candidates)} Candidates:")
         for rank, cand in enumerate(top_candidates, 1):
-            logger.info(f"#{rank} {cand['symbol']} - Score: {cand['score']} - Trigger: {cand['trigger_type']}")
+            log_progress(f"#{rank} {cand['symbol']} - Score: {cand['score']} - Trigger: {cand['trigger_type']}")
             
         if watchlist_candidates:
             watchlist_file = f"watchlist_{as_of_date}.txt"
@@ -427,7 +435,7 @@ def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5,
                     f.write("="*40 + "\n")
                     for cand in watchlist_candidates:
                         f.write(f"- {cand['symbol']} ({cand['trigger_type']})\n")
-                logger.info(f"Saved {len(watchlist_candidates)} watchlist candidates to {watchlist_file}")
+                log_progress(f"Saved {len(watchlist_candidates)} watchlist candidates to {watchlist_file}")
             except Exception as e:
                 logger.error(f"Failed to write watchlist file: {e}")
             
