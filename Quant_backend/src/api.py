@@ -34,6 +34,11 @@ class ScreenerRequest(BaseModel):
     date: Optional[str] = None # format: YYYY-MM-DD
     top_n: int = 5
 
+class CustomScreenerRequest(BaseModel):
+    date: Optional[str] = None # format: YYYY-MM-DD
+    top_n: int = 20
+    trading_tools: list[str] = []
+
 class BacktestRequest(BaseModel):
     symbol: str
     months: int = 60
@@ -62,6 +67,44 @@ def trigger_screener_stream(req: ScreenerRequest):
     def run_engine():
         try:
             results = run_screener(as_of_date=as_of_date, dry_run=True, top_n=req.top_n, check_regime=True, progress_callback=progress_callback)
+            q.put({"type": "result", "data": results})
+        except Exception as e:
+            q.put({"type": "error", "message": str(e)})
+        finally:
+            q.put(None)  # Sentinel to stop stream
+
+    thread = threading.Thread(target=run_engine)
+    thread.start()
+
+    def event_generator():
+        while True:
+            item = q.get()
+            if item is None:
+                break
+            yield f"data: {json.dumps(item, default=str)}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+@app.post("/api/custom_screener_stream")
+def trigger_custom_screener_stream(req: CustomScreenerRequest):
+    as_of_date = None
+    if req.date:
+        as_of_date = datetime.strptime(req.date, "%Y-%m-%d").date()
+
+    q = queue.Queue()
+
+    def progress_callback(msg, level="INFO"):
+        q.put({"type": "log", "message": msg, "level": level})
+
+    def run_engine():
+        from src.screener.pipeline.run_custom_screen import run_custom_screener
+        try:
+            results = run_custom_screener(
+                as_of_date=as_of_date, 
+                trading_tools=req.trading_tools, 
+                top_n=req.top_n, 
+                progress_callback=progress_callback
+            )
             q.put({"type": "result", "data": results})
         except Exception as e:
             q.put({"type": "error", "message": str(e)})
@@ -154,5 +197,4 @@ def run_strategy_backtest(req: BacktestRequest):
 
 if __name__ == "__main__":
     import uvicorn
-    # When run directly with 'python3 src/api.py', start the server
     uvicorn.run("src.api:app", host="0.0.0.0", port=5000, reload=True)

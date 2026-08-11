@@ -10,6 +10,15 @@ export default function Home() {
   const [streamLogs, setStreamLogs] = useState<string[]>([]);
   const [expandedPeerRow, setExpandedPeerRow] = useState<number | null>(null);
   
+  // Custom Screener State
+  const [selectedTools, setSelectedTools] = useState<string[]>([]);
+  const [customLoading, setCustomLoading] = useState(false);
+  const [customError, setCustomError] = useState("");
+  
+  const AVAILABLE_TOOLS = [
+    "Trendline", "S&R", "Market Structure", "Chart Patterns", 
+    "Candle stick patterns", "VWAP", "Moving Avg", "RSI", "MACD"
+  ];
   // Direct Analysis State
   const [directTicker, setDirectTicker] = useState("");
   const [directLoading, setDirectLoading] = useState(false);
@@ -23,6 +32,79 @@ export default function Home() {
   
   // Table Analysis State
   const [analysisStatus, setAnalysisStatus] = useState<Record<string, {loading: boolean, url?: string, error?: string}>>({});
+
+  const toggleTool = (tool: string) => {
+    if (selectedTools.includes(tool)) {
+      setSelectedTools(selectedTools.filter(t => t !== tool));
+    } else {
+      setSelectedTools([...selectedTools, tool]);
+    }
+  };
+
+  const runCustomScreener = async () => {
+    if (selectedTools.length === 0) {
+      setCustomError("Please select at least one trading tool.");
+      return;
+    }
+    setCustomLoading(true);
+    setCustomError("");
+    setResults(null);
+    setStreamLogs([]);
+    
+    try {
+      const payload = date ? { date, top_n: 20, trading_tools: selectedTools } : { top_n: 20, trading_tools: selectedTools };
+      const res = await fetch("http://localhost:5000/api/custom_screener_stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      
+      if (!res.ok) {
+        throw new Error("Failed to fetch data from custom engine");
+      }
+      
+      if (!res.body) throw new Error("ReadableStream not supported in this browser.");
+      
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      
+      let done = false;
+      let buffer = "";
+      while (!done) {
+        const { value, done: readerDone } = await reader.read();
+        done = readerDone;
+        if (value) {
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split("\n\n");
+          buffer = parts.pop() || "";
+          
+          for (const part of parts) {
+            const dataPrefix = "data: ";
+            if (part.startsWith(dataPrefix)) {
+              try {
+                const dataStr = part.substring(dataPrefix.length).trim();
+                if (!dataStr) continue;
+                const data = JSON.parse(dataStr);
+                if (data.type === 'log') {
+                  setStreamLogs(prev => [...prev, data.message]);
+                } else if (data.type === 'result') {
+                  setResults(data.data);
+                } else if (data.type === 'error') {
+                  setCustomError(data.message);
+                }
+              } catch (e) {
+                console.error("Error parsing SSE JSON:", e, part);
+              }
+            }
+          }
+        }
+      }
+    } catch (err: any) {
+      setCustomError(err.message || "An error occurred");
+    } finally {
+      setCustomLoading(false);
+    }
+  };
 
   const runScreener = async () => {
     setLoading(true);
@@ -168,7 +250,7 @@ export default function Home() {
       <div className="glass-panel mb-4">
         <h2 style={{ margin: '0 0 16px 0', fontSize: '20px' }}>Control Panel</h2>
         
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', marginBottom: '24px' }}>
           {/* Screener Section */}
           <div style={{ padding: '16px', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)' }}>
             <h3 style={{ margin: '0 0 12px 0', fontSize: '16px', color: 'var(--accent-cyan)' }}>1. Quantitative Screener</h3>
@@ -243,6 +325,46 @@ export default function Home() {
             {directError && <p className="text-danger mt-4" style={{ fontSize: '14px' }}>{directError}</p>}
             {backtestError && <p className="text-danger mt-4" style={{ fontSize: '14px' }}>{backtestError}</p>}
           </div>
+        </div>
+
+        {/* Custom Strategy Builder Section */}
+        <div style={{ padding: '16px', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)' }}>
+          <h3 style={{ margin: '0 0 12px 0', fontSize: '16px', color: '#c084fc' }}>3. Custom Strategy Builder</h3>
+          <p className="text-secondary" style={{ fontSize: '14px', marginBottom: '16px' }}>Select multiple trading tools to construct a custom scan (stocks must pass all selected tools).</p>
+          
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginBottom: '16px' }}>
+            {AVAILABLE_TOOLS.map(tool => (
+              <button
+                key={tool}
+                onClick={() => toggleTool(tool)}
+                style={{
+                  padding: '8px 16px',
+                  borderRadius: '20px',
+                  border: `1px solid ${selectedTools.includes(tool) ? '#c084fc' : 'rgba(255,255,255,0.1)'}`,
+                  background: selectedTools.includes(tool) ? 'rgba(192,132,252,0.15)' : 'transparent',
+                  color: selectedTools.includes(tool) ? '#c084fc' : 'var(--text-secondary)',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s',
+                  fontSize: '13px',
+                  fontWeight: selectedTools.includes(tool) ? 600 : 400,
+                }}
+              >
+                {tool}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex gap-4">
+            <button 
+              className="btn-primary" 
+              onClick={runCustomScreener}
+              disabled={customLoading}
+              style={{ borderColor: '#c084fc', color: '#c084fc', boxShadow: '0 0 10px rgba(192, 132, 252, 0.2)' }}
+            >
+              {customLoading ? <span className="loader" style={{ borderTopColor: '#c084fc' }}></span> : '🛠️'} {customLoading ? 'Scanning...' : 'Run Custom Strategy'}
+            </button>
+          </div>
+          {customError && <p className="text-danger mt-4" style={{ fontSize: '14px' }}>{customError}</p>}
         </div>
       </div>
 
