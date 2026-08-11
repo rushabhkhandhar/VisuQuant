@@ -12,6 +12,7 @@ export default function Home() {
   
   // Custom Screener State
   const [selectedTools, setSelectedTools] = useState<string[]>([]);
+  const [selectedFilters, setSelectedFilters] = useState<string[]>([]);
   const [customLoading, setCustomLoading] = useState(false);
   const [customError, setCustomError] = useState("");
   const [riskOption, setRiskOption] = useState("ATR 1.5");
@@ -22,6 +23,10 @@ export default function Home() {
   const AVAILABLE_TOOLS = [
     "Trendline", "S&R", "Market Structure", "Chart Patterns", 
     "Candle stick patterns", "VWAP", "Moving Avg", "RSI", "MACD"
+  ];
+  const AVAILABLE_FILTERS = [
+    "Require RR >= 1:2", "Exclude Flat VWAP", 
+    "Require High Liquidity (>100k Vol)", "Exclude High Volatility (ATR > 5%)"
   ];
   // Direct Analysis State
   const [directTicker, setDirectTicker] = useState("");
@@ -42,6 +47,14 @@ export default function Home() {
       setSelectedTools(selectedTools.filter(t => t !== tool));
     } else {
       setSelectedTools([...selectedTools, tool]);
+    }
+  };
+
+  const toggleFilter = (filter: string) => {
+    if (selectedFilters.includes(filter)) {
+      setSelectedFilters(selectedFilters.filter(f => f !== filter));
+    } else {
+      setSelectedFilters([...selectedFilters, filter]);
     }
   };
 
@@ -66,7 +79,7 @@ export default function Home() {
     setStreamLogs([]);
     
     try {
-      const payload: any = { top_n: 20, trading_tools: selectedTools, risk_management: finalRisk };
+      const payload: any = { top_n: 20, trading_tools: selectedTools, trading_filters: selectedFilters, risk_management: finalRisk };
       if (date) payload.date = date;
       if (aiLogicPrompt) {
         payload.ai_logic_prompt = aiLogicPrompt;
@@ -370,6 +383,29 @@ export default function Home() {
                 }}
               >
                 {tool}
+              </button>
+            ))}
+          </div>
+
+          <h3 style={{ fontSize: '14px', margin: '0 0 12px 0', color: '#60a5fa' }}>🛡️ Trading Filters</h3>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '24px' }}>
+            {AVAILABLE_FILTERS.map((filter) => (
+              <button 
+                key={filter}
+                onClick={() => toggleFilter(filter)}
+                style={{
+                  padding: '8px 16px',
+                  borderRadius: '20px',
+                  border: `1px solid ${selectedFilters.includes(filter) ? '#60a5fa' : 'rgba(255,255,255,0.1)'}`,
+                  background: selectedFilters.includes(filter) ? 'rgba(96,165,250,0.15)' : 'transparent',
+                  color: selectedFilters.includes(filter) ? '#60a5fa' : 'var(--text-secondary)',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s',
+                  fontSize: '13px',
+                  fontWeight: selectedFilters.includes(filter) ? 600 : 400,
+                }}
+              >
+                {filter}
               </button>
             ))}
           </div>

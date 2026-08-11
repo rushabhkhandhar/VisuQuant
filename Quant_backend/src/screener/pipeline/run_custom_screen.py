@@ -207,6 +207,7 @@ def evaluate_custom_tools(df: pd.DataFrame, tools: List[str]) -> dict:
 def run_custom_screener(
     as_of_date: date = None, 
     trading_tools: List[str] = None, 
+    trading_filters: List[str] = None,
     risk_management: str = "ATR 1.5", 
     ai_logic_prompt: str = None,
     gemini_api_key: str = None,
@@ -217,6 +218,8 @@ def run_custom_screener(
         as_of_date = date.today()
     if trading_tools is None:
         trading_tools = []
+    if trading_filters is None:
+        trading_filters = []
         
     def log_progress(msg, level="INFO"):
         if level == "WARNING":
@@ -311,17 +314,46 @@ def run_custom_screener(
             risk_per_trade = 2000
             qty = max(1, int(risk_per_trade / risk_amount)) if risk_amount > 0 else 0
             
-            candidates.append({
-                "symbol": symbol,
-                "score": eval_result["score"],
-                "trigger_type": eval_result["trigger_type"],
-                "entry_price": round(entry_price, 2),
-                "target": round(target, 2),
-                "stop_loss": round(stop_loss, 2),
-                "position_size": qty,
-                "trend_status": "Custom Match",
-                "peers": []  # Empty for custom for now
-            })
+            # Evaluate Trading Filters
+            filters_passed = True
+            for filter_name in trading_filters:
+                if filter_name == "Require RR >= 1:2":
+                    if risk_amount <= 0 or ((target - entry_price) / risk_amount) < 2.0:
+                        filters_passed = False
+                        break
+                elif filter_name == "Exclude Flat VWAP":
+                    if len(df) >= 5:
+                        # Simple VWAP proxy over 5 days
+                        recent = df.tail(5)
+                        vwap_now = (recent['Volume'] * ((recent['High'] + recent['Low'] + recent['Close']) / 3)).sum() / (recent['Volume'].sum() + 1e-9)
+                        past = df.iloc[-10:-5]
+                        if not past.empty:
+                            vwap_past = (past['Volume'] * ((past['High'] + past['Low'] + past['Close']) / 3)).sum() / (past['Volume'].sum() + 1e-9)
+                            if vwap_past > 0 and abs((vwap_now - vwap_past) / vwap_past) < 0.01:
+                                filters_passed = False
+                                break
+                elif filter_name == "Require High Liquidity (>100k Vol)":
+                    avg_vol = df['Volume'].rolling(20).mean().iloc[-1]
+                    if pd.isna(avg_vol) or avg_vol < 100000:
+                        filters_passed = False
+                        break
+                elif filter_name == "Exclude High Volatility (ATR > 5%)":
+                    if pd.isna(atr) or (atr / entry_price) > 0.05:
+                        filters_passed = False
+                        break
+            
+            if filters_passed:
+                candidates.append({
+                    "symbol": symbol,
+                    "score": eval_result["score"],
+                    "trigger_type": eval_result["trigger_type"],
+                    "entry_price": round(entry_price, 2),
+                    "target": round(target, 2),
+                    "stop_loss": round(stop_loss, 2),
+                    "position_size": qty,
+                    "trend_status": "Custom Match",
+                    "peers": []  # Empty for custom for now
+                })
             
     # Sort by score
     candidates.sort(key=lambda x: x["score"], reverse=True)

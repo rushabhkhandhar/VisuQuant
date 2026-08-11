@@ -38,6 +38,7 @@ class CustomScreenerRequest(BaseModel):
     date: Optional[str] = None # format: YYYY-MM-DD
     top_n: int = 20
     trading_tools: list[str] = []
+    trading_filters: list[str] = []
     risk_management: str = "1.5x ATR"
     ai_logic_prompt: Optional[str] = None
     gemini_api_key: Optional[str] = None
@@ -105,6 +106,7 @@ def trigger_custom_screener_stream(req: CustomScreenerRequest):
             results = run_custom_screener(
                 as_of_date=as_of_date, 
                 trading_tools=req.trading_tools,
+                trading_filters=req.trading_filters,
                 risk_management=req.risk_management,
                 ai_logic_prompt=req.ai_logic_prompt,
                 gemini_api_key=req.gemini_api_key,
