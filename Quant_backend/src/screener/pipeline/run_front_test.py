@@ -24,6 +24,9 @@ os.makedirs(FRONT_TEST_DIR, exist_ok=True)
 STATE_FILE = os.path.join(FRONT_TEST_DIR, "active_trades.json")
 METRICS_FILE = os.path.join(FRONT_TEST_DIR, "metrics.csv")
 
+# Global dict to track benchmark relative strength
+BENCHMARK_RETURNS = {"20d": 0.0, "60d": 0.0}
+
 def trend_pullback_eval(df):
     if len(df) < 200:
         return {"passed": False, "reasons": ["Not enough data for 200 SMA"]}
@@ -230,6 +233,55 @@ def volatility_compression_eval(df):
         
     return {"passed": True, "score": 1.0, "trigger_type": "Volatility Compression Breakout"}
 
+def relative_strength_eval(df):
+    if len(df) < 200:
+        return {"passed": False, "reasons": ["Not enough data for 200 SMA"]}
+        
+    close = df['Close'].iloc[-1]
+    
+    # 1. & 2. TRENDS
+    sma200 = df['Close'].rolling(window=200).mean().iloc[-1]
+    ema50 = df['Close'].ewm(span=50, adjust=False).mean().iloc[-1]
+    ema20 = df['Close'].ewm(span=20, adjust=False).mean().iloc[-1]
+    
+    if not (close > sma200 and ema50 > sma200 and ema20 > ema50):
+        return {"passed": False, "reasons": ["Trend not aligned"]}
+        
+    # 3. ABSOLUTE MOMENTUM
+    close_20 = df['Close'].iloc[-21] if len(df) > 20 else df['Close'].iloc[0]
+    close_60 = df['Close'].iloc[-61] if len(df) > 60 else df['Close'].iloc[0]
+    
+    ret_20 = (close - close_20) / close_20
+    ret_60 = (close - close_60) / close_60
+    
+    if ret_20 <= 0 or ret_60 <= 0:
+        return {"passed": False, "reasons": ["Negative absolute momentum"]}
+        
+    # 4. RELATIVE MOMENTUM
+    if ret_20 <= BENCHMARK_RETURNS.get("20d", 0) or ret_60 <= BENCHMARK_RETURNS.get("60d", 0):
+        return {"passed": False, "reasons": ["Underperforming benchmark"]}
+        
+    # 5. RSI
+    rsi = talib.RSI(df['Close'], timeperiod=14).iloc[-1]
+    if not (55 <= rsi <= 70):
+        return {"passed": False, "reasons": [f"RSI {rsi:.2f} not in (55, 70)"]}
+        
+    # 7. VOLUME (Ensure reasonable volume)
+    vol_sma20 = df['Volume'].rolling(20).mean().iloc[-1]
+    if df['Volume'].iloc[-1] < vol_sma20 * 0.8:
+        return {"passed": False, "reasons": ["Low relative volume"]}
+        
+    # 8. AVOID EXTENSION
+    if close > ema20 * 1.10:
+        return {"passed": False, "reasons": ["Overextended >10% from 20 EMA"]}
+        
+    # 9. VOLATILITY
+    atr = (df['High'] - df['Low']).rolling(14).mean().iloc[-1]
+    if atr / close > 0.05:
+        return {"passed": False, "reasons": ["ATR > 5%"]}
+        
+    return {"passed": True, "score": 1.0, "trigger_type": "Relative Strength Momentum"}
+
 # Define strategies here.
 STRATEGIES = [
     {
@@ -274,6 +326,18 @@ STRATEGIES = [
         "ai_logic_prompt": None,
         "ai_filter_prompt": None,
         "precompiled_eval_func": volatility_compression_eval
+    },
+    {
+        "name": "Relative Strength",
+        "description": "NIFTY 500 stocks demonstrating persistent absolute and relative momentum against the broader market.",
+        "trading_tools": [],
+        "trading_filters": [
+            "Require High Liquidity (>100k Vol)"
+        ],
+        "risk_management": "ATR 1.5",
+        "ai_logic_prompt": None,
+        "ai_filter_prompt": None,
+        "precompiled_eval_func": relative_strength_eval
     }
 ]
 
@@ -302,7 +366,14 @@ def save_state(trades):
 def get_market_regime(as_of_date):
     bulk_data = fetch_bulk_history(["NIFTYBEES"], as_of_date, lookback_days=100)
     nifty = bulk_data.get("NIFTYBEES")
-    if nifty is not None and not nifty.empty and len(nifty) >= 50:
+    if nifty is not None and not nifty.empty and len(nifty) >= 60:
+        # Calculate benchmark returns globally
+        close_0 = nifty['Close'].iloc[-1]
+        close_20 = nifty['Close'].iloc[-21] if len(nifty) > 20 else nifty['Close'].iloc[0]
+        close_60 = nifty['Close'].iloc[-61] if len(nifty) > 60 else nifty['Close'].iloc[0]
+        BENCHMARK_RETURNS["20d"] = (close_0 - close_20) / close_20
+        BENCHMARK_RETURNS["60d"] = (close_0 - close_60) / close_60
+        
         sma_50 = nifty["Close"].rolling(50).mean()
         sma_50_diff = sma_50.diff()
         
