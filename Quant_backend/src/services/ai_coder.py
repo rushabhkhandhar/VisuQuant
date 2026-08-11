@@ -32,6 +32,25 @@ def custom_ai_eval(df):
     return {"passed": False, "reasons": ["Close is below 50 SMA"]}
 """
 
+FILTER_SYSTEM_PROMPT = """
+You are an expert Quantitative Developer. Your job is to translate a user's natural language trading filter into a valid Python function.
+
+REQUIREMENTS:
+1. You MUST output EXACTLY ONE Python function named `custom_ai_filter(df: pd.DataFrame, entry_price: float, target: float, stop_loss: float, atr: float) -> dict`.
+2. Do NOT output any markdown blocks like ```python. Just output the raw python code.
+3. The function MUST return a dictionary: `{"passed": bool, "reasons": []}`.
+4. You may use `import pandas as pd` or `import numpy as np` if needed.
+
+Example Output:
+def custom_ai_filter(df, entry_price, target, stop_loss, atr):
+    risk = entry_price - stop_loss
+    reward = target - entry_price
+    if risk <= 0: return {"passed": False, "reasons": ["Invalid risk"]}
+    if (reward / risk) >= 3.0:
+        return {"passed": True, "reasons": []}
+    return {"passed": False, "reasons": ["RR is less than 3"]}
+"""
+
 def generate_pandas_logic(prompt: str, api_key: str = None) -> str:
     """
     Calls Gemini API to generate the custom python code, or falls back to local Ollama.
@@ -81,4 +100,48 @@ def generate_pandas_logic(prompt: str, api_key: str = None) -> str:
         return code.strip()
     except Exception as e:
         logger.error(f"Error generating AI logic: {e}")
+        raise e
+
+def generate_filter_logic(prompt: str, api_key: str = None) -> str:
+    """
+    Calls Gemini API to generate the custom filter code, or falls back to local Ollama.
+    """
+    try:
+        user_prompt = f"Write the Python logic for the following trading filter:\n{prompt}"
+        code = ""
+        
+        if api_key:
+            logger.info("Routing filter generation to Google Gemini API...")
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel('gemini-1.5-flash', system_instruction=FILTER_SYSTEM_PROMPT)
+            response = model.generate_content(
+                user_prompt,
+                generation_config=genai.types.GenerationConfig(temperature=0.0)
+            )
+            code = response.text
+        else:
+            logger.info("Routing filter generation to local Ollama (qwen2.5-coder)...")
+            ollama_url = "http://localhost:11434/api/generate"
+            payload = {
+                "model": "qwen2.5-coder",
+                "system": FILTER_SYSTEM_PROMPT,
+                "prompt": user_prompt,
+                "stream": False,
+                "options": {"temperature": 0.0}
+            }
+            try:
+                res = requests.post(ollama_url, json=payload, timeout=120)
+                res.raise_for_status()
+                code = res.json().get("response", "")
+            except requests.exceptions.RequestException as e:
+                raise ValueError(f"Ollama connection failed. Error: {e}")
+        
+        if "```python" in code:
+            code = code.split("```python")[1].split("```")[0].strip()
+        elif "```" in code:
+            code = code.split("```")[1].split("```")[0].strip()
+            
+        return code.strip()
+    except Exception as e:
+        logger.error(f"Error generating AI filter logic: {e}")
         raise e

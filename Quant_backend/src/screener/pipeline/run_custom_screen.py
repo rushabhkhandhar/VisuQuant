@@ -210,6 +210,7 @@ def run_custom_screener(
     trading_filters: List[str] = None,
     risk_management: str = "ATR 1.5", 
     ai_logic_prompt: str = None,
+    ai_filter_prompt: str = None,
     gemini_api_key: str = None,
     top_n: int = 20, 
     progress_callback=None
@@ -254,6 +255,26 @@ def run_custom_screener(
         except Exception as e:
             log_progress(f"Failed to compile AI logic: {e}", level="ERROR")
             # We don't crash, we just won't execute AI logic.
+
+    # 1b. Generate AI Filter Logic if provided
+    has_ai_filter = False
+    if ai_filter_prompt:
+        log_progress("Generating dynamic AI Filter Python logic...")
+        try:
+            from src.services.ai_coder import generate_filter_logic
+            generated_filter_code = generate_filter_logic(ai_filter_prompt, gemini_api_key)
+            log_progress(f"AI Filter generated code:\n{generated_filter_code}")
+            
+            isolated_globals_filter = {}
+            exec(generated_filter_code, isolated_globals_filter)
+            if "custom_ai_filter" not in isolated_globals_filter:
+                raise ValueError("LLM did not output a custom_ai_filter function.")
+                
+            custom_ai_filter_func = isolated_globals_filter["custom_ai_filter"]
+            has_ai_filter = True
+            log_progress("AI Filter Logic successfully compiled.")
+        except Exception as e:
+            log_progress(f"Failed to compile AI Filter logic: {e}", level="ERROR")
     
     universe = load_nifty500_symbols()
     log_progress(f"Loaded {len(universe)} symbols from NIFTY 500.")
@@ -341,6 +362,16 @@ def run_custom_screener(
                     if pd.isna(atr) or (atr / entry_price) > 0.05:
                         filters_passed = False
                         break
+            
+            # Evaluate Custom AI Filter
+            if filters_passed and has_ai_filter:
+                try:
+                    ai_filter_res = custom_ai_filter_func(df, entry_price, target, stop_loss, atr)
+                    if not ai_filter_res.get("passed", False):
+                        filters_passed = False
+                except Exception as e:
+                    filters_passed = False
+                    logger.debug(f"AI Filter crashed on {symbol}: {e}")
             
             if filters_passed:
                 candidates.append({

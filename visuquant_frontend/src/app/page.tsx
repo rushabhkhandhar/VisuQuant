@@ -18,6 +18,7 @@ export default function Home() {
   const [riskOption, setRiskOption] = useState("ATR 1.5");
   const [customRisk, setCustomRisk] = useState("");
   const [aiLogicPrompt, setAiLogicPrompt] = useState("");
+  const [aiFilterPrompt, setAiFilterPrompt] = useState("");
   const [geminiApiKey, setGeminiApiKey] = useState("");
   
   const AVAILABLE_TOOLS = [
@@ -83,6 +84,10 @@ export default function Home() {
       if (date) payload.date = date;
       if (aiLogicPrompt) {
         payload.ai_logic_prompt = aiLogicPrompt;
+        payload.gemini_api_key = geminiApiKey || null;
+      }
+      if (aiFilterPrompt) {
+        payload.ai_filter_prompt = aiFilterPrompt;
         payload.gemini_api_key = geminiApiKey || null;
       }
       
@@ -408,6 +413,20 @@ export default function Home() {
                 {filter}
               </button>
             ))}
+          </div>
+          
+          <div style={{ marginBottom: '16px', padding: '16px', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', border: '1px dashed rgba(255,255,255,0.1)' }}>
+            <h4 style={{ fontSize: '13px', margin: '0 0 8px 0', color: '#c084fc' }}>🤖 AI Custom Filter</h4>
+            <p style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '8px' }}>
+              Want to filter by custom risk parameters? (e.g. <i>"Exclude stocks where Risk {">"} 10% of Entry Price"</i>).
+            </p>
+            <textarea 
+              className="input-glass"
+              placeholder="Enter natural language filter rules..."
+              value={aiFilterPrompt}
+              onChange={(e) => setAiFilterPrompt(e.target.value)}
+              style={{ width: '100%', minHeight: '60px', padding: '10px', fontSize: '12px' }}
+            />
           </div>
 
           <div style={{ marginBottom: '16px', display: 'flex', gap: '16px', alignItems: 'center' }}>
