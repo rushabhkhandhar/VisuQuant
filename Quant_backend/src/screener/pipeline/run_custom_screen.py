@@ -232,8 +232,8 @@ def run_custom_screener(
     
     # 1. Generate AI Logic if provided
     has_ai_logic = False
-    if ai_logic_prompt and gemini_api_key:
-        log_progress("Generating dynamic AI Python logic via Gemini...")
+    if ai_logic_prompt:
+        log_progress("Generating dynamic AI Python logic...")
         try:
             from src.services.ai_coder import generate_pandas_logic
             generated_code = generate_pandas_logic(ai_logic_prompt, gemini_api_key)
@@ -251,8 +251,6 @@ def run_custom_screener(
         except Exception as e:
             log_progress(f"Failed to compile AI logic: {e}", level="ERROR")
             # We don't crash, we just won't execute AI logic.
-    elif ai_logic_prompt and not gemini_api_key:
-        log_progress("AI Logic skipped: No Gemini API Key provided.", level="WARNING")
     
     universe = load_nifty500_symbols()
     log_progress(f"Loaded {len(universe)} symbols from NIFTY 500.")

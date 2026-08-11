@@ -69,13 +69,8 @@ export default function Home() {
       const payload: any = { top_n: 20, trading_tools: selectedTools, risk_management: finalRisk };
       if (date) payload.date = date;
       if (aiLogicPrompt) {
-        if (!geminiApiKey) {
-            setCustomError("Gemini API Key is required when using AI Custom Logic.");
-            setCustomLoading(false);
-            return;
-        }
         payload.ai_logic_prompt = aiLogicPrompt;
-        payload.gemini_api_key = geminiApiKey;
+        payload.gemini_api_key = geminiApiKey || null;
       }
       
       const res = await fetch("http://localhost:5000/api/custom_screener_stream", {
@@ -451,7 +446,7 @@ export default function Home() {
                     onChange={(e) => setGeminiApiKey(e.target.value)}
                     style={{ width: '300px', padding: '8px', fontSize: '13px' }}
                 />
-                <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>*Your key is never stored. It is passed strictly to Google's API during execution.</span>
+                <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>*Leave blank to fallback to your local Ollama (Qwen) model for free execution.</span>
             </div>
           </div>
 

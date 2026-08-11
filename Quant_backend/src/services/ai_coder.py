@@ -1,6 +1,8 @@
 import google.generativeai as genai
 import logging
 import re
+import requests
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -30,24 +32,45 @@ def custom_ai_eval(df):
     return {"passed": False, "reasons": ["Close is below 50 SMA"]}
 """
 
-def generate_pandas_logic(prompt: str, api_key: str) -> str:
+def generate_pandas_logic(prompt: str, api_key: str = None) -> str:
     """
-    Calls Gemini API to generate the custom python code.
+    Calls Gemini API to generate the custom python code, or falls back to local Ollama.
     """
     try:
-        genai.configure(api_key=api_key)
+        user_prompt = f"Write the Pandas logic for the following trading strategy:\n{prompt}"
+        code = ""
         
-        # Use gemini-1.5-flash or gemini-2.5-flash for fast reasoning
-        model = genai.GenerativeModel('gemini-1.5-flash', system_instruction=SYSTEM_PROMPT)
-        
-        response = model.generate_content(
-            f"Write the Pandas logic for the following trading strategy:\n{prompt}",
-            generation_config=genai.types.GenerationConfig(
-                temperature=0.0,
+        if api_key:
+            logger.info("Routing to Google Gemini API...")
+            genai.configure(api_key=api_key)
+            # Use gemini-1.5-flash for fast reasoning
+            model = genai.GenerativeModel('gemini-1.5-flash', system_instruction=SYSTEM_PROMPT)
+            response = model.generate_content(
+                user_prompt,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=0.0,
+                )
             )
-        )
-        
-        code = response.text
+            code = response.text
+        else:
+            logger.info("Routing to local Ollama (qwen2.5-coder)...")
+            # Fallback to Local Ollama
+            ollama_url = "http://localhost:11434/api/generate"
+            payload = {
+                "model": "qwen2.5-coder",
+                "system": SYSTEM_PROMPT,
+                "prompt": user_prompt,
+                "stream": False,
+                "options": {
+                    "temperature": 0.0
+                }
+            }
+            try:
+                res = requests.post(ollama_url, json=payload, timeout=120)
+                res.raise_for_status()
+                code = res.json().get("response", "")
+            except requests.exceptions.RequestException as e:
+                raise ValueError(f"Ollama connection failed. Is Ollama running on port 11434? Error: {e}")
         
         # Clean up markdown if the LLM hallucinated it despite instructions
         if "```python" in code:
