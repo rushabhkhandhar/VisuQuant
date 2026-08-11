@@ -204,7 +204,7 @@ def evaluate_custom_tools(df: pd.DataFrame, tools: List[str]) -> dict:
         "trigger_type": " + ".join(triggers) if triggers else "None"
     }
 
-def run_custom_screener(as_of_date: date = None, trading_tools: List[str] = None, top_n: int = 20, progress_callback=None) -> Dict[str, Any]:
+def run_custom_screener(as_of_date: date = None, trading_tools: List[str] = None, risk_management: str = "ATR 1.5", top_n: int = 20, progress_callback=None) -> Dict[str, Any]:
     if as_of_date is None:
         as_of_date = date.today()
     if trading_tools is None:
@@ -240,8 +240,32 @@ def run_custom_screener(as_of_date: date = None, trading_tools: List[str] = None
         if eval_result["passed"]:
             entry_price = df['Close'].iloc[-1]
             atr = (df['High'] - df['Low']).rolling(14).mean().iloc[-1]
-            stop_loss = entry_price - (1.5 * atr) if pd.notna(atr) else entry_price * 0.95
-            target = entry_price + (3.0 * atr) if pd.notna(atr) else entry_price * 1.10
+            
+            # Parse Risk Management
+            # e.g., "ATR 1.5" or "PCT 5.0"
+            risk_parts = risk_management.split(" ")
+            if len(risk_parts) == 2 and risk_parts[0].upper() == "ATR":
+                try:
+                    mult = float(risk_parts[1])
+                    stop_loss = entry_price - (mult * atr) if pd.notna(atr) else entry_price * 0.95
+                except ValueError:
+                    stop_loss = entry_price - (1.5 * atr) if pd.notna(atr) else entry_price * 0.95
+            elif len(risk_parts) == 2 and risk_parts[0].upper() == "PCT":
+                try:
+                    pct = float(risk_parts[1]) / 100.0
+                    stop_loss = entry_price * (1 - pct)
+                except ValueError:
+                    stop_loss = entry_price * 0.95
+            else:
+                # Default fallback
+                stop_loss = entry_price - (1.5 * atr) if pd.notna(atr) else entry_price * 0.95
+                
+            risk_amount = entry_price - stop_loss
+            target = entry_price + (2.0 * risk_amount) # Default 1:2 RR
+            
+            # Default Position Sizing (Assuming ₹1,00,000 account, 2% risk = ₹2000 risk per trade)
+            risk_per_trade = 2000
+            qty = max(1, int(risk_per_trade / risk_amount)) if risk_amount > 0 else 0
             
             candidates.append({
                 "symbol": symbol,
@@ -250,6 +274,7 @@ def run_custom_screener(as_of_date: date = None, trading_tools: List[str] = None
                 "entry_price": round(entry_price, 2),
                 "target": round(target, 2),
                 "stop_loss": round(stop_loss, 2),
+                "position_size": qty,
                 "trend_status": "Custom Match",
                 "peers": []  # Empty for custom for now
             })

@@ -38,6 +38,7 @@ class CustomScreenerRequest(BaseModel):
     date: Optional[str] = None # format: YYYY-MM-DD
     top_n: int = 20
     trading_tools: list[str] = []
+    risk_management: str = "1.5x ATR"
 
 class BacktestRequest(BaseModel):
     symbol: str
@@ -101,7 +102,8 @@ def trigger_custom_screener_stream(req: CustomScreenerRequest):
         try:
             results = run_custom_screener(
                 as_of_date=as_of_date, 
-                trading_tools=req.trading_tools, 
+                trading_tools=req.trading_tools,
+                risk_management=req.risk_management,
                 top_n=req.top_n, 
                 progress_callback=progress_callback
             )

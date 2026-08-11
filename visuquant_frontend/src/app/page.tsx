@@ -14,6 +14,8 @@ export default function Home() {
   const [selectedTools, setSelectedTools] = useState<string[]>([]);
   const [customLoading, setCustomLoading] = useState(false);
   const [customError, setCustomError] = useState("");
+  const [riskOption, setRiskOption] = useState("ATR 1.5");
+  const [customRisk, setCustomRisk] = useState("");
   
   const AVAILABLE_TOOLS = [
     "Trendline", "S&R", "Market Structure", "Chart Patterns", 
@@ -46,13 +48,23 @@ export default function Home() {
       setCustomError("Please select at least one trading tool.");
       return;
     }
+    let finalRisk = riskOption;
+    if (riskOption === "Custom") {
+      const riskRegex = /^(ATR|PCT)\s+\d+(\.\d+)?$/;
+      if (!riskRegex.test(customRisk)) {
+        setCustomError("Invalid custom risk format. Must be 'ATR X' or 'PCT Y' (e.g., 'ATR 1.5' or 'PCT 5.0').");
+        return;
+      }
+      finalRisk = customRisk;
+    }
+
     setCustomLoading(true);
     setCustomError("");
     setResults(null);
     setStreamLogs([]);
     
     try {
-      const payload = date ? { date, top_n: 20, trading_tools: selectedTools } : { top_n: 20, trading_tools: selectedTools };
+      const payload = date ? { date, top_n: 20, trading_tools: selectedTools, risk_management: finalRisk } : { top_n: 20, trading_tools: selectedTools, risk_management: finalRisk };
       const res = await fetch("http://localhost:5000/api/custom_screener_stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -352,6 +364,39 @@ export default function Home() {
                 {tool}
               </button>
             ))}
+          </div>
+
+          <div style={{ marginBottom: '16px', display: 'flex', gap: '16px', alignItems: 'center' }}>
+            <div>
+              <label style={{ display: 'block', fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Risk Management (Stop Loss)</label>
+              <select 
+                className="input-glass" 
+                value={riskOption} 
+                onChange={(e) => setRiskOption(e.target.value)}
+                style={{ width: '200px', padding: '8px' }}
+              >
+                <option value="ATR 1.5">1.5x ATR</option>
+                <option value="ATR 2.0">2.0x ATR</option>
+                <option value="ATR 3.0">3.0x ATR</option>
+                <option value="PCT 5.0">5% Fixed SL</option>
+                <option value="PCT 10.0">10% Fixed SL</option>
+                <option value="Custom">Custom</option>
+              </select>
+            </div>
+            
+            {riskOption === "Custom" && (
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px' }}>Custom SL Format</label>
+                <input 
+                  type="text" 
+                  className="input-glass"
+                  value={customRisk}
+                  onChange={(e) => setCustomRisk(e.target.value)}
+                  placeholder="e.g., ATR 1.5 or PCT 5.0"
+                  style={{ width: '200px', padding: '8px' }}
+                />
+              </div>
+            )}
           </div>
 
           <div className="flex gap-4">
