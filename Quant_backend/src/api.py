@@ -39,6 +39,8 @@ class CustomScreenerRequest(BaseModel):
     top_n: int = 20
     trading_tools: list[str] = []
     risk_management: str = "1.5x ATR"
+    ai_logic_prompt: Optional[str] = None
+    gemini_api_key: Optional[str] = None
 
 class BacktestRequest(BaseModel):
     symbol: str
@@ -104,6 +106,8 @@ def trigger_custom_screener_stream(req: CustomScreenerRequest):
                 as_of_date=as_of_date, 
                 trading_tools=req.trading_tools,
                 risk_management=req.risk_management,
+                ai_logic_prompt=req.ai_logic_prompt,
+                gemini_api_key=req.gemini_api_key,
                 top_n=req.top_n, 
                 progress_callback=progress_callback
             )

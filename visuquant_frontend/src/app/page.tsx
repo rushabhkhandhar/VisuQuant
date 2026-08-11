@@ -16,6 +16,8 @@ export default function Home() {
   const [customError, setCustomError] = useState("");
   const [riskOption, setRiskOption] = useState("ATR 1.5");
   const [customRisk, setCustomRisk] = useState("");
+  const [aiLogicPrompt, setAiLogicPrompt] = useState("");
+  const [geminiApiKey, setGeminiApiKey] = useState("");
   
   const AVAILABLE_TOOLS = [
     "Trendline", "S&R", "Market Structure", "Chart Patterns", 
@@ -44,8 +46,8 @@ export default function Home() {
   };
 
   const runCustomScreener = async () => {
-    if (selectedTools.length === 0) {
-      setCustomError("Please select at least one trading tool.");
+    if (selectedTools.length === 0 && !aiLogicPrompt) {
+      setCustomError("Please select at least one trading tool or provide an AI Custom Logic prompt.");
       return;
     }
     let finalRisk = riskOption;
@@ -64,7 +66,18 @@ export default function Home() {
     setStreamLogs([]);
     
     try {
-      const payload = date ? { date, top_n: 20, trading_tools: selectedTools, risk_management: finalRisk } : { top_n: 20, trading_tools: selectedTools, risk_management: finalRisk };
+      const payload: any = { top_n: 20, trading_tools: selectedTools, risk_management: finalRisk };
+      if (date) payload.date = date;
+      if (aiLogicPrompt) {
+        if (!geminiApiKey) {
+            setCustomError("Gemini API Key is required when using AI Custom Logic.");
+            setCustomLoading(false);
+            return;
+        }
+        payload.ai_logic_prompt = aiLogicPrompt;
+        payload.gemini_api_key = geminiApiKey;
+      }
+      
       const res = await fetch("http://localhost:5000/api/custom_screener_stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -397,6 +410,49 @@ export default function Home() {
                 />
               </div>
             )}
+          </div>
+          
+          {/* AI Custom Logic Section */}
+          <div style={{ marginBottom: '24px', padding: '16px', background: 'rgba(255,255,255,0.03)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)' }}>
+            <h3 style={{ fontSize: '14px', margin: '0 0 12px 0', color: '#c084fc' }}>✨ AI Custom Logic</h3>
+            <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '12px' }}>
+                Select a predefined strategy or describe your own in plain English. Our AI agent will write and execute the Pandas logic on the fly!
+            </p>
+            
+            <select 
+                className="input-glass"
+                style={{ width: '100%', padding: '8px', marginBottom: '12px', fontSize: '13px' }}
+                onChange={(e) => {
+                    if (e.target.value !== "custom") {
+                        setAiLogicPrompt(e.target.value);
+                    }
+                }}
+            >
+                <option value="custom">-- Select a Predefined Strategy (Optional) --</option>
+                <option value="Find stocks where the 50-day SMA just crossed above the 200-day SMA (Golden Cross).">Golden Cross (50 SMA crosses above 200 SMA)</option>
+                <option value="Find stocks where the RSI is below 30 (Oversold), but the closing price is still strictly above the 200-day SMA.">Oversold Pullback (RSI {"<"} 30, Price {">"} 200 SMA)</option>
+                <option value="Find stocks where the MACD histogram has just crossed above 0, indicating bullish momentum shift.">MACD Bullish Reversal</option>
+                <option value="Find stocks where the current closing price is within 2% of the 52-week high, and today's volume is at least 150% of the 20-day average volume.">High Volume Breakout (Near 52W High)</option>
+            </select>
+            
+            <textarea 
+              className="input-glass"
+              placeholder="Enter natural language strategy..."
+              value={aiLogicPrompt}
+              onChange={(e) => setAiLogicPrompt(e.target.value)}
+              style={{ width: '100%', minHeight: '80px', padding: '12px', marginBottom: '12px', fontSize: '13px' }}
+            />
+            <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
+                <input 
+                    type="password"
+                    className="input-glass"
+                    placeholder="Enter Gemini API Key..."
+                    value={geminiApiKey}
+                    onChange={(e) => setGeminiApiKey(e.target.value)}
+                    style={{ width: '300px', padding: '8px', fontSize: '13px' }}
+                />
+                <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>*Your key is never stored. It is passed strictly to Google's API during execution.</span>
+            </div>
           </div>
 
           <div className="flex gap-4">

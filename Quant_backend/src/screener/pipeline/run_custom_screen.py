@@ -204,7 +204,15 @@ def evaluate_custom_tools(df: pd.DataFrame, tools: List[str]) -> dict:
         "trigger_type": " + ".join(triggers) if triggers else "None"
     }
 
-def run_custom_screener(as_of_date: date = None, trading_tools: List[str] = None, risk_management: str = "ATR 1.5", top_n: int = 20, progress_callback=None) -> Dict[str, Any]:
+def run_custom_screener(
+    as_of_date: date = None, 
+    trading_tools: List[str] = None, 
+    risk_management: str = "ATR 1.5", 
+    ai_logic_prompt: str = None,
+    gemini_api_key: str = None,
+    top_n: int = 20, 
+    progress_callback=None
+) -> Dict[str, Any]:
     if as_of_date is None:
         as_of_date = date.today()
     if trading_tools is None:
@@ -222,6 +230,30 @@ def run_custom_screener(as_of_date: date = None, trading_tools: List[str] = None
             
     log_progress(f"Starting Custom Strategy Builder with Tools: {trading_tools}")
     
+    # 1. Generate AI Logic if provided
+    has_ai_logic = False
+    if ai_logic_prompt and gemini_api_key:
+        log_progress("Generating dynamic AI Python logic via Gemini...")
+        try:
+            from src.services.ai_coder import generate_pandas_logic
+            generated_code = generate_pandas_logic(ai_logic_prompt, gemini_api_key)
+            log_progress(f"AI generated code:\n{generated_code}")
+            
+            # Use a secure isolated namespace
+            isolated_globals = {}
+            exec(generated_code, isolated_globals)
+            if "custom_ai_eval" not in isolated_globals:
+                raise ValueError("LLM did not output a custom_ai_eval function.")
+                
+            custom_ai_eval_func = isolated_globals["custom_ai_eval"]
+            has_ai_logic = True
+            log_progress("AI Logic successfully compiled and loaded into memory.")
+        except Exception as e:
+            log_progress(f"Failed to compile AI logic: {e}", level="ERROR")
+            # We don't crash, we just won't execute AI logic.
+    elif ai_logic_prompt and not gemini_api_key:
+        log_progress("AI Logic skipped: No Gemini API Key provided.", level="WARNING")
+    
     universe = load_nifty500_symbols()
     log_progress(f"Loaded {len(universe)} symbols from NIFTY 500.")
     
@@ -237,7 +269,21 @@ def run_custom_screener(as_of_date: date = None, trading_tools: List[str] = None
             continue
             
         eval_result = evaluate_custom_tools(df, trading_tools)
-        if eval_result["passed"]:
+        
+        # Apply AI Logic dynamically
+        ai_passed = True
+        if has_ai_logic:
+            try:
+                ai_res = custom_ai_eval_func(df)
+                if not ai_res.get("passed", False):
+                    ai_passed = False
+                    # Optionally append reasons if we want to log them
+            except Exception as e:
+                # Catch hallucinations (e.g. KeyError) gracefully
+                ai_passed = False
+                logger.debug(f"AI Logic crashed on {symbol}: {e}")
+                
+        if eval_result["passed"] and ai_passed:
             entry_price = df['Close'].iloc[-1]
             atr = (df['High'] - df['Low']).rolling(14).mean().iloc[-1]
             
