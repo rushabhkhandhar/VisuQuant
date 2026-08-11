@@ -79,6 +79,65 @@ flowchart TB
 
 ---
 
+##  Custom Strategy Builder & Backtester Workflow
+
+The **Custom Strategy Builder** allows users to define custom trading rules using natural language (AI-generated Pandas logic) combined with pre-defined technical tools. 
+
+### Key Workflow Features
+
+1. **Strict AND Logic Gating**: A stock must pass every single hurdle sequentially to be considered a match:
+   * **Pre-defined Tools** (e.g., RSI, MACD, S&R)
+   * **AI Custom Logic** (Natural language translated to Python Pandas)
+   * **Trading Filters** (e.g., Liquidity > 100k Vol, Risk-Reward Checks)
+   * **AI Custom Filter**
+2. **End-of-Day (EOD) Swing Trading**: The engine utilizes NSE's daily closing prices. Scans should be executed after market hours. Any matching candidates are intended for execution (limit/market orders) on the following trading day.
+3. **Concurrent Dual-Execution**: When you run a strategy, the frontend triggers two parallel engines to prevent selection bias:
+   * **The Live Screener**: Evaluates all 500 stocks against *today's* EOD data to find actionable candidates.
+   * **The Historical Backtester**: Ignores today's results and travels back 6-12 months. It walks forward day-by-day, evaluating the strategy across all historical days to prove mathematical edge (Win Rate, CAGR, Max Drawdown).
+
+### Pipeline Flow
+
+```mermaid
+flowchart TB
+    UI([Next.js Web Dashboard]) -->|Concurrent API Calls| API{FastAPI Backend}
+    
+    API -->|Generate Python Logic| AI[AI Coder Engine<br/>Gemini / Ollama]
+    AI -->|Inject pd, np, talib| Sandbox[Secure Python Sandbox]
+    
+    API -->|Live Screener| Live[Scan Today's EOD Data]
+    API -->|Backtester| Hist[Walk-Forward Historical Data]
+    
+    Live --> Sandbox
+    Hist --> Sandbox
+    
+    Sandbox --> Eval[Evaluate Strategy]
+    
+    subgraph Gauntlet["Strict AND Gating"]
+        direction TB
+        E1[Pre-defined Tools] --> E2[AI Custom Logic]
+        E2 --> E3[Trading Filters]
+        E3 --> E4[AI Custom Filter]
+    end
+    
+    Eval --> Gauntlet
+    
+    Gauntlet -->|Matches Today| LiveMatch[Live Candidates]
+    Gauntlet -->|Historical Matches| HistTrade[Track Trade Performance]
+    
+    LiveMatch --> UI
+    HistTrade -->|Metrics: Win Rate, Drawdown| UI
+    
+    classDef frontend fill:#0f766e,stroke:#0d9488,stroke-width:2px,color:#fff
+    classDef backend fill:#1e293b,stroke:#3b82f6,stroke-width:2px,color:#fff
+    classDef engine fill:#b91c1c,stroke:#991b1b,stroke-width:2px,color:#fff
+    
+    class UI frontend
+    class API,AI,Sandbox backend
+    class Live,Hist,LiveMatch,HistTrade engine
+```
+
+---
+
 ##  Project Structure & Key Modules
 
 VisuQuant is structured as a **Monorepo** to cleanly separate the backend quantitative engine from the frontend visual dashboard.
@@ -105,9 +164,10 @@ finvison_tech_analysis/
 - **`risk_calculations.py`**: Computes entry price, optimal stop losses (using ATR logic), position sizing, and Risk/Reward targets.
 - **`trade_validation.py`**: Performs institutional baseline safety checks (e.g. Absolute Liquidity > $10M ADV) and flags systemic execution risks.
 
-### `screener/` (Vectorized Stock Screening)
-The foundational quantitative filtering layer that scans the entire market (500 symbols) to find high-probability setups *before* they are sent to the Vision AI.
-- **`pipeline/run_daily_screen.py`**: The orchestrator for the screener. It applies sequential filtering: Liquidity -> Stage 1 (Minervini VCP Template with dynamic ATR percentile thresholds) -> Stage 1.5 (Fundamental Quality filtering via Screener.in) -> Stage 2 (Trigger Layer for active setups like Bollinger Breakout or Engulfing). It also runs a market regime check on the NIFTY500 to dynamically tag the macro environment (Trending Up, Trending Down, or Choppy).
+### `screener/` (Vectorized Stock Screening & Backtesting)
+The foundational quantitative filtering layer that scans the entire market (500 symbols).
+- **`pipeline/run_custom_screen.py` & `pipeline/run_custom_backtest.py`**: The execution engines for the Custom Strategy Builder. They dynamically compile AI-generated Pandas code within an isolated, dependency-injected sandbox (ensuring `talib`, `numpy`, and `pandas` are always available) and enforce strict AND logic across all selected filters.
+- **`pipeline/run_daily_screen.py`**: The orchestrator for the institutional screener. It applies sequential filtering: Liquidity -> Stage 1 (Minervini VCP Template with dynamic ATR percentile thresholds) -> Stage 1.5 (Fundamental Quality filtering via Screener.in) -> Stage 2 (Trigger Layer for active setups like Bollinger Breakout or Engulfing). It also runs a market regime check on the NIFTY500 to dynamically tag the macro environment (Trending Up, Trending Down, or Choppy).
 - **`pipeline/handoff.py`**: Packages the strictly validated signals (trigger type, composite score, regime, and quantitative metrics) into a VisuQuant payload and pipes them directly into the generative Chart Capture workflow.
 - **`pipeline/backtest.py`**: Contains strict statistical significance tests, including placebo/shuffle loops and walk-forward block validation, to ensure that the alpha of any trigger logic is durable and not curve-fitted.
 - **`screens/trigger_layer.py`**: The specific pattern matching logic (Bollinger Squeeze breakouts, Bullish Engulfing, MA Pullback Bounce) that accepts dynamic active/disabled rules based on the current regime playbook.

@@ -20,7 +20,7 @@ def evaluate_custom_tools(df: pd.DataFrame, tools: List[str]) -> dict:
         
     passed = True
     reasons = []
-    triggers = []
+    triggers = []          
     score = 0.0
     
     # Simple Close Price mapping for logic
