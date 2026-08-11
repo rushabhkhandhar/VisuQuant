@@ -176,6 +176,60 @@ def oversold_uptrend_eval(df):
         
     return {"passed": True, "score": 1.0, "trigger_type": "Oversold Uptrend"}
 
+def volatility_compression_eval(df):
+    if len(df) < 200:
+        return {"passed": False, "reasons": ["Not enough data for 200 SMA"]}
+        
+    close = df['Close'].iloc[-1]
+    
+    # 1. & 2. TRENDS
+    sma200 = df['Close'].rolling(window=200).mean().iloc[-1]
+    ema50 = df['Close'].ewm(span=50, adjust=False).mean().iloc[-1]
+    ema20 = df['Close'].ewm(span=20, adjust=False).mean().iloc[-1]
+    
+    if not (close > sma200 and ema50 > sma200 and ema20 >= ema50):
+        return {"passed": False, "reasons": ["Trend not aligned"]}
+        
+    # 3. CONSOLIDATION (Look at past 10 days excluding today)
+    past_10_high = df['High'].iloc[-11:-1].max()
+    past_10_low = df['Low'].iloc[-11:-1].min()
+    consolidation_range = (past_10_high - past_10_low) / past_10_low
+    
+    if consolidation_range > 0.08: # Max 8% consolidation range
+        return {"passed": False, "reasons": ["Consolidation too loose (>8%)"]}
+        
+    # 8. BREAKOUT & 5. RESISTANCE
+    # Today must break above the past 10-day high
+    if close <= past_10_high:
+        return {"passed": False, "reasons": ["No breakout above consolidation"]}
+        
+    # 9. EXTENSION
+    if close > past_10_high * 1.05:
+        return {"passed": False, "reasons": ["Overextended breakout (>5%)"]}
+        
+    # 4. VOLATILITY CONTRACTION
+    atr = (df['High'] - df['Low']).rolling(14).mean()
+    current_atr = atr.iloc[-1]
+    avg_atr_past = atr.iloc[-11:-1].mean()
+    if current_atr > avg_atr_past:
+        return {"passed": False, "reasons": ["ATR not declining"]}
+        
+    # 6. MOMENTUM
+    rsi = talib.RSI(df['Close'], timeperiod=14).iloc[-1]
+    if not (50 <= rsi <= 65):
+        return {"passed": False, "reasons": [f"RSI {rsi:.2f} not in (50, 65)"]}
+        
+    macd, macdsignal, _ = talib.MACD(df['Close'], fastperiod=12, slowperiod=26, signalperiod=9)
+    if pd.isna(macd.iloc[-1]) or macd.iloc[-1] <= macdsignal.iloc[-1]:
+        return {"passed": False, "reasons": ["MACD not improving"]}
+        
+    # 7. VOLUME
+    vol_sma20 = df['Volume'].rolling(20).mean().iloc[-1]
+    if df['Volume'].iloc[-1] < vol_sma20 * 1.5:
+        return {"passed": False, "reasons": ["Volume < 1.5x average"]}
+        
+    return {"passed": True, "score": 1.0, "trigger_type": "Volatility Compression Breakout"}
+
 # Define strategies here.
 STRATEGIES = [
     {
@@ -208,6 +262,18 @@ STRATEGIES = [
         "ai_logic_prompt": None,
         "ai_filter_prompt": None,
         "precompiled_eval_func": oversold_uptrend_eval
+    },
+    {
+        "name": "Volatility Compression",
+        "description": "NIFTY 500 stocks undergoing declining volatility and a tight 10-day consolidation before breaking out on high volume.",
+        "trading_tools": [],
+        "trading_filters": [
+            "Require High Liquidity (>100k Vol)"
+        ],
+        "risk_management": "ATR 1.5",
+        "ai_logic_prompt": None,
+        "ai_filter_prompt": None,
+        "precompiled_eval_func": volatility_compression_eval
     }
 ]
 
@@ -322,6 +388,27 @@ def run_strategies(trades, as_of_date):
             
             candidates = results.get("candidates", [])
             logger.info(f"Strategy '{strategy['name']}' found {len(candidates)} candidates today.")
+            
+            if len(candidates) == 0:
+                dummy_trade = {
+                    "trade_id": str(uuid.uuid4()),
+                    "strategy_name": strategy["name"],
+                    "symbol": "0",
+                    "tradingview_link": "-",
+                    "entry_date": date_str,
+                    "entry_regime": current_regime,
+                    "entry_price": 0,
+                    "close_price": 0,
+                    "stop_loss": 0,
+                    "target": 0,
+                    "status": "DUMMY",
+                    "exit_date": 0,
+                    "exit_regime": "N/A",
+                    "exit_price": 0,
+                    "pnl_pct": 0
+                }
+                trades.append(dummy_trade)
+                logger.info(f"Logged DUMMY trade for {strategy['name']} to keep date timeline continuous.")
             
             for c in candidates:
                 # Check if we already have an open trade for this symbol/strategy combo
