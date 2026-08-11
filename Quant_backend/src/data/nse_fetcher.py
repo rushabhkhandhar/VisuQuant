@@ -71,9 +71,12 @@ def _download_bhavcopy_for_date(trade_date: date) -> Optional[pd.DataFrame]:
                 content = response.read().decode("utf-8", errors="ignore")
             break
         except urllib.error.HTTPError as e:
-            if e.code == 404: # Not found (Holiday/Weekend)
+            if e.code == 404: # Not found (Holiday/Weekend or not yet published)
                 _BHAVCOPY_CACHE[key] = None
-                with open(missing_path, 'w') as f: f.write("") # Remember it's missing permanently
+                # Don't permanently cache 'missing' if the date is today or yesterday
+                # since it might just be delayed in publishing.
+                if (date.today() - trade_date).days > 2:
+                    with open(missing_path, 'w') as f: f.write("") 
                 return None
             time.sleep(2.0 + attempt)
         except Exception:

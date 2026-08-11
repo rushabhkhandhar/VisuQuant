@@ -205,15 +205,16 @@ def evaluate_custom_tools(df: pd.DataFrame, tools: List[str]) -> dict:
     }
 
 def run_custom_screener(
-    as_of_date: date = None, 
-    trading_tools: List[str] = None, 
+    as_of_date: date = None,
+    trading_tools: List[str] = None,
     trading_filters: List[str] = None,
-    risk_management: str = "ATR 1.5", 
+    risk_management: str = "1.5x ATR",
     ai_logic_prompt: str = None,
     ai_filter_prompt: str = None,
     gemini_api_key: str = None,
-    top_n: int = 20, 
-    progress_callback=None
+    top_n: int = 5,
+    progress_callback = None,
+    precompiled_eval_func = None
 ) -> Dict[str, Any]:
     if as_of_date is None:
         as_of_date = date.today()
@@ -235,8 +236,14 @@ def run_custom_screener(
     log_progress(f"Starting Custom Strategy Builder with Tools: {trading_tools}")
     
     # 1. Generate AI Logic if provided
+    custom_ai_eval_func = None
     has_ai_logic = False
-    if ai_logic_prompt:
+    
+    if precompiled_eval_func is not None:
+        custom_ai_eval_func = precompiled_eval_func
+        has_ai_logic = True
+        log_progress("Using hardcoded Python logic (AI generation bypassed).")
+    elif ai_logic_prompt:
         log_progress("Generating dynamic AI Python logic...")
         try:
             from src.services.ai_coder import generate_pandas_logic
@@ -244,9 +251,7 @@ def run_custom_screener(
             log_progress(f"AI generated code:\n{generated_code}")
             
             # Use a secure isolated namespace with common imports injected
-            import pandas as pd
-            import numpy as np
-            import talib
+            # Execute the generated code in an isolated environment
             isolated_globals = {
                 'pd': pd,
                 'np': np,
@@ -317,6 +322,12 @@ def run_custom_screener(
                 
         if eval_result["passed"] and ai_passed:
             entry_price = df['Close'].iloc[-1]
+            actual_date_val = df.index[-1]
+            if isinstance(actual_date_val, pd.Timestamp):
+                actual_date = actual_date_val.strftime("%Y-%m-%d")
+            else:
+                actual_date = str(actual_date_val)
+                
             atr = (df['High'] - df['Low']).rolling(14).mean().iloc[-1]
             
             # Parse Risk Management
@@ -391,6 +402,7 @@ def run_custom_screener(
                     "entry_price": round(entry_price, 2),
                     "target": round(target, 2),
                     "stop_loss": round(stop_loss, 2),
+                    "actual_date": actual_date,
                     "position_size": qty,
                     "trend_status": "Custom Match",
                     "peers": []  # Empty for custom for now
