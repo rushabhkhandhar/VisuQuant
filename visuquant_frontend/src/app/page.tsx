@@ -14,6 +14,8 @@ export default function Home() {
   const [selectedTools, setSelectedTools] = useState<string[]>([]);
   const [selectedFilters, setSelectedFilters] = useState<string[]>([]);
   const [customLoading, setCustomLoading] = useState(false);
+  const [customBacktestLoading, setCustomBacktestLoading] = useState(false);
+  const [customBacktestResults, setCustomBacktestResults] = useState<any>(null);
   const [customError, setCustomError] = useState("");
   const [riskOption, setRiskOption] = useState("ATR 1.5");
   const [customRisk, setCustomRisk] = useState("");
@@ -91,57 +93,95 @@ export default function Home() {
         payload.gemini_api_key = geminiApiKey || null;
       }
       
+      // Fire off Backtest request concurrently
+      setCustomBacktestLoading(true);
+      setCustomBacktestResults(null);
+      
+      fetch("http://localhost:5000/api/backtest_custom_strategy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      }).then(res => res.json()).then(data => {
+        if (data.status === "success") {
+            setCustomBacktestResults(data.data);
+        } else {
+            setCustomError(data.message || "Failed to run backtest");
+        }
+      }).catch(err => {
+        setCustomError(err.message);
+      }).finally(() => {
+        setCustomBacktestLoading(false);
+      });
+      
+      // Start streaming the Screener results
       const res = await fetch("http://localhost:5000/api/custom_screener_stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       });
       
-      if (!res.ok) {
-        throw new Error("Failed to fetch data from custom engine");
-      }
-      
-      if (!res.body) throw new Error("ReadableStream not supported in this browser.");
-      
+      if (!res.body) throw new Error("No response body");
       const reader = res.body.getReader();
       const decoder = new TextDecoder("utf-8");
       
-      let done = false;
       let buffer = "";
-      while (!done) {
-        const { value, done: readerDone } = await reader.read();
-        done = readerDone;
+      
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
         if (value) {
           buffer += decoder.decode(value, { stream: true });
-          const parts = buffer.split("\n\n");
+          const parts = buffer.split('\n\n');
           buffer = parts.pop() || "";
           
           for (const part of parts) {
             const dataPrefix = "data: ";
             if (part.startsWith(dataPrefix)) {
+              const jsonStr = part.substring(dataPrefix.length);
               try {
-                const dataStr = part.substring(dataPrefix.length).trim();
-                if (!dataStr) continue;
-                const data = JSON.parse(dataStr);
-                if (data.type === 'log') {
-                  setStreamLogs(prev => [...prev, data.message]);
-                } else if (data.type === 'result') {
-                  setResults(data.data);
-                } else if (data.type === 'error') {
-                  setCustomError(data.message);
+                const parsed = JSON.parse(jsonStr);
+                if (parsed.type === "log") {
+                  setStreamLogs(prev => [...prev, `[${parsed.level}] ${parsed.message}`]);
+                } else if (parsed.type === "result") {
+                  setResults(parsed.data);
+                } else if (parsed.type === "error") {
+                  setCustomError(parsed.message);
                 }
               } catch (e) {
-                console.error("Error parsing SSE JSON:", e, part);
+                console.error("Failed to process SSE message:", jsonStr, e);
               }
             }
           }
         }
       }
+      
+      // Process any remaining buffer
+      if (buffer.startsWith("data: ")) {
+          const jsonStr = buffer.substring(6);
+          try {
+              const parsed = JSON.parse(jsonStr);
+              if (parsed.type === "result") {
+                  setResults(parsed.data);
+              }
+          } catch(e) {
+              console.error("Failed to process remaining SSE buffer:", jsonStr, e);
+          }
+      }
+
     } catch (err: any) {
-      setCustomError(err.message || "An error occurred");
+      setCustomError(err.message);
     } finally {
       setCustomLoading(false);
     }
+  };
+
+  const processText = async ({ done, value }: any) => {
+    setLoading(true);
+    setError("");
+    setResults(null);
+    setStreamLogs([]);
+    
+    // Original runScreener logic placeholder
   };
 
   const runScreener = async () => {
@@ -175,7 +215,7 @@ export default function Home() {
         if (value) {
           buffer += decoder.decode(value, { stream: true });
           const parts = buffer.split('\n\n');
-          buffer = parts.pop() || ""; // keep the last incomplete chunk in the buffer
+          buffer = parts.pop() || "";
           
           for (const part of parts) {
             const dataPrefix = "data: ";
@@ -475,6 +515,8 @@ export default function Home() {
                 onChange={(e) => {
                     if (e.target.value !== "custom") {
                         setAiLogicPrompt(e.target.value);
+                    } else {
+                        setAiLogicPrompt("");
                     }
                 }}
             >
@@ -501,21 +543,74 @@ export default function Home() {
                     onChange={(e) => setGeminiApiKey(e.target.value)}
                     style={{ width: '300px', padding: '8px', fontSize: '13px' }}
                 />
-                <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>*Leave blank to fallback to your local Ollama (Qwen) model for free execution.</span>
+                <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>*Leave blank to fallback to your local Ollama (qwen2.5vl) model for free execution.</span>
             </div>
           </div>
 
           <div className="flex gap-4">
             <button 
-              className="btn-primary" 
+              className="btn-primary flex items-center gap-2" 
               onClick={runCustomScreener}
-              disabled={customLoading}
+              disabled={customLoading || customBacktestLoading}
               style={{ borderColor: '#c084fc', color: '#c084fc', boxShadow: '0 0 10px rgba(192, 132, 252, 0.2)' }}
             >
-              {customLoading ? <span className="loader" style={{ borderTopColor: '#c084fc' }}></span> : '🛠️'} {customLoading ? 'Scanning...' : 'Run Custom Strategy'}
+              {(customLoading || customBacktestLoading) ? <span className="loader" style={{ borderTopColor: '#c084fc' }}></span> : '🛠️'} {(customLoading || customBacktestLoading) ? 'Scanning & Backtesting...' : 'Run Custom Strategy'}
             </button>
           </div>
           {customError && <p className="text-danger mt-4" style={{ fontSize: '14px' }}>{customError}</p>}
+          
+          {customBacktestResults && (
+            <div style={{ marginTop: '24px', padding: '16px', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)' }}>
+              <h3 style={{ fontSize: '14px', margin: '0 0 16px 0', color: '#c084fc' }}>📊 6-Month Backtest Results</h3>
+              <div style={{ display: 'flex', gap: '24px', marginBottom: '16px' }}>
+                <div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Win Rate</div>
+                    <div style={{ fontSize: '18px', fontWeight: 600, color: customBacktestResults.metrics["Win Rate (%)"] > 50 ? '#4ade80' : '#f87171' }}>{customBacktestResults.metrics["Win Rate (%)"]}%</div>
+                </div>
+                <div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Total Trades</div>
+                    <div style={{ fontSize: '18px', fontWeight: 600 }}>{customBacktestResults.metrics["Total Trades"]}</div>
+                </div>
+                <div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Avg Win / Loss</div>
+                    <div style={{ fontSize: '18px', fontWeight: 600 }}>
+                        <span style={{color: '#4ade80'}}>+{customBacktestResults.metrics["Average Win (%)"]}%</span> / <span style={{color: '#f87171'}}>{customBacktestResults.metrics["Average Loss (%)"]}%</span>
+                    </div>
+                </div>
+                <div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>Max Drawdown</div>
+                    <div style={{ fontSize: '18px', fontWeight: 600, color: '#f87171' }}>{customBacktestResults.metrics["Max Drawdown (%)"]}%</div>
+                </div>
+              </div>
+              
+              {customBacktestResults.trades && customBacktestResults.trades.length > 0 && (
+                <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
+                  <table style={{ width: '100%', fontSize: '12px', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.1)', textAlign: 'left' }}>
+                        <th style={{ padding: '8px', color: 'var(--text-secondary)' }}>Symbol</th>
+                        <th style={{ padding: '8px', color: 'var(--text-secondary)' }}>Entry Date</th>
+                        <th style={{ padding: '8px', color: 'var(--text-secondary)' }}>Exit Date</th>
+                        <th style={{ padding: '8px', color: 'var(--text-secondary)' }}>Return</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {customBacktestResults.trades.map((trade: any, idx: number) => (
+                        <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                          <td style={{ padding: '8px' }}>{trade.symbol}</td>
+                          <td style={{ padding: '8px' }}>{trade.entry_date}</td>
+                          <td style={{ padding: '8px' }}>{trade.exit_date}</td>
+                          <td style={{ padding: '8px', color: trade.return > 0 ? '#4ade80' : '#f87171' }}>
+                            {trade.return > 0 ? '+' : ''}{(trade.return * 100).toFixed(2)}%
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 

@@ -18,7 +18,9 @@ REQUIREMENTS:
 6. If the condition is met for the LATEST row in the dataframe (i.e. `df.iloc[-1]`), return `{"passed": True, "reasons": []}`.
 7. If the condition is NOT met, return `{"passed": False, "reasons": ["Did not meet: <reason>"]}`.
 8. Handle edge cases where data might be missing (e.g. `len(df) < 200` for a 200 SMA).
-9. Make the code efficient and robust.
+9. ALWAYS use `.iloc[-1]` or `.iloc[-2]` when accessing the last elements of a Pandas Series or DataFrame. NEVER use `[-1]` as it causes FutureWarnings and KeyErrors.
+10. Do NOT invent non-existent `talib` functions (like `talib.MACDHIST`). For MACD, ALWAYS use `macd, macdsignal, macdhist = talib.MACD(...)`.
+11. Make the code efficient and robust.
 
 Example Output:
 def custom_ai_eval(df):
@@ -76,7 +78,7 @@ def generate_pandas_logic(prompt: str, api_key: str = None) -> str:
             # Fallback to Local Ollama
             ollama_url = "http://localhost:11434/api/generate"
             payload = {
-                "model": "qwen2.5-coder",
+                "model": "qwen2.5vl:7b",
                 "system": SYSTEM_PROMPT,
                 "prompt": user_prompt,
                 "stream": False,
@@ -123,7 +125,7 @@ def generate_filter_logic(prompt: str, api_key: str = None) -> str:
             logger.info("Routing filter generation to local Ollama (qwen2.5-coder)...")
             ollama_url = "http://localhost:11434/api/generate"
             payload = {
-                "model": "qwen2.5-coder",
+                "model": "qwen2.5vl:7b",
                 "system": FILTER_SYSTEM_PROMPT,
                 "prompt": user_prompt,
                 "stream": False,

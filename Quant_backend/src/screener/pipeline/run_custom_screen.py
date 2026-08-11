@@ -243,8 +243,16 @@ def run_custom_screener(
             generated_code = generate_pandas_logic(ai_logic_prompt, gemini_api_key)
             log_progress(f"AI generated code:\n{generated_code}")
             
-            # Use a secure isolated namespace
-            isolated_globals = {}
+            # Use a secure isolated namespace with common imports injected
+            import pandas as pd
+            import numpy as np
+            import talib
+            isolated_globals = {
+                'pd': pd,
+                'np': np,
+                'talib': talib,
+                '__builtins__': __builtins__
+            }
             exec(generated_code, isolated_globals)
             if "custom_ai_eval" not in isolated_globals:
                 raise ValueError("LLM did not output a custom_ai_eval function.")
@@ -290,7 +298,9 @@ def run_custom_screener(
         if df.empty:
             continue
             
-        eval_result = evaluate_custom_tools(df, trading_tools)
+        eval_result = {"passed": True, "score": 1.0, "trigger_type": "None"}
+        if trading_tools:
+            eval_result = evaluate_custom_tools(df, trading_tools)
         
         # Apply AI Logic dynamically
         ai_passed = True
@@ -303,7 +313,7 @@ def run_custom_screener(
             except Exception as e:
                 # Catch hallucinations (e.g. KeyError) gracefully
                 ai_passed = False
-                logger.debug(f"AI Logic crashed on {symbol}: {e}")
+                logger.warning(f"AI Logic crashed on {symbol}: {e}")
                 
         if eval_result["passed"] and ai_passed:
             entry_price = df['Close'].iloc[-1]
@@ -371,7 +381,7 @@ def run_custom_screener(
                         filters_passed = False
                 except Exception as e:
                     filters_passed = False
-                    logger.debug(f"AI Filter crashed on {symbol}: {e}")
+                    logger.warning(f"AI Filter crashed on {symbol}: {e}")
             
             if filters_passed:
                 candidates.append({

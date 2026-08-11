@@ -205,6 +205,23 @@ def run_strategy_backtest(req: BacktestRequest):
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
+@app.post("/api/backtest_custom_strategy")
+def backtest_custom_strategy_endpoint(req: CustomScreenerRequest):
+    from src.screener.pipeline.run_custom_backtest import run_custom_backtest
+    try:
+        results = run_custom_backtest(
+            months=12,
+            trading_tools=req.trading_tools,
+            trading_filters=req.trading_filters,
+            risk_management=req.risk_management,
+            ai_logic_prompt=req.ai_logic_prompt,
+            ai_filter_prompt=req.ai_filter_prompt,
+            gemini_api_key=req.gemini_api_key
+        )
+        return {"status": "success", "data": results}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("src.api:app", host="0.0.0.0", port=5000, reload=True)
