@@ -94,6 +94,7 @@ The **Custom Strategy Builder** allows users to define custom trading rules usin
 3. **Concurrent Dual-Execution**: When you run a strategy, the frontend triggers two parallel engines to prevent selection bias:
    * **The Live Screener**: Evaluates all 500 stocks against *today's* EOD data to find actionable candidates.
    * **The Historical Backtester**: Ignores today's results and travels back 6-12 months. It walks forward day-by-day, evaluating the strategy across all historical days to prove mathematical edge (Win Rate, CAGR, Max Drawdown).
+4. **Portfolio Optimization (Black-Litterman)**: Live candidates are piped through an unbiased portfolio allocator using PyPortfolioOpt. It leverages Idzorek's method and a Ledoit-Wolf Shrinkage covariance matrix to output mathematically optimal capital allocations while strictly capping any single position at 20%.
 
 ### Pipeline Flow
 
@@ -124,16 +125,19 @@ flowchart TB
     Gauntlet -->|Matches Today| LiveMatch[Live Candidates]
     Gauntlet -->|Historical Matches| HistTrade[Track Trade Performance]
     
-    LiveMatch --> UI
+    LiveMatch --> BL[Black-Litterman Optimizer<br/>PyPortfolioOpt]
+    BL --> UI
     HistTrade -->|Metrics: Win Rate, Drawdown| UI
     
     classDef frontend fill:#0f766e,stroke:#0d9488,stroke-width:2px,color:#fff
     classDef backend fill:#1e293b,stroke:#3b82f6,stroke-width:2px,color:#fff
     classDef engine fill:#b91c1c,stroke:#991b1b,stroke-width:2px,color:#fff
+    classDef portfolio fill:#ca8a04,stroke:#a16207,stroke-width:2px,color:#fff
     
     class UI frontend
     class API,AI,Sandbox backend
     class Live,Hist,LiveMatch,HistTrade engine
+    class BL portfolio
 ```
 
 ---
@@ -170,6 +174,7 @@ The foundational quantitative filtering layer that scans the entire market (500 
 - **`pipeline/run_daily_screen.py`**: The orchestrator for the institutional screener. It applies sequential filtering: Liquidity -> Stage 1 (Minervini VCP Template with dynamic ATR percentile thresholds) -> Stage 1.5 (Fundamental Quality filtering via Screener.in) -> Stage 2 (Trigger Layer for active setups like Bollinger Breakout or Engulfing). It also runs a market regime check on the NIFTY500 to dynamically tag the macro environment (Trending Up, Trending Down, or Choppy).
 - **`pipeline/handoff.py`**: Packages the strictly validated signals (trigger type, composite score, regime, and quantitative metrics) into a VisuQuant payload and pipes them directly into the generative Chart Capture workflow.
 - **`pipeline/backtest.py`**: Contains strict statistical significance tests, including placebo/shuffle loops and walk-forward block validation, to ensure that the alpha of any trigger logic is durable and not curve-fitted.
+- **`portfolio/portfolio_optimizer.py`**: A fully unbiased Black-Litterman asset allocation engine utilizing `PyPortfolioOpt`. It dynamically dedupes overlapping strategy signals to build consensus scores, calculates Ledoit-Wolf Shrinkage covariance matrices, and outputs actual whole-share adjusted target capital allocations with explicit CASH accounting.
 - **`screens/trigger_layer.py`**: The specific pattern matching logic (Bollinger Squeeze breakouts, Bullish Engulfing, MA Pullback Bounce) that accepts dynamic active/disabled rules based on the current regime playbook.
 - **`indicators/core.py`**: High-performance, pure vectorized functions for SMA, EMA, ATR, Bollinger Bands, RSI, MACD, and Swing Detection using `pandas-ta` and `scipy`. Actively excludes circuit days to prevent distorted readings.
 - **`screens/fundamental_quality.py`**: A robust techno-funda filter that evaluates Earnings Growth (YoY), Profitability (ROE/ROCE), and Institutional Accumulation to drop low-quality companies before technical triggers are fired.
