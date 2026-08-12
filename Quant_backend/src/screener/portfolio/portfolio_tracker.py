@@ -63,7 +63,8 @@ def step_portfolio(todays_candidates, as_of_date):
     
     if active_positions:
         symbols_to_update = list(active_positions.keys())
-        bulk_data = fetch_bulk_history(symbols_to_update, as_of_date, lookback_days=5)
+        # fetch_bulk_history requires at least 10 days of data to return a dataframe
+        bulk_data = fetch_bulk_history(symbols_to_update, as_of_date, lookback_days=15)
         
         symbols_to_remove = []
         
@@ -92,46 +93,34 @@ def step_portfolio(todays_candidates, as_of_date):
     
     logger.info(f"Pre-Rebalance Equity: {total_equity:.2f} (Cash: {state['available_cash']:.2f}, Positions: {positions_value:.2f})")
     
-    # 2. Build Candidate Universe
+    # 2. Build Candidate Universe (Cash Deployment Only)
     combined_candidates = []
     
-    for sym, pos in active_positions.items():
-        combined_candidates.append({
-            "symbol": sym,
-            "entry_price": pos["entry_price"], 
-            "stop_loss": pos["stop_loss"],
-            "target": pos["target"],
-            "strategy_name": pos["strategy"]
-        })
-        
     for c in todays_candidates:
-        if c.get("symbol") and str(c.get("symbol")) != "0":
+        sym = str(c.get("symbol", ""))
+        # Only deploy cash into NEW candidates that we don't already hold
+        if sym and sym != "0" and sym not in active_positions:
             combined_candidates.append(c)
         
-    if not combined_candidates:
-        logger.info("No candidates and no positions. Saving state and returning.")
+    if not combined_candidates or state["available_cash"] < 1000:
+        logger.info("No new candidates or insufficient cash. Holding current positions.")
         save_portfolio_state(state)
-        log_performance(as_of_date, total_equity, state["available_cash"], 0)
+        log_performance(as_of_date, total_equity, state["available_cash"], len(active_positions))
         return
         
-    # 3. Run Optimization (Full Rebalancing)
-    logger.info(f"Running Full Daily Rebalancing on {len(combined_candidates)} raw signals...")
-    allocations = optimize_portfolio(combined_candidates, as_of_date, capital=total_equity)
+    # 3. Run Optimization (Cash Only)
+    logger.info(f"Running Cash Deployment Optimization on {len(combined_candidates)} new signals with Rs {state['available_cash']:.2f}...")
+    allocations = optimize_portfolio(combined_candidates, as_of_date, capital=state["available_cash"])
     
     if not allocations:
-        logger.warning("Optimizer returned no allocations. Portfolio stays in cash.")
-        state["active_positions"] = {}
-        state["available_cash"] = total_equity
+        logger.warning("Optimizer returned no allocations. Cash remains idle.")
     else:
-        # 4. Execute Rebalancing
-        new_positions = {}
-        new_cash = total_equity
+        # 4. Execute Additions to Portfolio
+        new_cash = state["available_cash"]
         
         symbol_map = {}
         for c in combined_candidates:
-            sym = c["symbol"]
-            if sym not in symbol_map:
-                symbol_map[sym] = c
+            symbol_map[c["symbol"]] = c
                 
         for alloc in allocations:
             sym = alloc["Symbol"]
@@ -142,7 +131,8 @@ def step_portfolio(todays_candidates, as_of_date):
             shares = alloc["Suggested_Shares"]
             if shares > 0:
                 c = symbol_map[sym]
-                new_positions[sym] = {
+                # Add to existing active positions
+                active_positions[sym] = {
                     "shares": shares,
                     "entry_price": alloc["Current_Price"], 
                     "current_price": alloc["Current_Price"],
@@ -151,7 +141,7 @@ def step_portfolio(todays_candidates, as_of_date):
                     "strategy": alloc["Strategy_Names"]
                 }
                 
-        state["active_positions"] = new_positions
+        state["active_positions"] = active_positions
         state["available_cash"] = new_cash
         
     final_positions_value = sum(pos["shares"] * pos["current_price"] for pos in state["active_positions"].values())
