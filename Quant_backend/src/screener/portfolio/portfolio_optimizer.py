@@ -174,7 +174,7 @@ def build_fallback_allocations(valid_candidates, capital, prices_df=None, reason
     return sorted(allocations, key=lambda x: x["Actual_Weight_Pct"], reverse=True)
 
 
-def optimize_portfolio(candidates, as_of_date):
+def optimize_portfolio(candidates, as_of_date, capital=1_000_000):
     """
     Takes a list of candidate dictionaries.
     Aggregates candidates, checks historical risk profiles, constructs unbiased BL views,
@@ -214,7 +214,7 @@ def optimize_portfolio(candidates, as_of_date):
     
     if not valid_candidates:
         logger.error("No valid candidates remaining after data quality checks.")
-        return build_fallback_allocations([], CAPITAL, reason="Data Exclusion")
+        return build_fallback_allocations([], capital, reason="Data Exclusion")
         
     prices = pd.DataFrame(price_dict)
     
@@ -224,7 +224,7 @@ def optimize_portfolio(candidates, as_of_date):
     
     if prices.empty or prices.shape[1] < 2:
         logger.warning(f"Not enough valid asset history for covariance optimization. Fallback triggered.")
-        return build_fallback_allocations(valid_candidates, CAPITAL, prices_df=prices, reason="Insufficient assets for Covariance")
+        return build_fallback_allocations(valid_candidates, capital, prices_df=prices, reason="Insufficient assets for Covariance")
 
     # If N < minimum required for fully invested portfolio, fallback
     # Because EfficientFrontier requires sum(weights) == 1, 
@@ -232,7 +232,7 @@ def optimize_portfolio(candidates, as_of_date):
     min_assets_required = int(np.ceil(1.0 / MAX_WEIGHT))
     if len(valid_candidates) < min_assets_required:
         logger.info(f"Fewer than {min_assets_required} candidates available. Black-Litterman optimization is infeasible due to MAX_WEIGHT constraints. Falling back to deterministic weighting.")
-        return build_fallback_allocations(valid_candidates, CAPITAL, prices_df=prices, reason=f"N < {min_assets_required} Assets Feasibility")
+        return build_fallback_allocations(valid_candidates, capital, prices_df=prices, reason=f"N < {min_assets_required} Assets Feasibility")
 
     # 2. Risk Models and Expected Returns (Priors)
     try:
@@ -244,7 +244,7 @@ def optimize_portfolio(candidates, as_of_date):
         pi = expected_returns.mean_historical_return(prices)
     except Exception as e:
         logger.error(f"Error calculating risk models: {e}. Fallback triggered.")
-        return build_fallback_allocations(valid_candidates, CAPITAL, prices_df=prices, reason="Covariance Error")
+        return build_fallback_allocations(valid_candidates, capital, prices_df=prices, reason="Covariance Error")
         
     # 3. Construct Views & Confidences Safely aligned with prices columns
     ordered_symbols = list(prices.columns)
@@ -284,7 +284,7 @@ def optimize_portfolio(candidates, as_of_date):
         
     except Exception as e:
         logger.error(f"Black-Litterman optimization failed: {e}. Falling back to deterministic weights.")
-        return build_fallback_allocations(valid_candidates, CAPITAL, prices_df=prices, reason="BL Optimization Error")
+        return build_fallback_allocations(valid_candidates, capital, prices_df=prices, reason="BL Optimization Error")
         
     # 6. Allocation Accounting
     allocations = []
@@ -295,11 +295,11 @@ def optimize_portfolio(candidates, as_of_date):
             c = next(cand for cand in valid_candidates if cand["symbol"] == sym)
             curr_price = float(prices[sym].iloc[-1])
             
-            allocation_amt = CAPITAL * target_weight
+            allocation_amt = capital * target_weight
             shares = int(allocation_amt // curr_price) if curr_price > 0 else 0
             
             actual_allocation = shares * curr_price
-            actual_weight = actual_allocation / CAPITAL
+            actual_weight = actual_allocation / capital
             
             allocations.append({
                 "Symbol": sym,
@@ -315,7 +315,7 @@ def optimize_portfolio(candidates, as_of_date):
             })
             total_allocated += actual_allocation
             
-    cash = CAPITAL - total_allocated
+    cash = capital - total_allocated
     
     cash_reason = "Share Rounding Remainder"
     if any(w for w in cleaned_weights.values() if w <= MIN_POSITION_WEIGHT and w > 0):
@@ -323,8 +323,8 @@ def optimize_portfolio(candidates, as_of_date):
         
     allocations.append({
         "Symbol": "CASH",
-        "Target_Weight_Pct": round((cash / CAPITAL) * 100, 2),
-        "Actual_Weight_Pct": round((cash / CAPITAL) * 100, 2),
+        "Target_Weight_Pct": round((cash / capital) * 100, 2),
+        "Actual_Weight_Pct": round((cash / capital) * 100, 2),
         "Allocation_Rs": round(cash, 2),
         "Suggested_Shares": 1,
         "Current_Price": round(cash, 2),

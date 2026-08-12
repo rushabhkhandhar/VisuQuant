@@ -641,32 +641,15 @@ def main():
     # 5. Calculate Metrics
     calculate_metrics(trades)
     
-    # 6. Portfolio Optimization
+    # 6. Continuous Portfolio Tracking & Optimization
     date_str = as_of_date.strftime("%Y-%m-%d")
     todays_candidates = [t for t in trades if t.get("entry_date") == date_str and t.get("status") in ["OPEN", "DUMMY"]]
     
-    if todays_candidates:
-        try:
-            from src.screener.portfolio.portfolio_optimizer import optimize_portfolio
-            allocations = optimize_portfolio(todays_candidates, as_of_date)
-            
-            if allocations:
-                alloc_csv_path = os.path.join(FRONT_TEST_DIR, f"portfolio_allocation_{date_str}.csv")
-                keys = allocations[0].keys()
-                with open(alloc_csv_path, 'w', newline='') as f:
-                    dict_writer = csv.DictWriter(f, keys)
-                    dict_writer.writeheader()
-                    dict_writer.writerows(allocations)
-                logger.info(f"Exported Portfolio Allocations to {alloc_csv_path}")
-                
-                print("\n================= TODAY'S PORTFOLIO ALLOCATION (BLACK-LITTERMAN) =================")
-                for alloc in allocations:
-                    print(f"{alloc['Symbol'].ljust(15)} | Weight: {alloc['Target_Weight_Pct']:>5}% | Shares: {alloc['Suggested_Shares']:>4} | Rs: {alloc['Allocation_Rs']:>8}")
-                print("==================================================================================\n")
-        except ImportError as e:
-            logger.error(f"Could not import Portfolio Optimizer: {e}")
-        except Exception as e:
-            logger.error(f"Error during portfolio optimization: {e}")
+    try:
+        from src.screener.portfolio.portfolio_tracker import step_portfolio
+        step_portfolio(todays_candidates, as_of_date)
+    except Exception as e:
+        logger.error(f"Error during portfolio tracking/optimization: {e}")
     
     logger.info("--- Forward Test Engine Completed ---")
     cleanup_cache()
