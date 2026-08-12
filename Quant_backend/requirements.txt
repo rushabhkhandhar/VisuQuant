@@ -11,3 +11,4 @@ fastapi
 uvicorn
 mplfinance
 matplotlib
+PyPortfolioOpt==1.5.5
