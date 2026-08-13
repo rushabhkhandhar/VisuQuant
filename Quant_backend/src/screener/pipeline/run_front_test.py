@@ -88,6 +88,14 @@ def momentum_breakout_eval(df):
     if not (close > sma200 and ema50 > sma200 and ema20 > ema50):
         return {"passed": False, "reasons": ["Failed Trend Conditions"]}
         
+    # VCP (Volatility Contraction Pattern) CHECK
+    # Check that the 10-day range before the breakout is tight (< 10%)
+    recent_10d_high = df['High'].iloc[-11:-1].max()
+    recent_10d_low = df['Low'].iloc[-11:-1].min()
+    if recent_10d_low > 0:
+        if (recent_10d_high - recent_10d_low) / recent_10d_low > 0.10:
+            return {"passed": False, "reasons": ["VCP Failed (Too Volatile Before Breakout)"]}
+        
     # 3. RESISTANCE BREAKOUT
     # Calculate the maximum high of the previous 40 trading days (excluding today)
     recent_resistance = df['High'].iloc[-41:-1].max()
@@ -109,13 +117,13 @@ def momentum_breakout_eval(df):
     # 5. VOLUME CONFIRMATION
     vol = df['Volume'].iloc[-1]
     avg_vol_20 = df['Volume'].rolling(20).mean().iloc[-2] # using past average
-    if pd.isna(avg_vol_20) or vol < (1.5 * avg_vol_20):
-        return {"passed": False, "reasons": ["Volume < 1.5x Average"]}
+    if pd.isna(avg_vol_20) or vol < (2.0 * avg_vol_20):
+        return {"passed": False, "reasons": ["Volume < 2.0x Average"]}
         
     # 6. RSI
     rsi = talib.RSI(df['Close'], timeperiod=14).iloc[-1]
-    if pd.isna(rsi) or not (55 <= rsi <= 70):
-        return {"passed": False, "reasons": ["RSI not between 55 and 70"]}
+    if pd.isna(rsi) or rsi < 60:
+        return {"passed": False, "reasons": ["RSI not > 60"]}
         
     # 7. MACD
     macd, macdsignal, macdhist = talib.MACD(df['Close'], fastperiod=12, slowperiod=26, signalperiod=9)
