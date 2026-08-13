@@ -21,17 +21,16 @@ from src.screener.pipeline.run_front_test import (
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-INITIAL_CAPITAL = 1_000_000.0
+INITIAL_CAPITAL = 1_00_000.0
 MAX_WEIGHT_PER_TRADE = 0.20  # Max 20% of total equity per trade
-RISK_ATR_MULT = 1.5
-REWARD_ATR_MULT = 3.0
+FRICTION_PCT = 0.0015  # 0.15% cost per trade leg
 
 STRATEGIES = [
-    {"name": "Trend Pullback", "func": trend_pullback_eval},
-    {"name": "Momentum Breakout", "func": momentum_breakout_eval},
-    {"name": "Oversold Uptrend", "func": oversold_uptrend_eval},
-    {"name": "Volatility Compression", "func": volatility_compression_eval},
-    {"name": "Relative Strength", "func": relative_strength_eval},
+    {"name": "Trend Pullback", "func": trend_pullback_eval, "risk_atr": 1.5, "reward_atr": 3.0},
+    {"name": "Momentum Breakout", "func": momentum_breakout_eval, "risk_atr": 3.0, "reward_atr": 6.0},
+    {"name": "Oversold Uptrend", "func": oversold_uptrend_eval, "risk_atr": 2.5, "reward_atr": 5.0},
+    {"name": "Volatility Compression", "func": volatility_compression_eval, "risk_atr": 2.5, "reward_atr": 5.0},
+    {"name": "Relative Strength", "func": relative_strength_eval, "risk_atr": 2.0, "reward_atr": 4.0},
 ]
 
 def calculate_metrics(daily_equity, trades):
@@ -106,15 +105,19 @@ def run_strategy_backtest(strategy, test_dates, bulk_data):
                     # Exit logic
                     if low <= pos['stop_loss']:
                         exit_price = pos['stop_loss']
-                        pnl = (exit_price - pos['entry_price']) / pos['entry_price']
-                        cash += pos['shares'] * exit_price
+                        net_entry_cost = pos['entry_price'] * (1 + FRICTION_PCT)
+                        net_exit_revenue = exit_price * (1 - FRICTION_PCT)
+                        pnl = (net_exit_revenue - net_entry_cost) / net_entry_cost
+                        cash += pos['shares'] * exit_price * (1 - FRICTION_PCT)
                         symbols_to_remove.append(sym)
                         
                         trades_log.append({"symbol": sym, "pnl_pct": pnl, "status": "Loss"})
                     elif high >= pos['target']:
                         exit_price = pos['target']
-                        pnl = (exit_price - pos['entry_price']) / pos['entry_price']
-                        cash += pos['shares'] * exit_price
+                        net_entry_cost = pos['entry_price'] * (1 + FRICTION_PCT)
+                        net_exit_revenue = exit_price * (1 - FRICTION_PCT)
+                        pnl = (net_exit_revenue - net_entry_cost) / net_entry_cost
+                        cash += pos['shares'] * exit_price * (1 - FRICTION_PCT)
                         symbols_to_remove.append(sym)
                         trades_log.append({"symbol": sym, "pnl_pct": pnl, "status": "Win"})
                         
@@ -144,8 +147,8 @@ def run_strategy_backtest(strategy, test_dates, bulk_data):
                             new_candidates.append({
                                 "symbol": sym,
                                 "price": close,
-                                "stop_loss": close - (atr * RISK_ATR_MULT),
-                                "target": close + (atr * REWARD_ATR_MULT)
+                                "stop_loss": close - (atr * strategy['risk_atr']),
+                                "target": close + (atr * strategy['reward_atr'])
                             })
                 except Exception as e:
                     pass # Skip if eval fails
@@ -161,9 +164,10 @@ def run_strategy_backtest(strategy, test_dates, bulk_data):
             for cand in new_candidates:
                 if cash >= alloc_per_trade and alloc_per_trade > 1000:
                     shares = int(alloc_per_trade // cand['price'])
-                    if shares > 0:
-                        cost = shares * cand['price']
-                        cash -= cost
+                    required_cash = shares * cand['price'] * (1 + FRICTION_PCT)
+                    
+                    if shares > 0 and cash >= required_cash:
+                        cash -= required_cash
                         open_positions[cand['symbol']] = {
                             "shares": shares,
                             "entry_price": cand['price'],
