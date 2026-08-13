@@ -310,7 +310,7 @@ STRATEGIES = [
         "trading_filters": [
             "Require High Liquidity (>100k Vol)"
         ],
-        "risk_management": "ATR 1.5",
+        "risk_management": "ATR 2.5",
         "ai_logic_prompt": None,
         "ai_filter_prompt": None,
         "precompiled_eval_func": oversold_uptrend_eval
@@ -329,12 +329,12 @@ STRATEGIES = [
     },
     {
         "name": "Relative Strength",
-        "description": "NIFTY 500 stocks demonstrating persistent absolute and relative momentum against the broader market.",
+        "description": "NIFTY 500 stocks that are significantly outperforming the broader market during a bullish regime, buying on minor consolidations.",
         "trading_tools": [],
         "trading_filters": [
             "Require High Liquidity (>100k Vol)"
         ],
-        "risk_management": "ATR 1.5",
+        "risk_management": "ATR 2.0",
         "ai_logic_prompt": None,
         "ai_filter_prompt": None,
         "precompiled_eval_func": relative_strength_eval
