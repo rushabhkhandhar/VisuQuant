@@ -27,10 +27,10 @@ FRICTION_PCT = 0.0015  # 0.15% cost per trade leg
 
 STRATEGIES = [
     # {"name": "Trend Pullback", "func": trend_pullback_eval, "risk_atr": 1.5, "reward_atr": 3.0},
-    # {"name": "Momentum Breakout", "func": momentum_breakout_eval, "risk_atr": 2.0, "reward_atr": 4.0},
+    {"name": "Momentum Breakout", "func": momentum_breakout_eval, "risk_atr": 2.0, "reward_atr": 4.0},
     # {"name": "Oversold Uptrend", "func": oversold_uptrend_eval, "risk_atr": 2.0, "reward_atr": 4.0},
     # {"name": "Volatility Compression", "func": volatility_compression_eval, "risk_atr": 1.5, "reward_atr": 3.0},
-    {"name": "Relative Strength", "func": relative_strength_eval, "risk_atr": 2.0, "reward_atr": 4.0},
+    # {"name": "Relative Strength", "func": relative_strength_eval, "risk_atr": 2.0, "reward_atr": 4.0},
 ]
 
 def calculate_metrics(daily_equity, trades):
@@ -127,7 +127,15 @@ def run_strategy_backtest(strategy, test_dates, bulk_data):
         # 2. Evaluate new candidates if we have cash
         new_candidates = []
         if cash > (INITIAL_CAPITAL * 0.05): # Minimum 5% cash to bother looking for trades
+            nifty_hist = None
+            if "NIFTYBEES" in bulk_data:
+                nifty_df = bulk_data["NIFTYBEES"]
+                if current_date in nifty_df.index:
+                    nifty_hist = nifty_df[nifty_df.index <= current_date]
+
             for sym, df in bulk_data.items():
+                if sym == "NIFTYBEES":
+                    continue
                 if sym in open_positions:
                     continue
                     
@@ -138,7 +146,7 @@ def run_strategy_backtest(strategy, test_dates, bulk_data):
                     
                 # Run eval
                 try:
-                    res = strategy['func'](hist_df)
+                    res = strategy['func'](hist_df, nifty_hist=nifty_hist)
                     if res.get('passed', False):
                         close = hist_df['Close'].iloc[-1]
                         atr = talib.ATR(hist_df['High'], hist_df['Low'], hist_df['Close'], timeperiod=14).iloc[-1]
@@ -200,6 +208,8 @@ def main():
     
     logger.info(f"Loading NIFTY 500 universe...")
     universe = load_nifty500_symbols()
+    if "NIFTYBEES" not in universe:
+        universe.append("NIFTYBEES")
     
     logger.info(f"Fetching bulk history for last {total_lookback} days...")
     bulk_data = fetch_bulk_history(universe, date.today(), lookback_days=total_lookback)
@@ -247,7 +257,7 @@ def main():
             "Risk ATR": s.get("risk_atr", ""), 
             "Reward ATR": s.get("reward_atr", ""), 
             "Sizing logic": "Volatility (2% Risk)",
-            "Regime Filter": "-"
+            "Regime Filter": "RS (20d & 60d) > Nifty"
         }
         record.update(r)
         log_records.append(record)

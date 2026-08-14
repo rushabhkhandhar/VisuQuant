@@ -74,9 +74,18 @@ def trend_pullback_eval(df):
          
     return {"passed": True, "reasons": []}
 
-def momentum_breakout_eval(df):
+def momentum_breakout_eval(df, nifty_hist=None):
     if len(df) < 200:
         return {"passed": False, "reasons": ["Not enough data for 200 SMA"]}
+        
+    if nifty_hist is not None and len(nifty_hist) >= 60 and len(df) >= 60:
+        n_20 = (nifty_hist['Close'].iloc[-1] / nifty_hist['Close'].iloc[-20]) - 1
+        n_60 = (nifty_hist['Close'].iloc[-1] / nifty_hist['Close'].iloc[-60]) - 1
+        s_20 = (df['Close'].iloc[-1] / df['Close'].iloc[-20]) - 1
+        s_60 = (df['Close'].iloc[-1] / df['Close'].iloc[-60]) - 1
+        
+        if s_20 <= n_20 or s_60 <= n_60:
+            return {"passed": False, "reasons": ["Relative Strength vs NIFTY failed"]}
         
     close = df['Close'].iloc[-1]
     
@@ -132,8 +141,9 @@ def momentum_breakout_eval(df):
         
     # 9. VOLATILITY
     atr = talib.ATR(df['High'], df['Low'], df['Close'], timeperiod=14).iloc[-1]
-    if pd.isna(atr) or (atr / close) > 0.05:
-        return {"passed": False, "reasons": ["High Volatility (ATR > 5%)"]}
+    # if pd.isna(atr) or (atr / close) > 0.05:
+    #     return {"passed": False, "reasons": ["High Volatility (ATR > 5%)"]}
+
 
     return {"passed": True, "score": 1.0, "trigger_type": "Momentum Breakout"}
 
