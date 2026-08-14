@@ -27,9 +27,9 @@ FRICTION_PCT = 0.0015  # 0.15% cost per trade leg
 
 STRATEGIES = [
     # {"name": "Trend Pullback", "func": trend_pullback_eval, "risk_atr": 1.5, "reward_atr": 3.0},
-    # {"name": "Momentum Breakout", "func": momentum_breakout_eval, "risk_atr": 3.0, "reward_atr": 6.0},
-    # {"name": "Oversold Uptrend", "func": oversold_uptrend_eval, "risk_atr": 2.5, "reward_atr": 5.0},
-    # {"name": "Volatility Compression", "func": volatility_compression_eval, "risk_atr": 2.5, "reward_atr": 5.0},
+    # {"name": "Momentum Breakout", "func": momentum_breakout_eval, "risk_atr": 2.0, "reward_atr": 4.0},
+    # {"name": "Oversold Uptrend", "func": oversold_uptrend_eval, "risk_atr": 2.0, "reward_atr": 4.0},
+    # {"name": "Volatility Compression", "func": volatility_compression_eval, "risk_atr": 1.5, "reward_atr": 3.0},
     {"name": "Relative Strength", "func": relative_strength_eval, "risk_atr": 2.0, "reward_atr": 4.0},
 ]
 
