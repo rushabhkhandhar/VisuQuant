@@ -234,7 +234,36 @@ def main():
     curves_path = os.path.join(os.path.dirname(tear_sheet_path), "strategy_equity_curves.csv")
     curves_df.to_csv(curves_path)
     
+    # Append to experiment log
+    from datetime import datetime
+    experiment_log_path = os.path.join(os.path.dirname(tear_sheet_path), "experiment_log.csv")
+    log_records = []
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    for r, s in zip(results, STRATEGIES):
+        # r is metrics dict, s is strategy dict
+        record = {
+            "Timestamp": timestamp, 
+            "Strategy": s["name"], 
+            "Risk ATR": s.get("risk_atr", ""), 
+            "Reward ATR": s.get("reward_atr", ""), 
+            "Sizing logic": "Volatility (2% Risk)",
+            "Regime Filter": "-"
+        }
+        record.update(r)
+        log_records.append(record)
+        
+    log_df = pd.DataFrame(log_records)
+    if os.path.exists(experiment_log_path):
+        existing_df = pd.read_csv(experiment_log_path)
+        combined_df = pd.concat([existing_df, log_df], ignore_index=True)
+        combined_df.fillna("-", inplace=True)
+        combined_df.to_csv(experiment_log_path, index=False)
+    else:
+        log_df.fillna("-", inplace=True)
+        log_df.to_csv(experiment_log_path, index=False)
+    
     logger.info(f"Tear sheet successfully generated and saved to {tear_sheet_path}")
+    logger.info(f"Appended results to {experiment_log_path}")
     print("\n================= STRATEGY TEAR SHEET (LAST 2 YEARS) =================")
     print(results_df.to_string())
     print("======================================================================\n")

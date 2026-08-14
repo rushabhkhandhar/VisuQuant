@@ -271,8 +271,8 @@ def relative_strength_eval(df):
         
     # 5. RSI
     rsi = talib.RSI(df['Close'], timeperiod=14).iloc[-1]
-    if not (55 <= rsi <= 70):
-        return {"passed": False, "reasons": [f"RSI {rsi:.2f} not in (55, 70)"]}
+    if not (55 <= rsi <= 80):
+        return {"passed": False, "reasons": [f"RSI {rsi:.2f} not in (55, 80)"]}
         
     # 7. VOLUME (Ensure reasonable volume)
     vol_sma20 = df['Volume'].rolling(20).mean().iloc[-1]
