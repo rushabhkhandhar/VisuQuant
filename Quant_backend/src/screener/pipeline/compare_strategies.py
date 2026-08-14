@@ -27,10 +27,10 @@ FRICTION_PCT = 0.0015  # 0.15% cost per trade leg
 
 STRATEGIES = [
     # {"name": "Trend Pullback", "func": trend_pullback_eval, "risk_atr": 1.5, "reward_atr": 3.0},
-    {"name": "Momentum Breakout", "func": momentum_breakout_eval, "risk_atr": 3.0, "reward_atr": 6.0},
+    # {"name": "Momentum Breakout", "func": momentum_breakout_eval, "risk_atr": 3.0, "reward_atr": 6.0},
     # {"name": "Oversold Uptrend", "func": oversold_uptrend_eval, "risk_atr": 2.5, "reward_atr": 5.0},
     # {"name": "Volatility Compression", "func": volatility_compression_eval, "risk_atr": 2.5, "reward_atr": 5.0},
-    # {"name": "Relative Strength", "func": relative_strength_eval, "risk_atr": 2.0, "reward_atr": 4.0},
+    {"name": "Relative Strength", "func": relative_strength_eval, "risk_atr": 2.0, "reward_atr": 4.0},
 ]
 
 def calculate_metrics(daily_equity, trades):
@@ -155,26 +155,34 @@ def run_strategy_backtest(strategy, test_dates, bulk_data):
                     
         # 3. Allocate Cash
         if new_candidates:
-            # Simple equal weight across new candidates, capped at MAX_WEIGHT_PER_TRADE
             total_equity = cash + sum(p['shares'] * p['current_price'] for p in open_positions.values())
             max_alloc_per_trade = total_equity * MAX_WEIGHT_PER_TRADE
             
-            alloc_per_trade = min(cash / len(new_candidates), max_alloc_per_trade)
-            
             for cand in new_candidates:
-                if cash >= alloc_per_trade and alloc_per_trade > 1000:
-                    shares = int(alloc_per_trade // cand['price'])
-                    required_cash = shares * cand['price'] * (1 + FRICTION_PCT)
+                # Volatility sizing: Risk 2% of total equity
+                risk_amount = total_equity * 0.02
+                risk_per_share = cand['price'] - cand['stop_loss']
+                
+                if risk_per_share <= 0:
+                    continue
                     
-                    if shares > 0 and cash >= required_cash:
-                        cash -= required_cash
-                        open_positions[cand['symbol']] = {
-                            "shares": shares,
-                            "entry_price": cand['price'],
-                            "current_price": cand['price'],
-                            "stop_loss": cand['stop_loss'],
-                            "target": cand['target']
-                        }
+                ideal_shares = int(risk_amount / risk_per_share)
+                
+                # Cap the trade value to MAX_WEIGHT_PER_TRADE
+                max_shares = int(max_alloc_per_trade / cand['price'])
+                shares = min(ideal_shares, max_shares)
+                
+                required_cash = shares * cand['price'] * (1 + FRICTION_PCT)
+                
+                if shares > 0 and cash >= required_cash:
+                    cash -= required_cash
+                    open_positions[cand['symbol']] = {
+                        "shares": shares,
+                        "entry_price": cand['price'],
+                        "current_price": cand['price'],
+                        "stop_loss": cand['stop_loss'],
+                        "target": cand['target']
+                    }
                         
         # 4. Record Daily Equity
         total_equity = cash + sum(p['shares'] * p['current_price'] for p in open_positions.values())
