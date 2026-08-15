@@ -30,7 +30,7 @@ STRATEGIES = [
     {"name": "Momentum Breakout", "func": momentum_breakout_eval, "risk_atr": 2.0, "reward_atr": 4.0},
     # {"name": "Oversold Uptrend", "func": oversold_uptrend_eval, "risk_atr": 2.0, "reward_atr": 4.0},
     # {"name": "Volatility Compression", "func": volatility_compression_eval, "risk_atr": 1.5, "reward_atr": 3.0},
-    # {"name": "Relative Strength", "func": relative_strength_eval, "risk_atr": 2.0, "reward_atr": 4.0},
+    {"name": "Relative Strength", "func": relative_strength_eval, "risk_atr": 2.0, "reward_atr": 4.0},
 ]
 
 def calculate_metrics(daily_equity, trades):
@@ -201,6 +201,137 @@ def run_strategy_backtest(strategy, test_dates, bulk_data):
     return metrics, daily_equity_curve
 
 
+
+def run_ensemble_backtest(strategies, test_dates, bulk_data):
+    logger.info(f"Backtesting Ensemble (Combined)...")
+    
+    cash = INITIAL_CAPITAL
+    open_positions = {}
+    daily_equity_curve = []
+    trades_log = []
+    
+    for i, current_date in enumerate(test_dates):
+        # 1. Update prices and check exits
+        symbols_to_remove = []
+        for sym, pos in open_positions.items():
+            if sym in bulk_data:
+                df = bulk_data[sym]
+                if current_date in df.index:
+                    row = df.loc[current_date]
+                    
+                    if isinstance(row, pd.DataFrame):
+                        row = row.iloc[-1]
+                        
+                    high = row['High']
+                    low = row['Low']
+                    close = row['Close']
+                    
+                    pos['current_price'] = close
+                    
+                    # Exit logic
+                    if low <= pos['stop_loss']:
+                        exit_price = pos['stop_loss']
+                        net_entry_cost = pos['entry_price'] * (1 + FRICTION_PCT)
+                        net_exit_revenue = exit_price * (1 - FRICTION_PCT)
+                        pnl = (net_exit_revenue - net_entry_cost) / net_entry_cost
+                        cash += pos['shares'] * exit_price * (1 - FRICTION_PCT)
+                        symbols_to_remove.append(sym)
+                        
+                        trades_log.append({"symbol": sym, "pnl_pct": pnl, "status": "Loss"})
+                    elif high >= pos['target']:
+                        exit_price = pos['target']
+                        net_entry_cost = pos['entry_price'] * (1 + FRICTION_PCT)
+                        net_exit_revenue = exit_price * (1 - FRICTION_PCT)
+                        pnl = (net_exit_revenue - net_entry_cost) / net_entry_cost
+                        cash += pos['shares'] * exit_price * (1 - FRICTION_PCT)
+                        symbols_to_remove.append(sym)
+                        trades_log.append({"symbol": sym, "pnl_pct": pnl, "status": "Win"})
+                        
+        for sym in symbols_to_remove:
+            del open_positions[sym]
+            
+        # 2. Evaluate new candidates if we have cash
+        new_candidates = []
+        if cash > (INITIAL_CAPITAL * 0.05): # Minimum 5% cash to bother looking for trades
+            nifty_hist = None
+            if "NIFTYBEES" in bulk_data:
+                nifty_df = bulk_data["NIFTYBEES"]
+                if current_date in nifty_df.index:
+                    nifty_hist = nifty_df[nifty_df.index <= current_date]
+
+            for sym, df in bulk_data.items():
+                if sym == "NIFTYBEES":
+                    continue
+                if sym in open_positions:
+                    continue
+                    
+                # Slice history up to current date
+                hist_df = df[df.index <= current_date]
+                if len(hist_df) < 200:
+                    continue
+                    
+                # Run eval for all strategies
+                for strategy in strategies:
+                    try:
+                        res = strategy['func'](hist_df, nifty_hist=nifty_hist)
+                        if res.get('passed', False):
+                            close = hist_df['Close'].iloc[-1]
+                            atr = talib.ATR(hist_df['High'], hist_df['Low'], hist_df['Close'], timeperiod=14).iloc[-1]
+                            
+                            if pd.notna(atr) and atr > 0:
+                                new_candidates.append({
+                                    "symbol": sym,
+                                    "price": close,
+                                    "stop_loss": close - (atr * strategy['risk_atr']),
+                                    "target": close + (atr * strategy['reward_atr']),
+                                    "strategy_name": strategy['name']
+                                })
+                                break # Do not evaluate further strategies for this symbol if one triggered
+                    except Exception as e:
+                        pass # Skip if eval fails
+                    
+        # 3. Allocate Cash
+        if new_candidates:
+            total_equity = cash + sum(p['shares'] * p['current_price'] for p in open_positions.values())
+            max_alloc_per_trade = total_equity * MAX_WEIGHT_PER_TRADE
+            
+            for cand in new_candidates:
+                # Volatility sizing: Risk 2% of total equity
+                risk_amount = total_equity * 0.02
+                risk_per_share = cand['price'] - cand['stop_loss']
+                
+                if risk_per_share <= 0:
+                    continue
+                    
+                ideal_shares = int(risk_amount / risk_per_share)
+                
+                # Cap the trade value to MAX_WEIGHT_PER_TRADE
+                max_shares = int(max_alloc_per_trade / cand['price'])
+                shares = min(ideal_shares, max_shares)
+                
+                required_cash = shares * cand['price'] * (1 + FRICTION_PCT)
+                
+                if shares > 0 and cash >= required_cash:
+                    cash -= required_cash
+                    open_positions[cand['symbol']] = {
+                        "shares": shares,
+                        "entry_price": cand['price'],
+                        "current_price": cand['price'],
+                        "stop_loss": cand['stop_loss'],
+                        "target": cand['target'],
+                        "strategy": cand['strategy_name']
+                    }
+                        
+        # 4. Record Daily Equity
+        total_equity = cash + sum(p['shares'] * p['current_price'] for p in open_positions.values())
+        daily_equity_curve.append(total_equity)
+        
+    metrics = calculate_metrics(daily_equity_curve, trades_log)
+    metrics["Strategy"] = "Ensemble (Combined)"
+    return metrics, daily_equity_curve
+
+
+
 def main():
     years = 2
     backtest_days = int(years * 252)
@@ -213,6 +344,8 @@ def main():
     
     logger.info(f"Fetching bulk history for last {total_lookback} days...")
     bulk_data = fetch_bulk_history(universe, date.today(), lookback_days=total_lookback)
+    
+
     
     # Align dates
     all_dates = set()
@@ -232,6 +365,11 @@ def main():
         results.append(metrics)
         curves[strategy['name']] = curve
         
+    # Run Ensemble
+    ensemble_metrics, ensemble_curve = run_ensemble_backtest(STRATEGIES, test_dates, bulk_data)
+    results.append(ensemble_metrics)
+    curves["Ensemble (Combined)"] = ensemble_curve
+        
     # Compile Tear Sheet
     results_df = pd.DataFrame(results)
     results_df = results_df.set_index("Strategy")
@@ -249,13 +387,12 @@ def main():
     experiment_log_path = os.path.join(os.path.dirname(tear_sheet_path), "experiment_log.csv")
     log_records = []
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    for r, s in zip(results, STRATEGIES):
-        # r is metrics dict, s is strategy dict
+    for r in results:
         record = {
             "Timestamp": timestamp, 
-            "Strategy": s["name"], 
-            "Risk ATR": s.get("risk_atr", ""), 
-            "Reward ATR": s.get("reward_atr", ""), 
+            "Strategy": r["Strategy"], 
+            "Risk ATR": 2.0, 
+            "Reward ATR": 4.0, 
             "Sizing logic": "Volatility (2% Risk)",
             "Regime Filter": "RS (20d & 60d) > Nifty"
         }

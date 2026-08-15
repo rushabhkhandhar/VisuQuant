@@ -251,7 +251,7 @@ def volatility_compression_eval(df):
         
     return {"passed": True, "score": 1.0, "trigger_type": "Volatility Compression Breakout"}
 
-def relative_strength_eval(df):
+def relative_strength_eval(df, nifty_hist=None):
     if len(df) < 200:
         return {"passed": False, "reasons": ["Not enough data for 200 SMA"]}
         
@@ -276,8 +276,17 @@ def relative_strength_eval(df):
         return {"passed": False, "reasons": ["Negative absolute momentum"]}
         
     # 4. RELATIVE MOMENTUM
-    if ret_20 <= BENCHMARK_RETURNS.get("20d", 0) or ret_60 <= BENCHMARK_RETURNS.get("60d", 0):
-        return {"passed": False, "reasons": ["Underperforming benchmark"]}
+    n_ret_20 = 0.0
+    n_ret_60 = 0.0
+    if nifty_hist is not None and len(nifty_hist) > 60:
+        nifty_close_20 = nifty_hist['Close'].iloc[-21]
+        nifty_close_60 = nifty_hist['Close'].iloc[-61]
+        nifty_close = nifty_hist['Close'].iloc[-1]
+        n_ret_20 = (nifty_close - nifty_close_20) / nifty_close_20
+        n_ret_60 = (nifty_close - nifty_close_60) / nifty_close_60
+        
+    if ret_20 <= n_ret_20 or ret_60 <= n_ret_60:
+        return {"passed": False, "reasons": ["Underperforming Nifty"]}
         
     # 5. RSI
     rsi = talib.RSI(df['Close'], timeperiod=14).iloc[-1]
