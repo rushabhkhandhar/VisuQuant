@@ -5,8 +5,10 @@ import csv
 import logging
 from datetime import date, datetime
 import pandas as pd
+import numpy as np
 import uuid
 import talib
+from sklearn.linear_model import LinearRegression
 
 # Add the project root to sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
@@ -27,7 +29,7 @@ METRICS_FILE = os.path.join(FRONT_TEST_DIR, "metrics.csv")
 # Global dict to track benchmark relative strength
 BENCHMARK_RETURNS = {"20d": 0.0, "60d": 0.0}
 
-def trend_pullback_eval(df):
+def trend_pullback_eval(df, nifty_hist=None, sector_hist=None):
     if len(df) < 200:
         return {"passed": False, "reasons": ["Not enough data for 200 SMA"]}
     
@@ -74,7 +76,7 @@ def trend_pullback_eval(df):
          
     return {"passed": True, "reasons": []}
 
-def momentum_breakout_eval(df, nifty_hist=None):
+def momentum_breakout_eval(df, nifty_hist=None, sector_hist=None):
     if len(df) < 200:
         return {"passed": False, "reasons": ["Not enough data for 200 SMA"]}
         
@@ -147,7 +149,7 @@ def momentum_breakout_eval(df, nifty_hist=None):
 
     return {"passed": True, "score": 1.0, "trigger_type": "Momentum Breakout"}
 
-def oversold_uptrend_eval(df):
+def oversold_uptrend_eval(df, nifty_hist=None, sector_hist=None):
     if len(df) < 200:
         return {"passed": False, "reasons": ["Not enough data for 200 SMA"]}
         
@@ -197,7 +199,7 @@ def oversold_uptrend_eval(df):
         
     return {"passed": True, "score": 1.0, "trigger_type": "Oversold Uptrend"}
 
-def volatility_compression_eval(df):
+def volatility_compression_eval(df, nifty_hist=None, sector_hist=None):
     if len(df) < 200:
         return {"passed": False, "reasons": ["Not enough data for 200 SMA"]}
         
@@ -251,7 +253,7 @@ def volatility_compression_eval(df):
         
     return {"passed": True, "score": 1.0, "trigger_type": "Volatility Compression Breakout"}
 
-def relative_strength_eval(df, nifty_hist=None):
+def relative_strength_eval(df, nifty_hist=None, sector_hist=None):
     if len(df) < 200:
         return {"passed": False, "reasons": ["Not enough data for 200 SMA"]}
         
@@ -275,18 +277,44 @@ def relative_strength_eval(df, nifty_hist=None):
     if ret_20 <= 0 or ret_60 <= 0:
         return {"passed": False, "reasons": ["Negative absolute momentum"]}
         
-    # 4. RELATIVE MOMENTUM
-    n_ret_20 = 0.0
-    n_ret_60 = 0.0
-    if nifty_hist is not None and len(nifty_hist) > 60:
-        nifty_close_20 = nifty_hist['Close'].iloc[-21]
-        nifty_close_60 = nifty_hist['Close'].iloc[-61]
-        nifty_close = nifty_hist['Close'].iloc[-1]
-        n_ret_20 = (nifty_close - nifty_close_20) / nifty_close_20
-        n_ret_60 = (nifty_close - nifty_close_60) / nifty_close_60
+    # 4. FACTOR STRIPPING (IDIOSYNCRATIC MOMENTUM)
+    if nifty_hist is not None and sector_hist is not None and len(nifty_hist) > 60 and len(sector_hist) > 60:
+        # Get daily returns as pandas Series to preserve date index
+        stock_ret = df['Close'].pct_change().fillna(0)
+        nifty_ret = nifty_hist['Close'].pct_change().fillna(0)
+        sector_ret = sector_hist['Close'].pct_change().fillna(0)
         
-    if ret_20 <= n_ret_20 or ret_60 <= n_ret_60:
-        return {"passed": False, "reasons": ["Underperforming Nifty"]}
+        # Enforce strict date alignment to prevent forward bias (comparing misaligned days)
+        aligned = pd.concat([stock_ret, nifty_ret, sector_ret], axis=1, join='inner').dropna()
+        aligned = aligned.iloc[-60:]
+        
+        if len(aligned) < 30:
+            return {"passed": False, "reasons": ["Not enough aligned dates for regression"]}
+            
+        # Regress Stock = Alpha + B1*Nifty + B2*Sector
+        y = aligned.iloc[:, 0].values
+        X = aligned.iloc[:, 1:3].values
+        
+        model = LinearRegression()
+        model.fit(X, y)
+        
+        # Alpha is daily residual return. Multiply by window to get total 60-day alpha
+        idiosyncratic_return = model.intercept_ * len(aligned)
+        
+        if idiosyncratic_return <= 0.05: # Require at least 5% alpha over 60 days
+            return {"passed": False, "reasons": [f"Low Idiosyncratic Momentum (Alpha: {idiosyncratic_return:.3f})"]}
+    else:
+        n_ret_20 = 0.0
+        n_ret_60 = 0.0
+        if nifty_hist is not None and len(nifty_hist) > 60:
+            nifty_close_20 = nifty_hist['Close'].iloc[-21]
+            nifty_close_60 = nifty_hist['Close'].iloc[-61]
+            nifty_close = nifty_hist['Close'].iloc[-1]
+            n_ret_20 = (nifty_close - nifty_close_20) / nifty_close_20
+            n_ret_60 = (nifty_close - nifty_close_60) / nifty_close_60
+            
+        if ret_20 <= n_ret_20 or ret_60 <= n_ret_60:
+            return {"passed": False, "reasons": ["Underperforming Nifty"]}
         
     # 5. RSI
     rsi = talib.RSI(df['Close'], timeperiod=14).iloc[-1]

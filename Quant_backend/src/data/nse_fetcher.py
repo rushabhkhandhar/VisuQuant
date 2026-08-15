@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional, Sequence
 import urllib.error
 from urllib.request import Request, urlopen
 import pandas as pd
+import re
 from concurrent.futures import ThreadPoolExecutor
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -333,6 +334,55 @@ def load_nifty500_symbols() -> List[str]:
         "https://www.niftyindices.com/IndexConstituent/ind_nifty500list.csv",
     ]
     return _load_symbols_from_csv_urls(urls, column_name="Symbol")
+
+def load_nifty500_industry_mapping() -> Dict[str, str]:
+    """Fetch NIFTY 500 constituents and return a mapping of Symbol -> Industry."""
+    urls = [
+        "https://niftyindices.com/IndexConstituent/ind_nifty500list.csv",
+        "https://www.niftyindices.com/IndexConstituent/ind_nifty500list.csv",
+    ]
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "text/csv,text/plain,*/*",
+    }
+    last_error: Optional[Exception] = None
+    for url in urls:
+        try:
+            request = Request(url, headers=headers)
+            with urlopen(request, timeout=20) as response:
+                content = response.read().decode("utf-8", errors="ignore")
+
+            raw = pd.read_csv(
+                StringIO(content),
+                skipinitialspace=True,
+                engine="python",
+                on_bad_lines="skip",
+            )
+            
+            # Map columns safely
+            col_mapping = {str(c).strip().upper(): str(c).strip() for c in raw.columns}
+            if "SYMBOL" not in col_mapping or "INDUSTRY" not in col_mapping:
+                continue
+                
+            symbol_col = col_mapping["SYMBOL"]
+            industry_col = col_mapping["INDUSTRY"]
+            
+            # Create mapping, filtering out invalid symbols
+            mapping = {}
+            for _, row in raw.iterrows():
+                sym = str(row[symbol_col]).strip().upper()
+                ind = str(row[industry_col]).strip()
+                if pd.notna(sym) and sym != "NAN" and re.match(r"^[A-Z0-9&\-]+$", sym):
+                    mapping[sym] = ind
+                    
+            if mapping:
+                return mapping
+                
+        except Exception as exc:
+            last_error = exc
+            continue
+
+    raise RuntimeError(f"Unable to load industry mapping. Last error: {last_error}")
 
 def get_ohlcv(symbol: str, start: date, end: date) -> Optional[pd.DataFrame]:
     """

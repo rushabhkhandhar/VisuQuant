@@ -9,7 +9,7 @@ import talib
 # Add the project root to sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 
-from src.data.nse_fetcher import fetch_bulk_history, load_nifty500_symbols
+from src.data.nse_fetcher import fetch_bulk_history, load_nifty500_symbols, load_nifty500_industry_mapping
 from src.screener.pipeline.run_front_test import (
     trend_pullback_eval,
     momentum_breakout_eval,
@@ -76,7 +76,7 @@ def calculate_metrics(daily_equity, trades):
         "Total Trades": len(trades)
     }
 
-def run_strategy_backtest(strategy, test_dates, bulk_data):
+def run_strategy_backtest(strategy, test_dates, bulk_data, industry_mapping=None, sector_indices=None):
     logger.info(f"Backtesting {strategy['name']}...")
     
     cash = INITIAL_CAPITAL
@@ -146,7 +146,13 @@ def run_strategy_backtest(strategy, test_dates, bulk_data):
                     
                 # Run eval
                 try:
-                    res = strategy['func'](hist_df, nifty_hist=nifty_hist)
+                    sector_hist = None
+                    if industry_mapping and sector_indices and sym in industry_mapping:
+                        ind = industry_mapping[sym]
+                        if ind in sector_indices:
+                            sector_hist = sector_indices[ind][sector_indices[ind].index <= current_date]
+                            
+                    res = strategy['func'](hist_df, nifty_hist=nifty_hist, sector_hist=sector_hist)
                     if res.get('passed', False):
                         close = hist_df['Close'].iloc[-1]
                         atr = talib.ATR(hist_df['High'], hist_df['Low'], hist_df['Close'], timeperiod=14).iloc[-1]
@@ -202,7 +208,7 @@ def run_strategy_backtest(strategy, test_dates, bulk_data):
 
 
 
-def run_ensemble_backtest(strategies, test_dates, bulk_data):
+def run_ensemble_backtest(strategies, test_dates, bulk_data, industry_mapping=None, sector_indices=None):
     logger.info(f"Backtesting Ensemble (Combined)...")
     
     cash = INITIAL_CAPITAL
@@ -273,7 +279,13 @@ def run_ensemble_backtest(strategies, test_dates, bulk_data):
                 # Run eval for all strategies
                 for strategy in strategies:
                     try:
-                        res = strategy['func'](hist_df, nifty_hist=nifty_hist)
+                        sector_hist = None
+                        if industry_mapping and sector_indices and sym in industry_mapping:
+                            ind = industry_mapping[sym]
+                            if ind in sector_indices:
+                                sector_hist = sector_indices[ind][sector_indices[ind].index <= current_date]
+                                
+                        res = strategy['func'](hist_df, nifty_hist=nifty_hist, sector_hist=sector_hist)
                         if res.get('passed', False):
                             close = hist_df['Close'].iloc[-1]
                             atr = talib.ATR(hist_df['High'], hist_df['Low'], hist_df['Close'], timeperiod=14).iloc[-1]
@@ -360,13 +372,34 @@ def main():
     results = []
     curves = {}
     
+    logger.info("Loading industry mapping and constructing synthetic sector indices...")
+    industry_mapping = load_nifty500_industry_mapping()
+    
+    # Construct sector indices
+    sector_indices = {}
+    sectors = {}
+    for sym, df in bulk_data.items():
+        if sym in industry_mapping and not df.empty:
+            ind = industry_mapping[sym]
+            if ind not in sectors:
+                sectors[ind] = []
+            # Calculate daily returns for the symbol
+            sectors[ind].append(df['Close'].pct_change().fillna(0))
+            
+    for ind, returns_list in sectors.items():
+        # Average return across all stocks in this sector for each day
+        avg_returns = pd.concat(returns_list, axis=1).mean(axis=1)
+        # Create a synthetic price index starting at 100
+        synthetic_price = 100 * (1 + avg_returns).cumprod()
+        sector_indices[ind] = pd.DataFrame({"Close": synthetic_price})
+    
     for strategy in STRATEGIES:
-        metrics, curve = run_strategy_backtest(strategy, test_dates, bulk_data)
+        metrics, curve = run_strategy_backtest(strategy, test_dates, bulk_data, industry_mapping, sector_indices)
         results.append(metrics)
         curves[strategy['name']] = curve
         
     # Run Ensemble
-    ensemble_metrics, ensemble_curve = run_ensemble_backtest(STRATEGIES, test_dates, bulk_data)
+    ensemble_metrics, ensemble_curve = run_ensemble_backtest(STRATEGIES, test_dates, bulk_data, industry_mapping, sector_indices)
     results.append(ensemble_metrics)
     curves["Ensemble (Combined)"] = ensemble_curve
         
