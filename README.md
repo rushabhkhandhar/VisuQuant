@@ -172,6 +172,7 @@ finvison_tech_analysis/
 The foundational quantitative filtering layer that scans the entire market (500 symbols).
 - **`pipeline/run_custom_screen.py` & `pipeline/run_custom_backtest.py`**: The execution engines for the Custom Strategy Builder. They dynamically compile AI-generated Pandas code within an isolated, dependency-injected sandbox (ensuring `talib`, `numpy`, and `pandas` are always available) and enforce strict AND logic across all selected filters.
 - **`pipeline/run_live_screener.py`**: The dedicated 3:15 PM live execution entry point. It fetches live prices from TradingView, dynamically inherits the best-performing EOD strategy logic (e.g., 30% CAGR MOC setups), and outputs actionable BUY/SELL signals before the market closes.
+- **`pipeline/run_intraday_orb.py`**: The 10:15 AM Opening Range Breakout screener. Scans NIFTY 500 for stocks breaking out of their first-hour range with institutional volume, filtered through 6 sequential gates (Liquidity, Daily Trend, Market Regime, Volume Surge, Coiled Spring, Clean Air). Outputs ranked candidates with stop-loss/target levels to CSV.
 - **`pipeline/run_daily_screen.py`**: The orchestrator for the institutional screener. It applies sequential filtering: Liquidity -> Stage 1 (Minervini VCP Template with dynamic ATR percentile thresholds) -> Stage 1.5 (Fundamental Quality filtering via Screener.in) -> Stage 2 (Trigger Layer for active setups like Bollinger Breakout or Engulfing). It also runs a market regime check on the NIFTY500 to dynamically tag the macro environment (Trending Up, Trending Down, or Choppy).
 - **`pipeline/handoff.py`**: Packages the strictly validated signals (trigger type, composite score, regime, and quantitative metrics) into a VisuQuant payload and pipes them directly into the generative Chart Capture workflow.
 - **`pipeline/backtest.py`**: Contains strict statistical significance tests, including placebo/shuffle loops and walk-forward block validation, to ensure that the alpha of any trigger logic is durable and not curve-fitted.
@@ -182,7 +183,7 @@ The foundational quantitative filtering layer that scans the entire market (500 
 - **`config.py`**: Holds strategy thresholds (liquidity, ATR, BB lookbacks) and the core `REGIME_STRATEGIES` dictionary that dynamically maps trigger patterns to the Bullish, Bearish, or Choppy market environments.
 
 ### `data/` (Acquisition & Fetching)
-- **`live_tv_fetcher.py`**: A specialized wrapper around `tvdatafeed` that fetches real-time prices for the entire NIFTY 500 universe sequentially. Bypasses broker APIs to empower the 3:15 PM MOC live screener.
+- **`live_tv_fetcher.py`**: A specialized wrapper around `tvdatafeed` that fetches real-time daily and intraday prices for the entire NIFTY 500 universe sequentially. Supports `in_daily`, `in_1_hour`, `in_15_minute` and all other TradingView intervals. Powers both the 3:15 PM MOC screener and the 10:15 AM ORB screener.
 - **`nse_fetcher.py`**: Handles live market data scraping from NSE Bhavcopy and implements highly-optimized caching for massive historical lookbacks. It also exposes the `get_ohlcv` wrapper that serves clean data to the screener, automatically flagging circuit limits and corporate action gaps.
 - **`screener_in_client.py`**: Uses asynchronous Playwright automation to scrape real-time financial tables (P&L, Quarters, Investors) directly from Screener.in to fuel the Stage 1.5 fundamental filter.
 - **`scraper.py`**: Playwright headless browser automation to capture interactive TradingView charts as base64 images.
@@ -240,6 +241,12 @@ To run the **Live 3:15 PM Strategy Execution**, run:
 ```bash
 cd Quant_backend
 python3 src/screener/pipeline/run_live_screener.py
+```
+
+To run the **Intraday 10:15 AM ORB Screener**, run:
+```bash
+cd Quant_backend
+python3 src/screener/pipeline/run_intraday_orb.py
 ```
 
 The system will autonomously fetch data, analyze the chart, reason through the indicators, and dump a production-grade PDF into the `outputs/` folder!
