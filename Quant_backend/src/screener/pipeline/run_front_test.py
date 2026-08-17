@@ -33,24 +33,34 @@ def trend_pullback_eval(df, nifty_hist=None, sector_hist=None):
     if len(df) < 200:
         return {"passed": False, "reasons": ["Not enough data for 200 SMA"]}
     
+    # 0. NIFTY REGIME FILTER (Avoid longs in market correction)
+    if nifty_hist is not None and len(nifty_hist) > 50:
+        nifty_ema50 = nifty_hist['Close'].ewm(span=50, adjust=False).mean().iloc[-1]
+        if nifty_hist['Close'].iloc[-1] < nifty_ema50:
+             return {"passed": False, "reasons": ["Nifty below 50 EMA"]}
+             
     # 1. LONG-TERM TREND
     sma200 = df['Close'].rolling(window=200).mean().iloc[-1]
     ema50 = df['Close'].ewm(span=50, adjust=False).mean().iloc[-1]
     ema20 = df['Close'].ewm(span=20, adjust=False).mean().iloc[-1]
     
+    ema50_20d_ago = df['Close'].ewm(span=50, adjust=False).mean().iloc[-20]
     close = df['Close'].iloc[-1]
     
     if not (close > sma200 and ema50 > sma200):
         return {"passed": False, "reasons": ["Failed Long-Term Trend"]}
         
+    if ema50 <= ema50_20d_ago:
+        return {"passed": False, "reasons": ["50 EMA is not rising"]}
+        
     # 2. MEDIUM-TERM TREND
     if not (ema20 > ema50):
         return {"passed": False, "reasons": ["Failed Medium-Term Trend"]}
         
-    # 4. RSI CONDITION
+    # 4. RSI CONDITION (Slightly relaxed for deeper pullbacks)
     rsi = talib.RSI(df['Close'], timeperiod=14).iloc[-1]
-    if pd.isna(rsi) or not (45 <= rsi <= 60):
-        return {"passed": False, "reasons": ["RSI not between 45 and 60"]}
+    if pd.isna(rsi) or not (40 <= rsi <= 65):
+        return {"passed": False, "reasons": ["RSI not between 40 and 65"]}
         
     # 9. VOLATILITY
     atr = talib.ATR(df['High'], df['Low'], df['Close'], timeperiod=14).iloc[-1]
@@ -58,8 +68,8 @@ def trend_pullback_eval(df, nifty_hist=None, sector_hist=None):
         return {"passed": False, "reasons": ["High Volatility (ATR > 5%)"]}
         
     # 8. AVOID CHASING
-    if close > (ema20 * 1.10):
-        return {"passed": False, "reasons": ["Extended > 10% above 20 EMA"]}
+    if close > (ema20 * 1.05):
+        return {"passed": False, "reasons": ["Extended > 5% above 20 EMA"]}
         
     # 3. CONTROLLED PULLBACK & 5. SUPPORT & 6. PRICE ACTION
     # We want a pullback near 20 EMA or 50 EMA, and a bullish stabilization.
@@ -74,7 +84,13 @@ def trend_pullback_eval(df, nifty_hist=None, sector_hist=None):
     if close <= df['Open'].iloc[-1] or close <= df['High'].iloc[-2]:
          return {"passed": False, "reasons": ["No bullish confirmation"]}
          
-    return {"passed": True, "reasons": []}
+    # Volume confirmation on the bounce
+    vol = df['Volume'].iloc[-1]
+    vol_sma20 = df['Volume'].rolling(20).mean().iloc[-1]
+    if vol < vol_sma20:
+        return {"passed": False, "reasons": ["Bounce volume below average"]}
+         
+    return {"passed": True, "score": 1.0, "trigger_type": "Trend Pullback"}
 
 def momentum_breakout_eval(df, nifty_hist=None, sector_hist=None):
     if len(df) < 200:
@@ -218,8 +234,8 @@ def volatility_compression_eval(df, nifty_hist=None, sector_hist=None):
     past_10_low = df['Low'].iloc[-11:-1].min()
     consolidation_range = (past_10_high - past_10_low) / past_10_low
     
-    if consolidation_range > 0.08: # Max 8% consolidation range
-        return {"passed": False, "reasons": ["Consolidation too loose (>8%)"]}
+    if consolidation_range > 0.06: # Max 6% consolidation range
+        return {"passed": False, "reasons": ["Consolidation too loose (>6%)"]}
         
     # 8. BREAKOUT & 5. RESISTANCE
     # Today must break above the past 10-day high
@@ -239,8 +255,8 @@ def volatility_compression_eval(df, nifty_hist=None, sector_hist=None):
         
     # 6. MOMENTUM
     rsi = talib.RSI(df['Close'], timeperiod=14).iloc[-1]
-    if not (50 <= rsi <= 65):
-        return {"passed": False, "reasons": [f"RSI {rsi:.2f} not in (50, 65)"]}
+    if rsi <= 55:
+        return {"passed": False, "reasons": [f"RSI {rsi:.2f} too low (<=55)"]}
         
     macd, macdsignal, _ = talib.MACD(df['Close'], fastperiod=12, slowperiod=26, signalperiod=9)
     if pd.isna(macd.iloc[-1]) or macd.iloc[-1] <= macdsignal.iloc[-1]:
