@@ -583,6 +583,72 @@ def run_strategies(trades, as_of_date):
         except Exception as e:
             logger.error(f"Error running strategy '{strategy['name']}': {e}")
             
+    # Build Ensemble Strategy
+    date_str = as_of_date.strftime("%Y-%m-%d")
+    todays_new_trades = [t for t in trades if t["entry_date"] == date_str and t["status"] == "OPEN" and t["strategy_name"] != "Ensemble Strategy"]
+    
+    symbol_counts = {}
+    for t in todays_new_trades:
+        symbol = t["symbol"]
+        if symbol not in symbol_counts:
+            symbol_counts[symbol] = []
+        symbol_counts[symbol].append(t)
+        
+    ensemble_candidates = []
+    for symbol, t_list in symbol_counts.items():
+        if len(t_list) >= 2:
+            # Create an Ensemble trade based on the first strategy's entry price
+            base_t = t_list[0]
+            ensemble_trade = {
+                "trade_id": str(uuid.uuid4()),
+                "strategy_name": "Ensemble Strategy",
+                "symbol": symbol,
+                "tradingview_link": base_t["tradingview_link"],
+                "entry_date": base_t["entry_date"],
+                "entry_regime": base_t["entry_regime"],
+                "entry_price": base_t["entry_price"],
+                "close_price": base_t["close_price"],
+                "stop_loss": base_t["stop_loss"],
+                "target": base_t["target"],
+                "status": "OPEN",
+                "exit_date": None,
+                "exit_regime": None,
+                "exit_price": None,
+                "pnl_pct": None,
+                "note": f"Passed {len(t_list)} strategies: " + ", ".join([x["strategy_name"] for x in t_list])
+            }
+            ensemble_candidates.append(ensemble_trade)
+            
+    if ensemble_candidates:
+        logger.info(f"Strategy 'Ensemble Strategy' found {len(ensemble_candidates)} candidates today.")
+        for et in ensemble_candidates:
+            # Prevent duplicates
+            is_duplicate = any(t["symbol"] == et["symbol"] and t["strategy_name"] == "Ensemble Strategy" and t["status"] == "OPEN" for t in trades)
+            if not is_duplicate:
+                trades.append(et)
+                logger.info(f"Logged new OPEN trade for Ensemble Strategy: {et['symbol']}")
+    else:
+        # Log dummy trade for continuous timeline
+        dummy_trade = {
+            "trade_id": str(uuid.uuid4()),
+            "strategy_name": "Ensemble Strategy",
+            "symbol": "0",
+            "tradingview_link": "-",
+            "entry_date": date_str,
+            "entry_regime": current_regime,
+            "entry_price": 0,
+            "close_price": 0,
+            "stop_loss": 0,
+            "target": 0,
+            "status": "DUMMY",
+            "exit_date": 0,
+            "exit_regime": "N/A",
+            "exit_price": 0,
+            "pnl_pct": 0
+        }
+        trades.append(dummy_trade)
+        logger.info("Logged DUMMY trade for Ensemble Strategy to keep date timeline continuous.")
+        
     return trades
 
 def calculate_metrics(trades):

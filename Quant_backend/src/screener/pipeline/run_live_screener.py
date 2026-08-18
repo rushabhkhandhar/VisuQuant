@@ -101,6 +101,28 @@ def run_live_strategies(bulk_data, nifty_hist):
                 # logger.debug(f"Error evaluating {symbol} for {strategy['name']}: {e}")
                 pass
                 
+    # Build Live Ensemble Strategy
+    symbol_counts = {}
+    for signal in new_signals:
+        if signal["action"] == "BUY":
+            symbol = signal["symbol"]
+            if symbol not in symbol_counts:
+                symbol_counts[symbol] = []
+            symbol_counts[symbol].append(signal)
+            
+    for symbol, signals in symbol_counts.items():
+        if len(signals) >= 2:
+            # Create an ensemble buy signal
+            price = signals[0]["price"]
+            strategy_names = [s["strategy"] for s in signals]
+            new_signals.append({
+                "symbol": symbol,
+                "strategy": "Ensemble Strategy",
+                "action": "BUY",
+                "price": price,
+                "note": f"Passed {len(signals)}: {', '.join(strategy_names)}"
+            })
+            
     return new_signals
 
 def print_terminal_table(title, items):
@@ -119,7 +141,7 @@ def print_terminal_table(title, items):
         price = f"{item['price']:.2f}"
         
         if "BUY" in action:
-            extra = item["strategy"]
+            extra = item.get("note", item["strategy"])
         else:
             extra = f"{item['strategy']} ({item['pnl']:.2f}%)"
             

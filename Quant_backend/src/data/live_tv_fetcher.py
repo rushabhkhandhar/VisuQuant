@@ -23,7 +23,12 @@ class LiveTVFetcher:
                 
                 if df is None or df.empty:
                     if attempt < retries:
-                        time.sleep(1)
+                        logger.debug(f"Empty data for {symbol}, possible dead connection. Reconnecting...")
+                        try:
+                            self.tv = TvDatafeed()
+                        except:
+                            pass
+                        time.sleep(2)
                         continue
                     return None
                     
@@ -41,12 +46,20 @@ class LiveTVFetcher:
                 df = df[['Open', 'High', 'Low', 'Close', 'Volume']]
                 
                 # The index is already datetime
-                time.sleep(0.5) # Anti rate-limit sleep
+                time.sleep(0.8) # Anti rate-limit sleep (increased for stability)
                 return df
                 
             except Exception as e:
                 if attempt < retries:
+                    logger.debug(f"Retrying {symbol} daily fetch after error: {e}")
                     time.sleep(2)
+                    # Force reconnect if connection was lost
+                    if "Connection" in str(e) or "timeout" in str(e).lower() or "lost" in str(e).lower():
+                        try:
+                            self.tv = TvDatafeed()
+                            time.sleep(2)
+                        except:
+                            pass
                 else:
                     logger.debug(f"Failed to fetch {symbol} after {retries} retries: {e}")
                     return None
@@ -66,7 +79,10 @@ class LiveTVFetcher:
         start_time = time.time()
         
         for i, sym in enumerate(symbols, 1):
-            if i % 50 == 0 or i == total:
+            if i % 50 == 0:
+                logger.info(f"Progress: {i}/{total} symbols fetched. Cooling down for 5 seconds...")
+                time.sleep(5)
+            elif i == total:
                 logger.info(f"Progress: {i}/{total} symbols fetched...")
                 
             try:
@@ -90,7 +106,12 @@ class LiveTVFetcher:
                 
                 if df is None or df.empty:
                     if attempt < retries:
-                        time.sleep(1)
+                        logger.debug(f"Empty intraday data for {symbol}, possible dead connection. Reconnecting...")
+                        try:
+                            self.tv = TvDatafeed()
+                        except:
+                            pass
+                        time.sleep(2)
                         continue
                     return None
                     
@@ -103,12 +124,20 @@ class LiveTVFetcher:
                 })
                 
                 df = df[['Open', 'High', 'Low', 'Close', 'Volume']]
-                time.sleep(0.5)
+                time.sleep(0.8) # Anti rate-limit sleep
                 return df
                 
             except Exception as e:
                 if attempt < retries:
+                    logger.debug(f"Retrying {symbol} intraday fetch after error: {e}")
                     time.sleep(2)
+                    # Force reconnect if connection was lost
+                    if "Connection" in str(e) or "timeout" in str(e).lower() or "lost" in str(e).lower():
+                        try:
+                            self.tv = TvDatafeed()
+                            time.sleep(2)
+                        except:
+                            pass
                 else:
                     logger.debug(f"Failed to fetch intraday {symbol} after {retries} retries: {e}")
                     return None
@@ -116,7 +145,7 @@ class LiveTVFetcher:
         return None
 
     def fetch_bulk_intraday(self, symbols: List[str], interval=Interval.in_1_hour, n_bars: int = 200) -> Dict[str, pd.DataFrame]:
-        """Fetch intraday candles for a list of symbols sequentially."""
+        """Fetch intraday candles for a list of symbols sequentially using TradingView."""
         results = {}
         total = len(symbols)
         logger.info(f"Fetching intraday ({interval}) data for {total} symbols (Sequential Mode)...")
@@ -124,7 +153,14 @@ class LiveTVFetcher:
         start_time = time.time()
         
         for i, sym in enumerate(symbols, 1):
-            if i % 50 == 0 or i == total:
+            if i % 50 == 0:
+                if self.username and self.password:
+                    logger.info(f"Intraday progress: {i}/{total} symbols fetched. Cooling down for 3 seconds...")
+                    time.sleep(3)
+                else:
+                    logger.info(f"Intraday progress: {i}/{total} symbols fetched. Cooling down for 10 seconds...")
+                    time.sleep(10)
+            elif i == total:
                 logger.info(f"Intraday progress: {i}/{total} symbols fetched...")
                 
             try:
