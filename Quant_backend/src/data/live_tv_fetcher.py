@@ -12,6 +12,8 @@ logger = logging.getLogger(__name__)
 class LiveTVFetcher:
     def __init__(self):
         # We initialize without login, but keep it silent unless it warns
+        self.username = None
+        self.password = None
         self.tv = TvDatafeed()
 
     def fetch_symbol(self, symbol: str, n_bars: int = 200, retries: int = 2) -> Optional[pd.DataFrame]:
