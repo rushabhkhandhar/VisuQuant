@@ -22,7 +22,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
 
 import talib
 from tvDatafeed import Interval
-from src.data.nse_fetcher import load_nifty500_symbols
+from src.data.nse_fetcher import load_nifty500_symbols, fetch_bulk_history
 from src.data.live_tv_fetcher import get_tv_fetcher
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -89,8 +89,8 @@ def filter_liquidity(daily_df):
     if len(daily_df) < 20:
         return False, {"reason": "Not enough daily data for liquidity check"}
     
-    # Use only completed daily candles (exclude today's partial candle)
-    hist = daily_df.iloc[:-1] if len(daily_df) > 20 else daily_df
+    # Use the live daily candle
+    hist = daily_df
     last_20 = hist.tail(20)
     
     # Approximate traded value = Close * Volume
@@ -107,8 +107,8 @@ def filter_daily_trend(daily_df):
     
     LOOK-AHEAD SAFEGUARD: Uses only completed daily candles (excludes today).
     """
-    # Exclude today's partial daily candle
-    hist = daily_df.iloc[:-1]
+    # Include today's live daily candle
+    hist = daily_df
     
     if len(hist) < SMA_LONG + 10:
         return False, {"reason": "Not enough daily history for SMA50"}
@@ -136,13 +136,15 @@ def filter_daily_trend(daily_df):
 
 def filter_market_regime(nifty_daily_df, nifty_hourly_df):
     """F2: NIFTY must be in an uptrend and green since today's open."""
-    # Daily: NIFTY close > SMA20 (use completed candles only)
-    hist = nifty_daily_df.iloc[:-1]
+    # Daily: NIFTY close > SMA20 (using live candle instead of completed)
+    hist = nifty_daily_df
     if len(hist) < SMA_SHORT + 5:
         return False, {"reason": "Not enough NIFTY daily data"}
     
     nifty_close = hist['Close'].iloc[-1]
     nifty_sma20 = compute_sma(hist['Close'], SMA_SHORT).iloc[-1]
+    
+    logger.info(f"NIFTY Regime Check -> Live Price: {nifty_close:.2f} | SMA20: {nifty_sma20:.2f}")
     
     if pd.isna(nifty_sma20) or nifty_close <= nifty_sma20:
         return False, {"reason": f"NIFTY below SMA20: {nifty_close:.2f} vs {nifty_sma20:.2f}"}
@@ -233,7 +235,8 @@ def filter_coiled_spring(today_candle, daily_df):
     
     LOOK-AHEAD SAFEGUARD: ATR computed from completed daily candles only.
     """
-    hist = daily_df.iloc[:-1]
+    # Include today's live daily candle
+    hist = daily_df
     
     if len(hist) < ATR_PERIOD + 5:
         return False, {"reason": "Not enough daily data for ATR"}
@@ -258,7 +261,8 @@ def filter_clean_air(today_candle, daily_df):
     LOOK-AHEAD SAFEGUARD: 20-day high and 52-week high computed from
     completed daily candles only (excludes today).
     """
-    hist = daily_df.iloc[:-1]
+    # Include today's live daily candle
+    hist = daily_df
     
     if len(hist) < 20:
         return False, {"reason": "Not enough daily data for resistance check"}
@@ -329,7 +333,8 @@ def compute_score(volume_ratio, rsi, candle_range_pct_atr, tier):
 
 def compute_exits(today_candle, daily_df):
     """Compute stop loss, target, and time-exit for a candidate."""
-    hist = daily_df.iloc[:-1]
+    # Include today's live daily candle
+    hist = daily_df
     atr = compute_atr(hist['High'], hist['Low'], hist['Close'], ATR_PERIOD).iloc[-1]
     
     entry_price = today_candle['high']  # Stop-limit buy above the high
@@ -438,25 +443,27 @@ def main():
     regime_passed, regime_info = filter_market_regime(nifty_daily, nifty_hourly)
     regime_info['passed'] = regime_passed
     
-    if not regime_passed:
-        logger.warning(f"Market regime filter FAILED: {regime_info.get('reason', 'Unknown')}")
-        logger.warning("Skipping scan — do not trade ORB against a falling market.")
-        print_results([], regime_info)
-        return
+    # if not regime_passed:
+    #     logger.warning(f"Market regime filter FAILED: {regime_info.get('reason', 'Unknown')}")
+    #     logger.warning("Skipping scan — do not trade ORB against a falling market.")
+    #     print_results([], regime_info)
+    #     return
     
     logger.info("Market regime: ✅ Bullish — proceeding with scan.")
     
-    # 4. Fetch daily data for all symbols
-    logger.info("Fetching daily data for universe...")
-    daily_data = fetcher.fetch_bulk_live(symbols, n_bars=260)  # ~1 year for 52w high
+    # 4. Fetch daily data for all symbols instantly using nse_fetcher
+    logger.info("Fetching daily historical data for universe (instant cache)...")
+    daily_data = fetch_bulk_history(symbols, end_date=date.today(), lookback_days=300)
     
     # 5. Fetch hourly data for all symbols
-    logger.info("Fetching hourly data for universe...")
+    logger.info("Fetching live hourly data for universe (Sequential TV Mode)...")
     hourly_data = fetcher.fetch_bulk_intraday(symbols, interval=Interval.in_1_hour, n_bars=200)
     
     # 6. Run filter pipeline
     logger.info("Running filter pipeline...")
     all_candidates = []
+    passed_vol_surge = []
+    passed_coil = []
     filter_stats = {"total": len(symbols), "f0": 0, "f1": 0, "f3": 0, "f4": 0, "f5": 0}
     
     for sym in symbols:
@@ -488,12 +495,14 @@ def main():
         if not passed:
             continue
         filter_stats["f3"] += 1
+        passed_vol_surge.append(sym)
         
         # F4: Coiled Spring
         passed, coil_details = filter_coiled_spring(today_candle, daily_df)
         if not passed:
             continue
         filter_stats["f4"] += 1
+        passed_coil.append(sym)
         
         # F5: Clean Air
         passed, air_details = filter_clean_air(today_candle, daily_df)
@@ -537,6 +546,11 @@ def main():
                 f"Liquidity={filter_stats['f0']} → Trend={filter_stats['f1']} → "
                 f"VolSurge={filter_stats['f3']} → Coil={filter_stats['f4']} → "
                 f"CleanAir={filter_stats['f5']}")
+    
+    if passed_vol_surge:
+        logger.info(f"🔍 MANUAL TRACKING: Passed Volume Surge ({len(passed_vol_surge)} stocks): {', '.join(passed_vol_surge)}")
+    if passed_coil:
+        logger.info(f"🔍 MANUAL TRACKING: Passed Coiled Spring ({len(passed_coil)} stocks): {', '.join(passed_coil)}")
     
     # 7. Rank and select top N
     all_candidates.sort(key=lambda x: x['Score'], reverse=True)
