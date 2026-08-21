@@ -178,6 +178,48 @@ class LiveTVFetcher:
         
         return results
 
+    def fetch_bulk_futures_live(self, symbols: List[str], n_bars: int = 200) -> Dict[str, pd.DataFrame]:
+        """Fetch continuous futures for a list of symbols sequentially."""
+        results = {}
+        total = len(symbols)
+        logger.info(f"Fetching live F&O futures for {total} symbols...")
+        start_time = time.time()
+        for i, sym in enumerate(symbols, 1):
+            if i % 50 == 0:
+                time.sleep(5)
+            # Append 1! for continuous futures on TradingView
+            future_symbol = f"{sym}1!"
+            try:
+                df = self.fetch_symbol(future_symbol, n_bars)
+                if df is not None and not df.empty and len(df) >= min(10, n_bars):
+                    # Store it back under the base symbol name
+                    results[sym] = df
+            except Exception as e:
+                logger.debug(f"Error fetching future {future_symbol}: {e}")
+        elapsed = time.time() - start_time
+        logger.info(f"F&O fetch complete: {len(results)}/{total} symbols in {elapsed:.2f} seconds.")
+        return results
+
+    def fetch_bulk_futures_intraday(self, symbols: List[str], interval=Interval.in_15_minute, n_bars: int = 200) -> Dict[str, pd.DataFrame]:
+        """Fetch intraday continuous futures."""
+        results = {}
+        total = len(symbols)
+        logger.info(f"Fetching intraday F&O futures ({interval}) for {total} symbols...")
+        start_time = time.time()
+        for i, sym in enumerate(symbols, 1):
+            if i % 50 == 0:
+                time.sleep(5)
+            future_symbol = f"{sym}1!"
+            try:
+                df = self.fetch_symbol_intraday(future_symbol, interval=interval, n_bars=n_bars)
+                if df is not None and not df.empty and len(df) >= min(10, n_bars):
+                    results[sym] = df
+            except Exception as e:
+                logger.debug(f"Error fetching intraday future {future_symbol}: {e}")
+        elapsed = time.time() - start_time
+        logger.info(f"Intraday F&O fetch complete: {len(results)}/{total} symbols in {elapsed:.2f} seconds.")
+        return results
+
 # Singleton instance
 _fetcher = None
 

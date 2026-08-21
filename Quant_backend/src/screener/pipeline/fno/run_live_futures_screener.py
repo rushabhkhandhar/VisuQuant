@@ -4,13 +4,13 @@ import logging
 import pandas as pd
 from datetime import datetime
 
-# Add the project root to sys.path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+# Add the project root to sys.path (since we are in fno/ directory now)
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))))
 
-from src.data.nse_fetcher import load_nifty500_symbols
+from src.data.nse_fetcher import load_fno_symbols
 from src.data.live_tv_fetcher import get_tv_fetcher
-from src.screener.pipeline.compare_strategies import STRATEGIES
-from src.screener.pipeline.run_front_test import load_state, STATE_FILE
+from src.screener.pipeline.swing.compare_strategies import STRATEGIES
+from src.screener.pipeline.swing.run_front_test import load_state, STATE_FILE
 import json
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -153,8 +153,8 @@ def main():
     print("LIVE MARKET SCREENER (3:15 PM MOC EXECUTION)".center(70))
     print("*"*70 + "\n")
     
-    logger.info("Loading NIFTY 500 universe...")
-    symbols = load_nifty500_symbols()
+    logger.info("Loading F&O universe...")
+    symbols = load_fno_symbols()
     
     # Also fetch NIFTYBEES for benchmark
     symbols.append("NIFTYBEES")

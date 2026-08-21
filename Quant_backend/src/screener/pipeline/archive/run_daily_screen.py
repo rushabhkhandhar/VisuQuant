@@ -4,7 +4,7 @@ from datetime import date
 from typing import List, Dict, Any
 import sys
 import os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../..')))
 
 from src.screener import config
 from src.data.nse_fetcher import load_nifty500_symbols, fetch_bulk_history
@@ -164,7 +164,7 @@ def run_screener(as_of_date: date = None, dry_run: bool = False, top_n: int = 5,
     # 8. Enrich top candidates with 5-Year Historical Backtest
     if top_candidates:
         log_progress(f"Running 5-Year historical backtest for top {len(top_candidates)} candidates...")
-        from src.screener.pipeline.backtest import run_backtest
+        from src.screener.pipeline.swing.backtest import run_backtest
         for cand in top_candidates:
             try:
                 bt_results = run_backtest(months=60, symbols=[cand["symbol"]], return_json=True)

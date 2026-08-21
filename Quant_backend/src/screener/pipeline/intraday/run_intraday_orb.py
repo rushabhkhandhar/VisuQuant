@@ -18,7 +18,7 @@ import numpy as np
 from datetime import datetime, date, time as dtime
 
 # Add the project root to sys.path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))))
 
 import talib
 from tvDatafeed import Interval
@@ -55,10 +55,7 @@ W_COIL = 0.25
 W_TIER = 0.25
 
 # Output paths
-FRONT_TEST_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
-    "front_testing"
-)
+FRONT_TEST_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs")
 os.makedirs(FRONT_TEST_DIR, exist_ok=True)
 CSV_OUTPUT = os.path.join(FRONT_TEST_DIR, "intraday_orb_signals.csv")
 

@@ -7,10 +7,10 @@ from datetime import date, timedelta
 import talib
 
 # Add the project root to sys.path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))))
 
 from src.data.nse_fetcher import fetch_bulk_history, load_nifty500_symbols, load_nifty500_industry_mapping
-from src.screener.pipeline.run_front_test import (
+from src.screener.pipeline.swing.run_front_test import (
     trend_pullback_eval,
     momentum_breakout_eval,
     oversold_uptrend_eval,
@@ -408,7 +408,7 @@ def main():
     results_df = results_df.set_index("Strategy")
     results_df = results_df.sort_values(by="Sharpe Ratio", ascending=False)
     
-    tear_sheet_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), "front_testing", "strategy_tear_sheet.csv")
+    tear_sheet_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))), "front_testing", "strategy_tear_sheet.csv")
     results_df.to_csv(tear_sheet_path)
     
     curves_df = pd.DataFrame(curves, index=test_dates)

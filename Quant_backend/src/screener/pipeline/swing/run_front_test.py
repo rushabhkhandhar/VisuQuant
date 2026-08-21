@@ -11,16 +11,16 @@ import talib
 from sklearn.linear_model import LinearRegression
 
 # Add the project root to sys.path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))))
 
-from src.screener.pipeline.run_custom_screen import run_custom_screener
+# from src.screener.pipeline.run_custom_screen import run_custom_screener
 from src.data.nse_fetcher import fetch_bulk_history, load_nifty500_symbols, cleanup_cache
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-FRONT_TEST_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), "front_testing")
+FRONT_TEST_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))), "front_testing")
 os.makedirs(FRONT_TEST_DIR, exist_ok=True)
 
 STATE_FILE = os.path.join(FRONT_TEST_DIR, "active_trades.json")
@@ -356,16 +356,6 @@ def relative_strength_eval(df, nifty_hist=None, sector_hist=None):
 # Define strategies here.
 STRATEGIES = [
     {
-        "name": "Trend Pullback",
-        "trading_tools": [],
-        "trading_filters": ["Require High Liquidity (>100k Vol)"],
-        "risk_management": "1.5x ATR",
-        "ai_logic_prompt": None,
-        "precompiled_eval_func": trend_pullback_eval,
-        "ai_filter_prompt": None,
-        "gemini_api_key": None
-    },
-    {
         "name": "Momentum Breakout",
         "trading_tools": [],
         "trading_filters": ["Require High Liquidity (>100k Vol)", "Require RR >= 1:2"],
@@ -373,18 +363,6 @@ STRATEGIES = [
         "ai_logic_prompt": None,
         "ai_filter_prompt": None,
         "precompiled_eval_func": momentum_breakout_eval
-    },
-    {
-        "name": "Oversold Uptrend",
-        "description": "NIFTY 500 stocks remaining in long-term bullish regime that have experienced a short-term correction into support with a reversal signal.",
-        "trading_tools": [],
-        "trading_filters": [
-            "Require High Liquidity (>100k Vol)"
-        ],
-        "risk_management": "ATR 2.5",
-        "ai_logic_prompt": None,
-        "ai_filter_prompt": None,
-        "precompiled_eval_func": oversold_uptrend_eval
     },
     {
         "name": "Volatility Compression",
@@ -512,151 +490,123 @@ def run_strategies(trades, as_of_date):
     date_str = as_of_date.strftime("%Y-%m-%d")
     current_regime = get_market_regime(as_of_date)
     
+    logger.info("Loading NIFTY 500 universe...")
+    symbols = load_nifty500_symbols()
+    if "NIFTYBEES" not in symbols:
+        symbols.append("NIFTYBEES")
+        
+    logger.info(f"Fetching bulk history up to {date_str}...")
+    bulk_data = fetch_bulk_history(symbols, end_date=as_of_date, lookback_days=300)
+    
+    nifty_hist = bulk_data.pop("NIFTYBEES") if "NIFTYBEES" in bulk_data else None
+    
+    all_raw_candidates = []
+    
     for strategy in STRATEGIES:
         logger.info(f"Running strategy: {strategy['name']}...")
-        try:
-            results = run_custom_screener(
-                as_of_date=as_of_date,
-                trading_tools=strategy["trading_tools"],
-                trading_filters=strategy["trading_filters"],
-                risk_management=strategy["risk_management"],
-                ai_logic_prompt=strategy["ai_logic_prompt"],
-                ai_filter_prompt=strategy["ai_filter_prompt"],
-                gemini_api_key=strategy.get("gemini_api_key"),
-                top_n=5,
-                progress_callback=lambda msg, level: None,
-                precompiled_eval_func=strategy.get("precompiled_eval_func")
-            )
+        eval_func = strategy.get("precompiled_eval_func")
+        if not eval_func:
+            continue
             
-            candidates = results.get("candidates", [])
-            logger.info(f"Strategy '{strategy['name']}' found {len(candidates)} candidates today.")
+        strategy_candidates = []
+        for symbol, df in bulk_data.items():
+            if len(df) < 200:
+                continue
             
-            if len(candidates) == 0:
-                dummy_trade = {
-                    "trade_id": str(uuid.uuid4()),
-                    "strategy_name": strategy["name"],
-                    "symbol": "0",
-                    "tradingview_link": "-",
-                    "entry_date": date_str,
-                    "entry_regime": current_regime,
-                    "entry_price": 0,
-                    "close_price": 0,
-                    "stop_loss": 0,
-                    "target": 0,
-                    "status": "DUMMY",
-                    "exit_date": 0,
-                    "exit_regime": "N/A",
-                    "exit_price": 0,
-                    "pnl_pct": 0
-                }
-                trades.append(dummy_trade)
-                logger.info(f"Logged DUMMY trade for {strategy['name']} to keep date timeline continuous.")
-            
-            for c in candidates:
-                # Check if we already have an open trade for this symbol/strategy combo
-                is_duplicate = any(t["symbol"] == c["symbol"] and t["strategy_name"] == strategy["name"] and t["status"] == "OPEN" for t in trades)
-                if is_duplicate:
-                    logger.info(f"Skipping {c['symbol']} - already have an OPEN trade for this strategy.")
-                    continue
+            try:
+                res = eval_func(df, nifty_hist=nifty_hist, sector_hist=None)
+                if res and res.get("passed", False):
+                    close_price = df['Close'].iloc[-1]
                     
-                actual_date = c.get("actual_date", date_str)
-                new_trade = {
-                    "trade_id": str(uuid.uuid4()),
-                    "strategy_name": strategy["name"],
-                    "symbol": c["symbol"],
-                    "tradingview_link": f"https://in.tradingview.com/chart/?symbol=NSE:{c['symbol']}",
-                    "entry_date": actual_date,
-                    "entry_regime": current_regime,
-                    "entry_price": c["entry_price"],
-                    "close_price": c["entry_price"],
-                    "stop_loss": c["stop_loss"],
-                    "target": c["target"],
-                    "status": "OPEN",
-                    "exit_date": None,
-                    "exit_regime": None,
-                    "exit_price": None,
-                    "pnl_pct": None
-                }
-                trades.append(new_trade)
-                logger.info(f"Logged new OPEN trade: {c['symbol']} at {c['entry_price']} (Data from {actual_date})")
+                    # Compute score for ranking
+                    close_20 = df['Close'].iloc[-21] if len(df) > 20 else df['Close'].iloc[0]
+                    score = (close_price - close_20) / close_20
+                    
+                    # Calculate ATR for stop loss
+                    atr = (df['High'] - df['Low']).rolling(14).mean().iloc[-1]
+                    risk_str = strategy.get("risk_management", "ATR 1.5")
+                    try:
+                        mult = float(risk_str.split(" ")[1])
+                    except:
+                        mult = 1.5
+                    
+                    stop_loss = close_price - (mult * atr) if pd.notna(atr) else close_price * 0.95
+                    risk = close_price - stop_loss
+                    target = close_price + (2.0 * risk) # RR 1:2
+                    
+                    strategy_candidates.append({
+                        "strategy_name": strategy["name"],
+                        "symbol": symbol,
+                        "tradingview_link": f"https://in.tradingview.com/chart/?symbol=NSE:{symbol}",
+                        "entry_date": date_str,
+                        "entry_regime": current_regime,
+                        "entry_price": close_price,
+                        "close_price": close_price,
+                        "stop_loss": stop_loss,
+                        "target": target,
+                        "status": "OPEN",
+                        "exit_date": None,
+                        "exit_regime": None,
+                        "exit_price": None,
+                        "pnl_pct": None,
+                        "score": score
+                    })
+            except Exception as e:
+                pass
                 
-        except Exception as e:
-            logger.error(f"Error running strategy '{strategy['name']}': {e}")
-            
-    # Build Ensemble Strategy
-    date_str = as_of_date.strftime("%Y-%m-%d")
-    todays_new_trades = [t for t in trades if t["entry_date"] == date_str and t["status"] == "OPEN" and t["strategy_name"] != "Ensemble Strategy"]
-    
-    symbol_counts = {}
-    for t in todays_new_trades:
-        symbol = t["symbol"]
-        if symbol not in symbol_counts:
-            symbol_counts[symbol] = []
-        symbol_counts[symbol].append(t)
+        all_raw_candidates.extend(strategy_candidates)
         
+    # Build Ensemble Strategy
+    symbol_counts = {}
+    for t in all_raw_candidates:
+        if t["entry_date"] == date_str:
+            symbol = t["symbol"]
+            if symbol not in symbol_counts:
+                symbol_counts[symbol] = []
+            symbol_counts[symbol].append(t)
+            
     ensemble_candidates = []
     for symbol, t_list in symbol_counts.items():
         if len(t_list) >= 2:
-            # Create an Ensemble trade based on the first strategy's entry price
             base_t = t_list[0]
-            ensemble_trade = {
-                "trade_id": str(uuid.uuid4()),
-                "strategy_name": "Ensemble Strategy",
-                "symbol": symbol,
-                "tradingview_link": base_t["tradingview_link"],
-                "entry_date": base_t["entry_date"],
-                "entry_regime": base_t["entry_regime"],
-                "entry_price": base_t["entry_price"],
-                "close_price": base_t["close_price"],
-                "stop_loss": base_t["stop_loss"],
-                "target": base_t["target"],
-                "status": "OPEN",
-                "exit_date": None,
-                "exit_regime": None,
-                "exit_price": None,
-                "pnl_pct": None,
-                "note": f"Passed {len(t_list)} strategies: " + ", ".join([x["strategy_name"] for x in t_list])
-            }
-            ensemble_candidates.append(ensemble_trade)
+            strategy_names = [t["strategy_name"] for t in t_list]
+            ensemble_t = base_t.copy()
+            ensemble_t["trade_id"] = str(uuid.uuid4())
+            ensemble_t["strategy_name"] = "Ensemble Strategy"
+            ensemble_t["note"] = f"Passed {len(t_list)} strategies: {', '.join(strategy_names)}"
+            ensemble_t["score"] = base_t["score"] + 1000 # Boost to top
+            ensemble_candidates.append(ensemble_t)
             
-    if ensemble_candidates:
-        logger.info(f"Strategy 'Ensemble Strategy' found {len(ensemble_candidates)} candidates today.")
-        for et in ensemble_candidates:
-            # Prevent duplicates
-            is_duplicate = any(t["symbol"] == et["symbol"] and t["strategy_name"] == "Ensemble Strategy" and t["status"] == "OPEN" for t in trades)
-            if not is_duplicate:
-                trades.append(et)
-                logger.info(f"Logged new OPEN trade for Ensemble Strategy: {et['symbol']}")
-    else:
-        # Log dummy trade for continuous timeline
-        dummy_trade = {
-            "trade_id": str(uuid.uuid4()),
-            "strategy_name": "Ensemble Strategy",
-            "symbol": "0",
-            "tradingview_link": "-",
-            "entry_date": date_str,
-            "entry_regime": current_regime,
-            "entry_price": 0,
-            "close_price": 0,
-            "stop_loss": 0,
-            "target": 0,
-            "status": "DUMMY",
-            "exit_date": 0,
-            "exit_regime": "N/A",
-            "exit_price": 0,
-            "pnl_pct": 0
-        }
-        trades.append(dummy_trade)
-        logger.info("Logged DUMMY trade for Ensemble Strategy to keep date timeline continuous.")
+    all_raw_candidates.extend(ensemble_candidates)
+    
+    # Filter by strategy, sort by score, take top 5, and add to trades
+    strategies_to_process = [s["name"] for s in STRATEGIES] + ["Ensemble Strategy"]
+    for s_name in strategies_to_process:
+        s_cands = [c for c in all_raw_candidates if c["strategy_name"] == s_name]
+        s_cands = sorted(s_cands, key=lambda x: x.get("score", 0), reverse=True)[:5]
         
+        if s_cands:
+            logger.info(f"Strategy '{s_name}' found {len(s_cands)} candidates today after ranking.")
+            
+        for c in s_cands:
+            is_duplicate = any(t["symbol"] == c["symbol"] and t["strategy_name"] == s_name and t["status"] == "OPEN" for t in trades)
+            if is_duplicate:
+                logger.info(f"Skipping {c['symbol']} - already have an OPEN trade for this strategy.")
+                continue
+                
+            c["trade_id"] = str(uuid.uuid4())
+            
+            # Remove score before saving
+            trade_to_save = {k: v for k, v in c.items() if k != "score"}
+            trades.append(trade_to_save)
+            logger.info(f"Logged new OPEN trade: {c['symbol']} at {c['entry_price']} (Data from {date_str})")
+            
     return trades
 
 def calculate_metrics(trades):
     """
-    Calculates performance metrics per strategy and writes to metrics.csv
+    Calculates performance metrics per strategy and writes to strategy-specific metrics.csv
     """
-    metrics = []
-    
     strategy_names = list(set([t["strategy_name"] for t in trades]))
     
     for s_name in strategy_names:
@@ -665,14 +615,6 @@ def calculate_metrics(trades):
         
         total_trades = len(closed_trades)
         if total_trades == 0:
-            metrics.append({
-                "Strategy": s_name,
-                "Total Closed Trades": 0,
-                "Win Rate %": 0.0,
-                "Avg Win %": 0.0,
-                "Avg Loss %": 0.0,
-                "Max Drawdown %": 0.0
-            })
             continue
             
         wins = [t for t in closed_trades if t["status"] == "WIN"]
@@ -683,8 +625,7 @@ def calculate_metrics(trades):
         avg_win = sum([t["pnl_pct"] for t in wins]) / len(wins) if wins else 0.0
         avg_loss = sum([t["pnl_pct"] for t in losses]) / len(losses) if losses else 0.0
         
-        # Max Drawdown calculation (rough approximation using closed trades sequence)
-        # Sort closed trades by exit date
+        # Max Drawdown calculation
         closed_trades.sort(key=lambda x: x["exit_date"])
         cumulative_pnl = 0
         peak = 0
@@ -698,24 +639,25 @@ def calculate_metrics(trades):
             if dd > max_dd:
                 max_dd = dd
                 
-        metrics.append({
+        metrics = [{
             "Strategy": s_name,
             "Total Closed Trades": total_trades,
             "Win Rate %": round(win_rate, 2),
             "Avg Win %": round(avg_win, 2),
             "Avg Loss %": round(avg_loss, 2),
             "Max Drawdown %": round(max_dd, 2)
-        })
+        }]
         
-    if metrics:
+        safe_name = s_name.replace(" ", "_").replace("/", "_")
+        strat_dir = os.path.join(FRONT_TEST_DIR, safe_name)
+        os.makedirs(strat_dir, exist_ok=True)
+        metrics_file = os.path.join(strat_dir, "metrics.csv")
+        
         keys = metrics[0].keys()
-        with open(METRICS_FILE, 'w', newline='') as output_file:
+        with open(metrics_file, 'w', newline='') as output_file:
             dict_writer = csv.DictWriter(output_file, keys)
             dict_writer.writeheader()
             dict_writer.writerows(metrics)
-        logger.info(f"Metrics saved to {METRICS_FILE}")
-    else:
-        logger.info("No closed trades to calculate metrics yet.")
 
 def export_to_csv(trades):
     """
@@ -733,14 +675,22 @@ def export_to_csv(trades):
             continue
             
         safe_name = s_name.replace(" ", "_").replace("/", "_")
-        csv_path = os.path.join(FRONT_TEST_DIR, f"{safe_name}_trades.csv")
+        strat_dir = os.path.join(FRONT_TEST_DIR, safe_name)
+        os.makedirs(strat_dir, exist_ok=True)
+        csv_path = os.path.join(strat_dir, "trades.csv")
         
         # Sort trades by entry date descending
         s_trades.sort(key=lambda x: x["entry_date"], reverse=True)
         
-        keys = s_trades[0].keys()
+        # Collect all unique keys across all trades to prevent missing field errors
+        keys = list(s_trades[0].keys())
+        for t in s_trades:
+            for k in t.keys():
+                if k not in keys:
+                    keys.append(k)
+                    
         with open(csv_path, 'w', newline='') as output_file:
-            dict_writer = csv.DictWriter(output_file, keys)
+            dict_writer = csv.DictWriter(output_file, fieldnames=keys)
             dict_writer.writeheader()
             dict_writer.writerows(s_trades)
             
@@ -780,13 +730,16 @@ def main():
     
     # 6. Continuous Portfolio Tracking & Optimization
     date_str = as_of_date.strftime("%Y-%m-%d")
-    todays_candidates = [t for t in trades if t.get("entry_date") == date_str and t.get("status") in ["OPEN", "DUMMY"]]
     
-    try:
-        from src.screener.portfolio.portfolio_tracker import step_portfolio
-        step_portfolio(todays_candidates, as_of_date)
-    except Exception as e:
-        logger.error(f"Error during portfolio tracking/optimization: {e}")
+    strategy_names = list(set([t["strategy_name"] for t in trades]))
+    for s_name in strategy_names:
+        s_candidates = [t for t in trades if t.get("entry_date") == date_str and t.get("status") == "OPEN" and t["strategy_name"] == s_name]
+        
+        try:
+            from src.screener.portfolio.portfolio_tracker import step_portfolio
+            step_portfolio(s_candidates, as_of_date, strategy_name=s_name)
+        except Exception as e:
+            logger.error(f"Error during portfolio tracking/optimization for {s_name}: {e}")
     
     logger.info("--- Forward Test Engine Completed ---")
     cleanup_cache()

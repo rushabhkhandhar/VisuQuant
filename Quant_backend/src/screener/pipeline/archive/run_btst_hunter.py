@@ -16,7 +16,7 @@ import pandas as pd
 from datetime import datetime, date
 
 # Add the project root to sys.path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))))
 
 from tvDatafeed import Interval
 from src.data.nse_fetcher import load_nifty500_symbols, fetch_bulk_history
@@ -34,7 +34,7 @@ TOP_N_CANDIDATES = 5
 
 # Output paths
 FRONT_TEST_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))),
     "front_testing"
 )
 os.makedirs(FRONT_TEST_DIR, exist_ok=True)

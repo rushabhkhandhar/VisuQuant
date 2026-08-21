@@ -19,9 +19,10 @@ from src.data.nse_fetcher import fetch_bulk_history
 logger = logging.getLogger(__name__)
 
 # --- CONFIGURATION / CONSTANTS ---
-CAPITAL = 1_000_000
+CAPITAL = 1_00_000.0
 MAX_WEIGHT = 0.20
 MIN_POSITION_WEIGHT = 0.01
+MAX_RISK_PER_TRADE_PCT = 0.01  # Max 1% portfolio risk per trade
 
 PORTFOLIO_LOOKBACK_DAYS = 504  # ~2 years
 MIN_HISTORY_DAYS = 200
@@ -117,22 +118,28 @@ def build_fallback_allocations(valid_candidates, capital, prices_df=None, reason
                  
     weight = min(1.0 / len(symbols), MAX_WEIGHT)
     
+    
     allocations = []
     total_allocated = 0.0
+    max_risk_rupees = capital * MAX_RISK_PER_TRADE_PCT
     
-    for sym in symbols:
-        c = next(cand for cand in valid_candidates if cand["symbol"] == sym)
+    for c in valid_candidates:
+        sym = c["symbol"]
+        curr_price = float(prices_df[sym].iloc[-1]) if prices_df is not None and not prices_df.empty else float(c["entry_price"])
         
-        if prices_df is not None and sym in prices_df.columns:
-            curr_price = float(prices_df[sym].iloc[-1])
-        else:
-            curr_price = float(c["entry_price"])
-            
-        if curr_price <= 0:
-            continue
-            
         allocation_amt = capital * weight
-        shares = int(allocation_amt // curr_price)
+        capital_shares = int(allocation_amt // curr_price) if curr_price > 0 else 0
+        
+        # Risk-based share limit calculation
+        risk_per_share = curr_price - float(c["stop_loss"])
+        if risk_per_share > 0:
+            risk_allowed_shares = int(max_risk_rupees // risk_per_share)
+            if risk_allowed_shares < capital_shares:
+                logger.info(f"Risk constraint active for {sym}: Capping shares from {capital_shares} to {risk_allowed_shares}")
+            shares = min(capital_shares, risk_allowed_shares)
+        else:
+            shares = capital_shares
+            
         actual_allocation = shares * curr_price
         actual_weight = actual_allocation / capital
         
@@ -289,6 +296,7 @@ def optimize_portfolio(candidates, as_of_date, capital=1_000_000):
     # 6. Allocation Accounting
     allocations = []
     total_allocated = 0.0
+    max_risk_rupees = capital * MAX_RISK_PER_TRADE_PCT
     
     for sym, target_weight in cleaned_weights.items():
         if target_weight > MIN_POSITION_WEIGHT:
@@ -296,8 +304,18 @@ def optimize_portfolio(candidates, as_of_date, capital=1_000_000):
             curr_price = float(prices[sym].iloc[-1])
             
             allocation_amt = capital * target_weight
-            shares = int(allocation_amt // curr_price) if curr_price > 0 else 0
+            capital_shares = int(allocation_amt // curr_price) if curr_price > 0 else 0
             
+            # Risk-based share limit calculation
+            risk_per_share = curr_price - float(c["stop_loss"])
+            if risk_per_share > 0:
+                risk_allowed_shares = int(max_risk_rupees // risk_per_share)
+                if risk_allowed_shares < capital_shares:
+                    logger.info(f"Risk constraint active for {sym}: Capping shares from {capital_shares} to {risk_allowed_shares}")
+                shares = min(capital_shares, risk_allowed_shares)
+            else:
+                shares = capital_shares
+                
             actual_allocation = shares * curr_price
             actual_weight = actual_allocation / capital
             

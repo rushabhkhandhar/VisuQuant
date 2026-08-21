@@ -5,10 +5,10 @@ from datetime import date
 from typing import List, Dict, Any
 import sys
 import os
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../..')))
 
 from src.data.nse_fetcher import load_nifty500_symbols, fetch_bulk_history
-from src.screener.pipeline.run_custom_screen import evaluate_custom_tools
+from src.screener.pipeline.archive.run_custom_screen import evaluate_custom_tools
 
 logger = logging.getLogger(__name__)
 

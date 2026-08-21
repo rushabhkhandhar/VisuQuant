@@ -5,9 +5,9 @@ import argparse
 from datetime import date
 
 # Ensure src module is accessible
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../..')))
 
-from src.screener.pipeline.run_daily_screen import run_screener
+from src.screener.pipeline.archive.run_daily_screen import run_screener
 
 def get_validation_note(trigger_type: str) -> str:
     """
