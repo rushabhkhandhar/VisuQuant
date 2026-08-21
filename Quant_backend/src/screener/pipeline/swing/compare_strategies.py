@@ -417,7 +417,7 @@ def main():
     
     # Append to experiment log
     from datetime import datetime
-    experiment_log_path = os.path.join(os.path.dirname(tear_sheet_path), "experiment_log.csv")
+    experiment_log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))), "experiment_log.csv")
     log_records = []
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     for r in results:

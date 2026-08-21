@@ -731,7 +731,7 @@ def main():
     # 6. Continuous Portfolio Tracking & Optimization
     date_str = as_of_date.strftime("%Y-%m-%d")
     
-    strategy_names = list(set([t["strategy_name"] for t in trades]))
+    strategy_names = ["Momentum Breakout", "Volatility Compression", "Relative Strength", "Ensemble Strategy"]
     for s_name in strategy_names:
         s_candidates = [t for t in trades if t.get("entry_date") == date_str and t.get("status") == "OPEN" and t["strategy_name"] == s_name]
         
