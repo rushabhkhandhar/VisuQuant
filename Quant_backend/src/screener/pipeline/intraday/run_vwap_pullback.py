@@ -34,8 +34,8 @@ MIN_LIQUIDITY_THRESHOLD = 5e7   # ₹5 crore daily avg volume
 TOP_N_CANDIDATES = 5
 
 # Output paths
-FRONT_TEST_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs")
-os.makedirs(FRONT_TEST_DIR, exist_ok=True)
+OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 
 # ============================================================================
@@ -170,10 +170,12 @@ def main():
     print("=" * 80 + "\n")
     
     if top_candidates:
-        csv_path = os.path.join(FRONT_TEST_DIR, f"vwap_candidates_{date.today()}.csv")
+        csv_path = os.path.join(OUTPUT_DIR, "vwap_pullback_signals.csv")
         df_out = pd.DataFrame(top_candidates)
-        df_out.to_csv(csv_path, index=False)
-        logger.info(f"Saved {len(top_candidates)} candidates to {csv_path}")
+        # Append without header if file exists, with header if it doesn't
+        file_exists = os.path.exists(csv_path)
+        df_out.to_csv(csv_path, mode='a', header=not file_exists, index=False)
+        logger.info(f"Appended {len(top_candidates)} candidates to {csv_path}")
 
 if __name__ == "__main__":
     main()
