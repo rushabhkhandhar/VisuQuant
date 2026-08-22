@@ -8,7 +8,7 @@ from typing import Dict, List, Tuple
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))))))
 
 from src.data.nse_fetcher import fetch_bulk_history, load_fno_symbols, load_nifty500_industry_mapping
-from src.screener.pipeline.fno.strategies.long.config_fno import STRATEGY_CONFIG
+from src.screener.pipeline.fno.strategies.long.config_cash import STRATEGY_CONFIG
 
 logger = logging.getLogger(__name__)
 

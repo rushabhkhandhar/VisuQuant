@@ -36,9 +36,9 @@ class CashLongBacktest:
             logger.error("No cash data downloaded.")
             return
             
-        # Get common trading days based on the first successfully fetched stock
-        first_symbol = list(cash_data.keys())[0]
-        ref_df = cash_data.get(first_symbol)
+        # Get common trading days based on the stock with the most complete history
+        longest_symbol = max(cash_data.keys(), key=lambda s: len(cash_data[s]))
+        ref_df = cash_data.get(longest_symbol)
         trading_days = pd.Series(ref_df.index.date).unique()[50:] # Skip first 50 days for lookback buffers
         
         logger.info(f"Running simulation over {len(trading_days)} days...")
@@ -50,7 +50,6 @@ class CashLongBacktest:
             remaining_positions = []
             for pos in open_positions:
                 sym = pos['symbol']
-                # USE CASH DATA FOR EXECUTION INSTEAD OF FUTURES!
                 sym_df = cash_data.get(sym)
                 if sym_df is None: continue
                 
@@ -136,7 +135,7 @@ class CashLongBacktest:
                     
                     # Check if we can afford the total capital for delivery
                     # Since we only buy 2 stocks max, we divide total capital by 2 for max allocation per trade
-                    max_capital_per_trade = self.capital / 2.0
+                    max_capital_per_trade = self.capital / float(self.config['max_open_positions'])
                     cost_to_buy = desired_qty * entry_price
                     
                     if cost_to_buy > max_capital_per_trade:
@@ -170,47 +169,44 @@ class CashLongBacktest:
             self.daily_equity.append({"Date": current_date, "Equity": total_equity})
             
         self.generate_report()
-        
+
     def generate_report(self):
-        df = pd.DataFrame(self.trades)
-        if df.empty:
-            logger.info("No trades generated during backtest!")
-            return
-            
-        win_rate = (df['Net_PnL'] > 0).mean() * 100
+        trades_df = pd.DataFrame(self.trades)
         
-        output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
+        # Calculate summary metrics using the standardized metrics pipeline
+        output_dir = os.path.join(os.path.dirname(__file__), "output")
         os.makedirs(output_dir, exist_ok=True)
         
-        # Calculate Advanced Metrics
-        metrics = calculate_and_log_metrics("Cash Long", self.config, self.trades, self.daily_equity, output_dir)
-        
-        summary = (
-            "=== CASH LONG STRATEGY RESULTS ===\n"
-            f"Total Trades: {len(df)}\n"
-            f"Win Rate: {win_rate:.2f}%\n"
-            f"Total Net PnL: Rs {df['Net_PnL'].sum():.2f}\n"
-            f"Final Capital: Rs {self.capital:.2f}\n"
+        metrics = calculate_and_log_metrics(
+            strategy_name="Cash Long",
+            config=self.config,
+            trades=self.trades,
+            daily_equity=self.daily_equity,
+            output_dir=output_dir
         )
-        if metrics:
-            summary += (
-                f"CAGR: {metrics['CAGR (%)']}%\n"
-                f"Max Drawdown: {metrics['Max Drawdown (%)']}%\n"
-                f"Sharpe Ratio: {metrics['Sharpe Ratio']}\n"
-                f"Sortino Ratio: {metrics['Sortino Ratio']}\n"
-            )
         
-        logger.info("\n" + summary)
-        
-        # Save summary
-        with open(os.path.join(output_dir, "cash_long_summary.txt"), "w") as f:
-            f.write(summary)
+        if not trades_df.empty:
+            trades_df.to_csv(os.path.join(output_dir, "cash_long_results.csv"), index=False)
             
-        # Save CSV
-        csv_path = os.path.join(output_dir, "cash_long_results.csv")
-        df.to_csv(csv_path, index=False)
-        logger.info(f"Results saved to {output_dir}")
+        if metrics:
+            summary_text = (
+                f"=== CASH LONG STRATEGY RESULTS ===\n"
+                f"Total Trades: {metrics['Total Trades']}\n"
+                f"Win Rate: {metrics['Win Rate (%)']:.2f}%\n"
+                f"Total Net PnL: Rs {metrics['Overall Profit (Rs)']:.2f}\n"
+                f"Final Capital: Rs {self.capital:.2f}\n"
+                f"CAGR: {metrics['CAGR (%)']:.2f}%\n"
+                f"Max Drawdown: {metrics['Max Drawdown (%)']:.2f}%\n"
+                f"Sharpe Ratio: {metrics['Sharpe Ratio']:.2f}\n"
+                f"Sortino Ratio: {metrics['Sortino Ratio']:.2f}\n"
+            )
+            print("\n" + summary_text)
+            
+            with open(os.path.join(output_dir, "cash_long_summary.txt"), "w") as f:
+                f.write(summary_text)
+                
+            logger.info(f"Results saved to {output_dir}")
 
 if __name__ == "__main__":
-    engine = CashLongBacktest(STRATEGY_CONFIG)
-    engine.run()
+    backtest = CashLongBacktest(STRATEGY_CONFIG)
+    backtest.run()
