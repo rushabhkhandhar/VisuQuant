@@ -335,6 +335,14 @@ def load_nifty500_symbols() -> List[str]:
     ]
     return _load_symbols_from_csv_urls(urls, column_name="Symbol")
 
+def load_nifty100_symbols() -> List[str]:
+    """Fetch NIFTY 100 constituent symbols."""
+    urls = [
+        "https://niftyindices.com/IndexConstituent/ind_nifty100list.csv",
+        "https://www.niftyindices.com/IndexConstituent/ind_nifty100list.csv",
+    ]
+    return _load_symbols_from_csv_urls(urls, column_name="Symbol")
+
 def load_fno_symbols() -> List[str]:
     """Fetch F&O constituent symbols from the hardcoded JSON file."""
     try:
