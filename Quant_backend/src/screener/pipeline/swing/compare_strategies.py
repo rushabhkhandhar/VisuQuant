@@ -458,7 +458,7 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
     logger.info(f"Backtesting Architecture: {arch_config['name']}...")
     
     cash = 5_00_000.0 # INITIAL_CAPITAL
-    FRICTION_PCT = 0.0015
+    FRICTION_PCT = arch_config.get("friction_pct", 0.0015)
     MAX_WEIGHT_PER_TRADE = 0.20
     open_positions = {}
     daily_equity_curve = []
@@ -802,11 +802,49 @@ def main():
             "sizing_logic": "alpha_confirmation"
         },
         {
-            "name": "Exp E4: Drawdown Dynamic Scaling",
+            "name": "E4_Champion_V1",
             "primary": rs_strat,
             "confirmation": mom_strat,
             "sizing_logic": "alpha_confirmation",
-            "dynamic_risk_scaling": True
+            "dynamic_risk_scaling": True,
+            "dd_penalty_factor": 5.0,
+            "friction_pct": 0.0015
+        },
+        {
+            "name": "E4_Param_Low",
+            "primary": rs_strat,
+            "confirmation": mom_strat,
+            "sizing_logic": "alpha_confirmation",
+            "dynamic_risk_scaling": True,
+            "dd_penalty_factor": 4.0,
+            "friction_pct": 0.0015
+        },
+        {
+            "name": "E4_Param_High",
+            "primary": rs_strat,
+            "confirmation": mom_strat,
+            "sizing_logic": "alpha_confirmation",
+            "dynamic_risk_scaling": True,
+            "dd_penalty_factor": 6.0,
+            "friction_pct": 0.0015
+        },
+        {
+            "name": "E4_Stress_Mod",
+            "primary": rs_strat,
+            "confirmation": mom_strat,
+            "sizing_logic": "alpha_confirmation",
+            "dynamic_risk_scaling": True,
+            "dd_penalty_factor": 5.0,
+            "friction_pct": 0.0025
+        },
+        {
+            "name": "E4_Stress_High",
+            "primary": rs_strat,
+            "confirmation": mom_strat,
+            "sizing_logic": "alpha_confirmation",
+            "dynamic_risk_scaling": True,
+            "dd_penalty_factor": 5.0,
+            "friction_pct": 0.0035
         }
     ]
     
