@@ -21,7 +21,7 @@ from src.screener.pipeline.swing.run_front_test import (
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-INITIAL_CAPITAL = 1_00_000.0
+INITIAL_CAPITAL = 5_00_000.0
 MAX_WEIGHT_PER_TRADE = 0.20  # Max 20% of total equity per trade
 FRICTION_PCT = 0.0015  # 0.15% cost per trade leg
 
@@ -388,15 +388,15 @@ def run_ensemble_backtest(strategies, test_dates, bulk_data, industry_mapping=No
 
 
 def main():
-    # Fixed start date so backtest always covers from Jan 2022 onwards
-    from datetime import datetime
-    start_date = datetime(2022, 1, 1).date()
+    # Backtest covers exactly the last 4 years
+    from datetime import datetime, timedelta
+    years_to_test = 6
     today = date.today()
-    calendar_days_since_start = (today - start_date).days
-    # ~252 trading days per 365 calendar days
-    backtest_days = int(calendar_days_since_start * 252 / 365)
-    # Need 300 extra days of history before start for indicator warmup (SMA200 etc.)
-    total_lookback = backtest_days + 300
+    calendar_days_since_start = years_to_test * 365
+    start_date = today - timedelta(days=calendar_days_since_start)
+    # Need 300 trading days of history before start for indicator warmup (SMA200 etc.)
+    # 300 trading days is roughly 434 calendar days (300 * 365 / 252). We use 450 to be safe.
+    total_lookback = calendar_days_since_start + 450
     
     logger.info(f"Loading NIFTY 500 universe...")
     universe = load_nifty500_symbols()
@@ -441,17 +441,42 @@ def main():
         sector_indices[ind] = pd.DataFrame({"Close": synthetic_price})
     tear_sheet_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))), "front_testing", "strategy_tear_sheet.csv")
     
-    for strategy in STRATEGIES:
-        metrics, curve, trades = run_strategy_backtest(strategy, test_dates, bulk_data, industry_mapping, sector_indices)
-        results.append(metrics)
-        curves[strategy['name']] = curve
-        
-        # Save trades log
-        if trades:
-            trades_df = pd.DataFrame(trades)
-            safe_name = strategy['name'].replace(" ", "_")
-            trades_csv_path = os.path.join(os.path.dirname(tear_sheet_path), f"{safe_name}_backtest_trades.csv")
-            trades_df.to_csv(trades_csv_path, index=False)
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+    
+    logger.info(f"Starting parallel strategy backtests using ProcessPoolExecutor...")
+    
+    # We use a dictionary to keep track of futures
+    futures = {}
+    with ProcessPoolExecutor(max_workers=len(STRATEGIES)) as executor:
+        for strategy in STRATEGIES:
+            future = executor.submit(
+                run_strategy_backtest, 
+                strategy, 
+                test_dates, 
+                bulk_data, 
+                industry_mapping, 
+                sector_indices
+            )
+            futures[future] = strategy
+            
+        for future in as_completed(futures):
+            strategy = futures[future]
+            try:
+                metrics, curve, trades = future.result()
+                results.append(metrics)
+                curves[strategy['name']] = curve
+                
+                # Save trades log
+                if trades:
+                    trades_df = pd.DataFrame(trades)
+                    safe_name = strategy['name'].replace(" ", "_")
+                    trades_csv_path = os.path.join(os.path.dirname(tear_sheet_path), f"{safe_name}_backtest_trades.csv")
+                    trades_df.to_csv(trades_csv_path, index=False)
+            except Exception as e:
+                logger.error(f"Error backtesting {strategy['name']}: {e}")
+                
+    # Note: We run Ensemble sequentially AFTER the individual strategies because it relies on the same STRATEGIES list
+    # and might have heavy overlapping memory use. It is already relatively fast.
         
     # Run Ensemble
     ensemble_metrics, ensemble_curve, ensemble_trades = run_ensemble_backtest(STRATEGIES, test_dates, bulk_data, industry_mapping, sector_indices)
