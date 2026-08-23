@@ -463,6 +463,8 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
     open_positions = {}
     daily_equity_curve = []
     trades_log = []
+    daily_exposure_log = []
+    high_water_mark = cash
     
     for i, current_date in enumerate(test_dates):
         # 1. Update prices and check exits
@@ -519,6 +521,17 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
         for sym in symbols_to_remove:
             del open_positions[sym]
             
+        current_equity_for_hwm = cash + sum(p['shares'] * p['current_price'] for p in open_positions.values())
+        if current_equity_for_hwm > high_water_mark:
+            high_water_mark = current_equity_for_hwm
+            
+        risk_multiplier = 1.0
+        if arch_config.get("dynamic_risk_scaling"):
+            current_drawdown = (current_equity_for_hwm - high_water_mark) / high_water_mark
+            if current_drawdown < -0.05:
+                penalty = (abs(current_drawdown) - 0.05) * 5.0
+                risk_multiplier = max(0.20, 1.0 - penalty)
+                
         # 2. Evaluate new candidates
         new_candidates = []
         if cash > (5_00_000.0 * 0.05):
@@ -593,8 +606,26 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                         if p_res and p_res.get('passed'):
                             if f_res and f_res.get('passed'): risk_pct = 0.03
                             else: risk_pct = 0.015
+                    elif sizing_logic == "volatility_scaled":
+                        if p_res and p_res.get('passed'):
+                            base_risk = 0.025 if (c_res and c_res.get('passed')) else 0.01
+                            
+                            close = hist_df['Close'].iloc[-1]
+                            atr = talib.ATR(hist_df['High'], hist_df['Low'], hist_df['Close'], timeperiod=14).iloc[-1]
+                            if pd.notna(atr) and atr > 0:
+                                current_atr_pct = atr / close
+                                baseline_atr_pct = 0.05 # Assume 5% is normal daily volatility
+                                
+                                # Scale risk inversely with volatility
+                                vol_scalar = baseline_atr_pct / current_atr_pct
+                                
+                                # Cap the scalar so we don't take crazy sizes on low vol, and don't reduce to zero on high vol
+                                vol_scalar = max(0.5, min(vol_scalar, 2.0))
+                                
+                                risk_pct = base_risk * vol_scalar
                     
                     if risk_pct > 0:
+                        risk_pct = risk_pct * risk_multiplier
                         close = hist_df['Close'].iloc[-1]
                         atr = talib.ATR(hist_df['High'], hist_df['Low'], hist_df['Close'], timeperiod=14).iloc[-1]
                         if pd.notna(atr) and atr > 0:
@@ -611,33 +642,91 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
         # Allocate cash
         if new_candidates:
             total_equity = cash + sum(p['shares'] * p['current_price'] for p in open_positions.values())
-            max_alloc_per_trade = total_equity * MAX_WEIGHT_PER_TRADE
+            max_alloc_per_trade = total_equity * MAX_WEIGHT_PER_TRADE * risk_multiplier
             
-            for cand in new_candidates:
-                risk_amount = total_equity * cand['risk_pct']
-                risk_per_share = cand['price'] - cand['stop_loss']
-                if risk_per_share <= 0: continue
-                ideal_shares = int(risk_amount / risk_per_share)
-                max_shares = int(max_alloc_per_trade / cand['price'])
-                shares = min(ideal_shares, max_shares)
-                required_cash = shares * cand['price'] * (1 + FRICTION_PCT)
+            if "portfolio_cap" in arch_config:
+                portfolio_cap = arch_config.get("portfolio_cap", 1.0)
+                max_total_allocation = total_equity * portfolio_cap
+                current_invested = sum(p['shares'] * p['current_price'] for p in open_positions.values())
+                available_allocation = max_total_allocation - current_invested
                 
-                if shares > 0 and cash >= required_cash:
-                    cash -= required_cash
-                    open_positions[cand['symbol']] = {
-                        "shares": shares,
-                        "entry_date": current_date.strftime("%Y-%m-%d"),
-                        "entry_price": cand['price'],
-                        "current_price": cand['price'],
-                        "stop_loss": cand['stop_loss'],
-                        "target": cand['target']
-                    }
+                ideal_allocations = []
+                for cand in new_candidates:
+                    risk_amount = total_equity * cand['risk_pct']
+                    risk_per_share = cand['price'] - cand['stop_loss']
+                    if risk_per_share <= 0: continue
+                    ideal_shares = int(risk_amount / risk_per_share)
+                    max_shares = int(max_alloc_per_trade / cand['price'])
+                    shares = min(ideal_shares, max_shares)
+                    ideal_allocations.append({
+                        'cand': cand,
+                        'ideal_shares': shares,
+                        'cost': shares * cand['price']
+                    })
+                    
+                total_ideal_cost = sum(x['cost'] for x in ideal_allocations)
+                
+                scaling_factor = 1.0
+                if total_ideal_cost > available_allocation and available_allocation > 0:
+                    scaling_factor = available_allocation / total_ideal_cost
+                elif available_allocation <= 0:
+                    scaling_factor = 0.0
+                    
+                for alloc in ideal_allocations:
+                    cand = alloc['cand']
+                    final_shares = int(alloc['ideal_shares'] * scaling_factor)
+                    required_cash = final_shares * cand['price'] * (1 + FRICTION_PCT)
+                    
+                    if final_shares > 0 and cash >= required_cash:
+                        cash -= required_cash
+                        open_positions[cand['symbol']] = {
+                            "shares": final_shares,
+                            "entry_date": current_date.strftime("%Y-%m-%d"),
+                            "entry_price": cand['price'],
+                            "current_price": cand['price'],
+                            "stop_loss": cand['stop_loss'],
+                            "target": cand['target']
+                        }
+            else:
+                for cand in new_candidates:
+                    risk_amount = total_equity * cand['risk_pct']
+                    risk_per_share = cand['price'] - cand['stop_loss']
+                    if risk_per_share <= 0: continue
+                    ideal_shares = int(risk_amount / risk_per_share)
+                    max_shares = int(max_alloc_per_trade / cand['price'])
+                    shares = min(ideal_shares, max_shares)
+                    required_cash = shares * cand['price'] * (1 + FRICTION_PCT)
+                    
+                    if shares > 0 and cash >= required_cash:
+                        cash -= required_cash
+                        open_positions[cand['symbol']] = {
+                            "shares": shares,
+                            "entry_date": current_date.strftime("%Y-%m-%d"),
+                            "entry_price": cand['price'],
+                            "current_price": cand['price'],
+                            "stop_loss": cand['stop_loss'],
+                            "target": cand['target']
+                        }
                     
         total_equity = cash + sum(p['shares'] * p['current_price'] for p in open_positions.values())
         daily_equity_curve.append(total_equity)
         
+        invested = sum(p['shares'] * p['current_price'] for p in open_positions.values())
+        daily_exposure_log.append({
+            "Date": current_date.strftime("%Y-%m-%d"),
+            "Total_Equity": total_equity,
+            "Invested": invested,
+            "Exposure_Pct": invested / total_equity if total_equity > 0 else 0,
+            "Num_Positions": len(open_positions),
+            "Risk_Multiplier": risk_multiplier
+        })
+        
     metrics = calculate_metrics(daily_equity_curve, trades_log)
     metrics["Strategy"] = arch_config["name"]
+    
+    # Save daily exposure log
+    safe_name = arch_config['name'].replace(' ', '_').replace(':', '')
+    pd.DataFrame(daily_exposure_log).to_csv(f"/Users/rushabhkhandhar/Desktop/Trading/finvison_tech_analysis/Quant_backend/front_testing/{safe_name}_exposure.csv", index=False)
     
     # Calculate Regime Breakdown
     nifty_full = bulk_data.get("NIFTYBEES")
@@ -707,45 +796,17 @@ def main():
     
     ARCHITECTURES = [
         {
-            "name": "Exp 1: RS Baseline",
-            "primary": rs_strat,
-            "sizing_logic": "primary_only"
-        },
-        {
-            "name": "Exp 2: RS OR Momentum (Union)",
-            "primary": rs_strat,
-            "confirmation": mom_strat,
-            "sizing_logic": "union"
-        },
-        {
-            "name": "Exp 3: Signal Voting",
-            "primary": rs_strat,
-            "confirmation": mom_strat,
-            "sizing_logic": "voting" # 1 pt = 1% risk, 2 pts = 2% risk
-        },
-        {
             "name": "Exp 4: RS Alpha + Mom Conf",
             "primary": rs_strat,
             "confirmation": mom_strat,
-            "sizing_logic": "alpha_confirmation" # RS=1%, RS+Mom=2.5%
+            "sizing_logic": "alpha_confirmation"
         },
         {
-            "name": "Exp 5: Mom Risk Filter",
+            "name": "Exp E4: Drawdown Dynamic Scaling",
             "primary": rs_strat,
             "confirmation": mom_strat,
-            "sizing_logic": "momentum_risk_filter" # Block trade if Mom fails
-        },
-        {
-            "name": "Exp 6: Volatility Filter",
-            "primary": rs_strat,
-            "filter": vol_strat,
-            "sizing_logic": "volatility_filter" # 3% risk if vol contraction, else 1.5%
-        },
-        {
-            "name": "Exp 7: Drawdown Reduction (Regime Block)",
-            "primary": rs_strat,
-            "sizing_logic": "primary_only",
-            "block_on_bearish_regime": True # Block long entries when Nifty < 200 SMA
+            "sizing_logic": "alpha_confirmation",
+            "dynamic_risk_scaling": True
         }
     ]
     
