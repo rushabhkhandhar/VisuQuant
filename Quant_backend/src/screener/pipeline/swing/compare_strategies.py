@@ -60,10 +60,27 @@ def calculate_metrics(daily_equity, trades):
     sortino = (mean_ret / downside_std) * np.sqrt(252) if downside_std > 0 else 0
     calmar = (cagr / abs(mdd)) if mdd < 0 else 0
     
-    # Trades
+    # Trades & Trade-Level Diagnostics
     wins = [t for t in trades if t['pnl_pct'] > 0]
+    losses = [t for t in trades if t['pnl_pct'] <= 0]
     win_rate = (len(wins) / len(trades) * 100) if trades else 0
     overall_profit = equity_series.iloc[-1] - INITIAL_CAPITAL
+    
+    avg_win = np.mean([t['pnl_pct'] for t in wins]) if wins else 0
+    avg_loss = np.mean([t['pnl_pct'] for t in losses]) if losses else 0
+    
+    gross_win = sum([t['pnl_pct'] for t in wins]) if wins else 0
+    gross_loss = abs(sum([t['pnl_pct'] for t in losses])) if losses else 0
+    profit_factor = (gross_win / gross_loss) if gross_loss > 0 else (99 if gross_win > 0 else 0)
+    
+    expectancy = (win_rate/100 * avg_win) - ((1 - win_rate/100) * abs(avg_loss))
+    
+    # Calculate Turnover (total entry value / initial capital)
+    turnover = sum([t['entry_price'] * t.get('shares', 1) for t in trades]) / INITIAL_CAPITAL
+    
+    # Calculate Avg Exposure
+    # We estimate exposure as (1 - cash/equity) averaged over the curve, but we only have total equity in daily_equity.
+    # We can pass daily_cash in the future, or approximate it here. Let's return N/A for now and compute properly later if needed.
     
     return {
         "Overall Profit (Rs)": round(overall_profit, 2),
@@ -73,8 +90,56 @@ def calculate_metrics(daily_equity, trades):
         "Sharpe Ratio": round(sharpe, 3),
         "Sortino Ratio": round(sortino, 3),
         "Calmar Ratio": round(calmar, 3),
-        "Total Trades": len(trades)
+        "Total Trades": len(trades),
+        "Profit Factor": round(profit_factor, 3),
+        "Expectancy (%)": round(expectancy * 100, 3) if expectancy else 0.0,
+        "Avg Win (%)": round(avg_win * 100, 2),
+        "Avg Loss (%)": round(avg_loss * 100, 2),
+        "Turnover": round(turnover, 2)
     }
+
+def calculate_regime_metrics(trades, nifty_df):
+    if nifty_df is None or nifty_df.empty or not trades:
+        return {}
+        
+    # Calculate Nifty Regimes
+    nifty_df = nifty_df.copy()
+    nifty_df['SMA50'] = nifty_df['Close'].rolling(50).mean()
+    nifty_df['SMA200'] = nifty_df['Close'].rolling(200).mean()
+    
+    # Bullish: Close > 50 and 50 > 200
+    # Bearish: Close < 50 and 50 < 200
+    # Sideways: Everything else
+    conditions = [
+        (nifty_df['Close'] > nifty_df['SMA50']) & (nifty_df['SMA50'] > nifty_df['SMA200']),
+        (nifty_df['Close'] < nifty_df['SMA50']) & (nifty_df['SMA50'] < nifty_df['SMA200'])
+    ]
+    choices = ['Bullish', 'Bearish']
+    nifty_df['Regime'] = np.select(conditions, choices, default='Sideways')
+    
+    regime_dict = nifty_df['Regime'].to_dict() # index is timestamp
+    
+    regimes = {'Bullish': [], 'Bearish': [], 'Sideways': []}
+    
+    for t in trades:
+        # Assign regime based on entry date
+        entry_date = pd.Timestamp(t['entry_date'])
+        regime = regime_dict.get(entry_date, 'Sideways')
+        regimes[regime].append(t)
+        
+    metrics = {}
+    for regime, r_trades in regimes.items():
+        if not r_trades:
+            metrics[f"{regime} Win Rate"] = 0
+            metrics[f"{regime} Trades"] = 0
+            continue
+            
+        wins = [t for t in r_trades if t['pnl_pct'] > 0]
+        win_rate = (len(wins) / len(r_trades)) * 100
+        metrics[f"{regime} Win Rate"] = round(win_rate, 2)
+        metrics[f"{regime} Trades"] = len(r_trades)
+        
+    return metrics
 
 def run_strategy_backtest(strategy, test_dates, bulk_data, industry_mapping=None, sector_indices=None):
     logger.info(f"Backtesting {strategy['name']}...")
@@ -387,6 +452,201 @@ def run_ensemble_backtest(strategies, test_dates, bulk_data, industry_mapping=No
 
 
 
+def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapping=None, sector_indices=None):
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"Backtesting Architecture: {arch_config['name']}...")
+    
+    cash = 5_00_000.0 # INITIAL_CAPITAL
+    FRICTION_PCT = 0.0015
+    MAX_WEIGHT_PER_TRADE = 0.20
+    open_positions = {}
+    daily_equity_curve = []
+    trades_log = []
+    
+    for i, current_date in enumerate(test_dates):
+        # 1. Update prices and check exits
+        symbols_to_remove = []
+        for sym, pos in open_positions.items():
+            if sym in bulk_data:
+                df = bulk_data[sym]
+                if current_date in df.index:
+                    row = df.loc[current_date]
+                    if isinstance(row, pd.DataFrame):
+                        row = row.iloc[-1]
+                        
+                    high, low, close = row['High'], row['Low'], row['Close']
+                    pos['current_price'] = close
+                    
+                    if low <= pos['stop_loss']:
+                        exit_price = pos['stop_loss']
+                        net_entry_cost = pos['entry_price'] * (1 + FRICTION_PCT)
+                        net_exit_revenue = exit_price * (1 - FRICTION_PCT)
+                        pnl = (net_exit_revenue - net_entry_cost) / net_entry_cost
+                        cash += pos['shares'] * exit_price * (1 - FRICTION_PCT)
+                        symbols_to_remove.append(sym)
+                        
+                        trades_log.append({
+                            "symbol": sym, 
+                            "entry_date": pos.get("entry_date", ""),
+                            "exit_date": current_date.strftime("%Y-%m-%d"),
+                            "entry_price": pos["entry_price"],
+                            "exit_price": exit_price,
+                            "stop_loss": pos["stop_loss"],
+                            "target": pos["target"],
+                            "pnl_pct": pnl, 
+                            "status": "Loss"
+                        })
+                    elif high >= pos['target']:
+                        exit_price = pos['target']
+                        net_entry_cost = pos['entry_price'] * (1 + FRICTION_PCT)
+                        net_exit_revenue = exit_price * (1 - FRICTION_PCT)
+                        pnl = (net_exit_revenue - net_entry_cost) / net_entry_cost
+                        cash += pos['shares'] * exit_price * (1 - FRICTION_PCT)
+                        symbols_to_remove.append(sym)
+                        trades_log.append({
+                            "symbol": sym, 
+                            "entry_date": pos.get("entry_date", ""),
+                            "exit_date": current_date.strftime("%Y-%m-%d"),
+                            "entry_price": pos["entry_price"],
+                            "exit_price": exit_price,
+                            "stop_loss": pos["stop_loss"],
+                            "target": pos["target"],
+                            "pnl_pct": pnl, 
+                            "status": "Win"
+                        })
+                        
+        for sym in symbols_to_remove:
+            del open_positions[sym]
+            
+        # 2. Evaluate new candidates
+        new_candidates = []
+        if cash > (5_00_000.0 * 0.05):
+            nifty_hist = None
+            if "NIFTYBEES" in bulk_data and current_date in bulk_data["NIFTYBEES"].index:
+                nifty_hist = bulk_data["NIFTYBEES"][bulk_data["NIFTYBEES"].index <= current_date]
+                
+            # Regime filter check
+            market_regime_blocked = False
+            if arch_config.get("block_on_bearish_regime") and nifty_hist is not None and len(nifty_hist) > 200:
+                n_close = nifty_hist['Close'].iloc[-1]
+                n_sma200 = nifty_hist['Close'].rolling(200).mean().iloc[-1]
+                if n_close < n_sma200:
+                    market_regime_blocked = True
+                    
+            if not market_regime_blocked:
+                for sym, df in bulk_data.items():
+                    if sym == "NIFTYBEES":
+                        continue
+                    if sym in open_positions:
+                        continue
+                        
+                    hist_df = df[df.index <= current_date]
+                    if len(hist_df) < 200:
+                        continue
+                        
+                    sector_hist = None
+                    if industry_mapping and sector_indices and sym in industry_mapping:
+                        ind = industry_mapping[sym]
+                        if ind in sector_indices:
+                            sector_hist = sector_indices[ind][sector_indices[ind].index <= current_date]
+                    
+                    # Core Eval
+                    primary = arch_config['primary']
+                    try:
+                        p_res = primary['func'](hist_df, nifty_hist=nifty_hist, sector_hist=sector_hist)
+                    except: p_res = {}
+                    
+                    confirmation = arch_config.get('confirmation')
+                    try:
+                        c_res = confirmation['func'](hist_df, nifty_hist=nifty_hist, sector_hist=sector_hist) if confirmation else None
+                    except: c_res = None
+                    
+                    filter_strat = arch_config.get('filter')
+                    try:
+                        f_res = filter_strat['func'](hist_df, nifty_hist=nifty_hist, sector_hist=sector_hist) if filter_strat else None
+                    except: f_res = None
+                    
+                    # Architecture Logic
+                    sizing_logic = arch_config.get('sizing_logic', 'primary_only')
+                    risk_pct = 0.0
+                    
+                    if sizing_logic == "primary_only":
+                        if p_res and p_res.get('passed'): risk_pct = 0.02
+                    elif sizing_logic == "union":
+                        if (p_res and p_res.get('passed')) or (c_res and c_res.get('passed')): risk_pct = 0.02
+                    elif sizing_logic == "voting":
+                        score = 0
+                        if p_res and p_res.get('passed'): score += 1
+                        if c_res and c_res.get('passed'): score += 1
+                        if score == 1: risk_pct = 0.01
+                        elif score == 2: risk_pct = 0.02
+                    elif sizing_logic == "alpha_confirmation":
+                        if p_res and p_res.get('passed'):
+                            if c_res and c_res.get('passed'): risk_pct = 0.025
+                            else: risk_pct = 0.01
+                    elif sizing_logic == "momentum_risk_filter":
+                        if p_res and p_res.get('passed'):
+                            if c_res and c_res.get('passed'): risk_pct = 0.02
+                            else: risk_pct = 0.00
+                    elif sizing_logic == "volatility_filter":
+                        if p_res and p_res.get('passed'):
+                            if f_res and f_res.get('passed'): risk_pct = 0.03
+                            else: risk_pct = 0.015
+                    
+                    if risk_pct > 0:
+                        close = hist_df['Close'].iloc[-1]
+                        atr = talib.ATR(hist_df['High'], hist_df['Low'], hist_df['Close'], timeperiod=14).iloc[-1]
+                        if pd.notna(atr) and atr > 0:
+                            risk_atr = primary.get('risk_atr', 2.0)
+                            reward_atr = primary.get('reward_atr', 4.0)
+                            new_candidates.append({
+                                "symbol": sym,
+                                "price": close,
+                                "stop_loss": close - (atr * risk_atr),
+                                "target": close + (atr * reward_atr),
+                                "risk_pct": risk_pct
+                            })
+                            
+        # Allocate cash
+        if new_candidates:
+            total_equity = cash + sum(p['shares'] * p['current_price'] for p in open_positions.values())
+            max_alloc_per_trade = total_equity * MAX_WEIGHT_PER_TRADE
+            
+            for cand in new_candidates:
+                risk_amount = total_equity * cand['risk_pct']
+                risk_per_share = cand['price'] - cand['stop_loss']
+                if risk_per_share <= 0: continue
+                ideal_shares = int(risk_amount / risk_per_share)
+                max_shares = int(max_alloc_per_trade / cand['price'])
+                shares = min(ideal_shares, max_shares)
+                required_cash = shares * cand['price'] * (1 + FRICTION_PCT)
+                
+                if shares > 0 and cash >= required_cash:
+                    cash -= required_cash
+                    open_positions[cand['symbol']] = {
+                        "shares": shares,
+                        "entry_date": current_date.strftime("%Y-%m-%d"),
+                        "entry_price": cand['price'],
+                        "current_price": cand['price'],
+                        "stop_loss": cand['stop_loss'],
+                        "target": cand['target']
+                    }
+                    
+        total_equity = cash + sum(p['shares'] * p['current_price'] for p in open_positions.values())
+        daily_equity_curve.append(total_equity)
+        
+    metrics = calculate_metrics(daily_equity_curve, trades_log)
+    metrics["Strategy"] = arch_config["name"]
+    
+    # Calculate Regime Breakdown
+    nifty_full = bulk_data.get("NIFTYBEES")
+    regime_metrics = calculate_regime_metrics(trades_log, nifty_full)
+    metrics.update(regime_metrics)
+    
+    return metrics, daily_equity_curve, trades_log
+
+
 def main():
     # Backtest covers exactly the last 4 years
     from datetime import datetime, timedelta
@@ -439,56 +699,93 @@ def main():
         # Create a synthetic price index starting at 100
         synthetic_price = 100 * (1 + avg_returns).cumprod()
         sector_indices[ind] = pd.DataFrame({"Close": synthetic_price})
+
+    # Find strategy definitions
+    rs_strat = next(s for s in STRATEGIES if s["name"] == "Relative Strength")
+    mom_strat = next(s for s in STRATEGIES if s["name"] == "Momentum Breakout")
+    vol_strat = next(s for s in STRATEGIES if s["name"] == "Volatility Compression")
+    
+    ARCHITECTURES = [
+        {
+            "name": "Exp 1: RS Baseline",
+            "primary": rs_strat,
+            "sizing_logic": "primary_only"
+        },
+        {
+            "name": "Exp 2: RS OR Momentum (Union)",
+            "primary": rs_strat,
+            "confirmation": mom_strat,
+            "sizing_logic": "union"
+        },
+        {
+            "name": "Exp 3: Signal Voting",
+            "primary": rs_strat,
+            "confirmation": mom_strat,
+            "sizing_logic": "voting" # 1 pt = 1% risk, 2 pts = 2% risk
+        },
+        {
+            "name": "Exp 4: RS Alpha + Mom Conf",
+            "primary": rs_strat,
+            "confirmation": mom_strat,
+            "sizing_logic": "alpha_confirmation" # RS=1%, RS+Mom=2.5%
+        },
+        {
+            "name": "Exp 5: Mom Risk Filter",
+            "primary": rs_strat,
+            "confirmation": mom_strat,
+            "sizing_logic": "momentum_risk_filter" # Block trade if Mom fails
+        },
+        {
+            "name": "Exp 6: Volatility Filter",
+            "primary": rs_strat,
+            "filter": vol_strat,
+            "sizing_logic": "volatility_filter" # 3% risk if vol contraction, else 1.5%
+        },
+        {
+            "name": "Exp 7: Drawdown Reduction (Regime Block)",
+            "primary": rs_strat,
+            "sizing_logic": "primary_only",
+            "block_on_bearish_regime": True # Block long entries when Nifty < 200 SMA
+        }
+    ]
+    
     tear_sheet_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))), "front_testing", "strategy_tear_sheet.csv")
     
     from concurrent.futures import ProcessPoolExecutor, as_completed
     
-    logger.info(f"Starting parallel strategy backtests using ProcessPoolExecutor...")
+    logger.info(f"Starting parallel architectural experiments using ProcessPoolExecutor...")
     
-    # We use a dictionary to keep track of futures
     futures = {}
-    with ProcessPoolExecutor(max_workers=len(STRATEGIES)) as executor:
-        for strategy in STRATEGIES:
+    with ProcessPoolExecutor(max_workers=len(ARCHITECTURES)) as executor:
+        for arch in ARCHITECTURES:
             future = executor.submit(
-                run_strategy_backtest, 
-                strategy, 
+                run_architectural_backtest, 
+                arch, 
                 test_dates, 
                 bulk_data, 
                 industry_mapping, 
                 sector_indices
             )
-            futures[future] = strategy
+            futures[future] = arch
             
         for future in as_completed(futures):
-            strategy = futures[future]
+            arch = futures[future]
             try:
                 metrics, curve, trades = future.result()
                 results.append(metrics)
-                curves[strategy['name']] = curve
+                curves[arch['name']] = curve
                 
                 # Save trades log
                 if trades:
                     trades_df = pd.DataFrame(trades)
-                    safe_name = strategy['name'].replace(" ", "_")
+                    safe_name = arch['name'].replace(" ", "_").replace(":", "")
                     trades_csv_path = os.path.join(os.path.dirname(tear_sheet_path), f"{safe_name}_backtest_trades.csv")
                     trades_df.to_csv(trades_csv_path, index=False)
             except Exception as e:
-                logger.error(f"Error backtesting {strategy['name']}: {e}")
-                
-    # Note: We run Ensemble sequentially AFTER the individual strategies because it relies on the same STRATEGIES list
-    # and might have heavy overlapping memory use. It is already relatively fast.
-        
-    # Run Ensemble
-    ensemble_metrics, ensemble_curve, ensemble_trades = run_ensemble_backtest(STRATEGIES, test_dates, bulk_data, industry_mapping, sector_indices)
-    results.append(ensemble_metrics)
-    curves["Ensemble (Union)"] = ensemble_curve
-    
-    if ensemble_trades:
-        trades_df = pd.DataFrame(ensemble_trades)
-        trades_csv_path = os.path.join(os.path.dirname(tear_sheet_path), "Ensemble_backtest_trades.csv")
-        trades_df.to_csv(trades_csv_path, index=False)
-        
-    # Compile Tear Sheet
+                logger.error(f"Error backtesting {arch['name']}: {e}")
+                import traceback
+                traceback.print_exc()
+
     results_df = pd.DataFrame(results)
     results_df = results_df.set_index("Strategy")
     results_df = results_df.sort_values(by="Sharpe Ratio", ascending=False)
