@@ -73,7 +73,8 @@ def check_open_trades_live(trades, bulk_data):
     return closed_trades
 
 def run_live_strategies(bulk_data, nifty_hist):
-    """Run the strategy evaluations on the live bulk data."""
+    """Run A1_Alpha_Ranked architecture: RS Alpha primary + Momentum confirmation, ranked by alpha score."""
+    import talib
     new_signals = []
     
     # Build sector indices for consistency with backtester
@@ -92,80 +93,98 @@ def run_live_strategies(bulk_data, nifty_hist):
         synthetic_price = 100 * (1 + avg_returns).cumprod()
         sector_indices[ind] = pd.DataFrame({"Close": synthetic_price})
     
-    for strategy in LIVE_STRATEGIES:
-        logger.info(f"Evaluating {strategy['name']} on live data...")
-        eval_func = strategy["func"]
-        
-        for symbol, df in bulk_data.items():
-            if len(df) < 200:
+    # Get strategy definitions
+    from src.screener.pipeline.swing.run_front_test import relative_strength_eval, momentum_breakout_eval
+    
+    logger.info("Evaluating A1_Alpha_Ranked architecture (RS Primary + Momentum Confirmation)...")
+    
+    for symbol, df in bulk_data.items():
+        if len(df) < 200:
+            continue
+            
+        try:
+            sector_hist = None
+            if symbol in industry_mapping:
+                ind = industry_mapping[symbol]
+                if ind in sector_indices:
+                    sector_hist = sector_indices[ind]
+            
+            # Primary: Relative Strength
+            p_res = relative_strength_eval(df, nifty_hist=nifty_hist, sector_hist=sector_hist)
+            
+            if not p_res or not p_res.get('passed'):
                 continue
                 
+            # Confirmation: Momentum Breakout
             try:
-                sector_hist = None
-                if symbol in industry_mapping:
-                    ind = industry_mapping[symbol]
-                    if ind in sector_indices:
-                        sector_hist = sector_indices[ind]
-                
-                res = eval_func(df, nifty_hist=nifty_hist, sector_hist=sector_hist)
-                if res and res.get("passed", False):
-                    live_close = df['Close'].iloc[-1]
-                    new_signals.append({
-                        "symbol": symbol,
-                        "strategy": strategy["name"],
-                        "action": "BUY",
-                        "price": live_close
-                    })
-            except Exception as e:
-                # logger.debug(f"Error evaluating {symbol} for {strategy['name']}: {e}")
-                pass
-                
-    # Build Live Ensemble Strategy
-    symbol_counts = {}
-    for signal in new_signals:
-        if signal["action"] == "BUY":
-            symbol = signal["symbol"]
-            if symbol not in symbol_counts:
-                symbol_counts[symbol] = []
-            symbol_counts[symbol].append(signal)
+                c_res = momentum_breakout_eval(df, nifty_hist=nifty_hist, sector_hist=sector_hist)
+            except:
+                c_res = None
             
-    for symbol, signals in symbol_counts.items():
-        if len(signals) >= 2:
-            # Create an ensemble buy signal
-            price = signals[0]["price"]
-            strategy_names = [s["strategy"] for s in signals]
-            new_signals.append({
-                "symbol": symbol,
-                "strategy": "Ensemble Strategy",
-                "action": "BUY",
-                "price": price,
-                "note": f"Passed {len(signals)}: {', '.join(strategy_names)}"
-            })
+            # Alpha Confirmation Sizing Logic
+            confirmed = c_res and c_res.get('passed')
+            if confirmed:
+                risk_pct = 0.025  # 2.5% risk on confirmed
+                signal_type = "RS + Momentum CONFIRMED"
+            else:
+                risk_pct = 0.01   # 1.0% risk on RS-only
+                signal_type = "RS Alpha Only"
             
+            live_close = df['Close'].iloc[-1]
+            atr = talib.ATR(df['High'], df['Low'], df['Close'], timeperiod=14).iloc[-1]
+            
+            if pd.notna(atr) and atr > 0:
+                alpha_score = p_res.get('alpha_score', 0.0)
+                stop_loss = live_close - (atr * 2.0)
+                target = live_close + (atr * 4.0)
+                
+                new_signals.append({
+                    "symbol": symbol,
+                    "strategy": signal_type,
+                    "action": "BUY",
+                    "price": live_close,
+                    "stop_loss": round(stop_loss, 2),
+                    "target": round(target, 2),
+                    "risk_pct": risk_pct,
+                    "alpha_score": round(alpha_score, 4),
+                    "note": f"Alpha: {alpha_score:.4f} | Risk: {risk_pct*100:.1f}% | SL: {stop_loss:.2f} | TGT: {target:.2f}"
+                })
+        except Exception as e:
+            pass
+    
+    # RANK BY ALPHA SCORE (highest first) — the core A1 innovation
+    new_signals.sort(key=lambda x: x.get('alpha_score', 0.0), reverse=True)
+    
     return new_signals
 
 def print_terminal_table(title, items):
-    print(f"\n{'='*70}")
-    print(f"{title.upper().center(70)}")
-    print(f"{'='*70}")
+    print(f"\n{'='*90}")
+    print(f"{title.upper().center(90)}")
+    print(f"{'='*90}")
     if not items:
         print("No signals found.")
-        print(f"{'='*70}\n")
+        print(f"{'='*90}\n")
         return
-        
-    print(f"{'SYMBOL':<15} | {'ACTION':<20} | {'PRICE':<10} | {'STRATEGY / PNL'}")
-    print("-" * 70)
-    for item in items:
-        action = item["action"]
-        price = f"{item['price']:.2f}"
-        
-        if "BUY" in action:
-            extra = item.get("note", item["strategy"])
-        else:
+    
+    if "BUY" in (items[0].get("action", "") if items else ""):
+        print(f"{'#':<4} {'SYMBOL':<15} {'ALPHA':<10} {'PRICE':<10} {'SL':<10} {'TGT':<10} {'CONVICTION'}")
+        print("-" * 90)
+        for i, item in enumerate(items, 1):
+            alpha = f"{item.get('alpha_score', 0):.4f}"
+            price = f"{item['price']:.2f}"
+            sl = f"{item.get('stop_loss', '-')}"
+            tgt = f"{item.get('target', '-')}"
+            strategy = item.get("strategy", "")
+            print(f"{i:<4} {item['symbol']:<15} {alpha:<10} {price:<10} {sl:<10} {tgt:<10} {strategy}")
+    else:
+        print(f"{'SYMBOL':<15} | {'ACTION':<20} | {'PRICE':<10} | {'STRATEGY / PNL'}")
+        print("-" * 90)
+        for item in items:
+            action = item["action"]
+            price = f"{item['price']:.2f}"
             extra = f"{item['strategy']} ({item['pnl']:.2f}%)"
-            
-        print(f"{item['symbol']:<15} | {action:<20} | {price:<10} | {extra}")
-    print(f"{'='*70}\n")
+            print(f"{item['symbol']:<15} | {action:<20} | {price:<10} | {extra}")
+    print(f"{'='*90}\n")
 
 def main():
     print("\n" + "*"*70)

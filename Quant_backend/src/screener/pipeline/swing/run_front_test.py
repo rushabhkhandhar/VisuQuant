@@ -316,6 +316,7 @@ def relative_strength_eval(df, nifty_hist=None, sector_hist=None):
         
         # Alpha is daily residual return. Multiply by window to get total 60-day alpha
         idiosyncratic_return = model.intercept_ * len(aligned)
+        alpha_score = idiosyncratic_return
         
         if idiosyncratic_return <= 0.05: # Require at least 5% alpha over 60 days
             return {"passed": False, "reasons": [f"Low Idiosyncratic Momentum (Alpha: {idiosyncratic_return:.3f})"]}
@@ -331,6 +332,7 @@ def relative_strength_eval(df, nifty_hist=None, sector_hist=None):
             
         if ret_20 <= n_ret_20 or ret_60 <= n_ret_60:
             return {"passed": False, "reasons": ["Underperforming Nifty"]}
+        alpha_score = (ret_60 - n_ret_60)  # Excess return as proxy
         
     # 5. RSI
     rsi = talib.RSI(df['Close'], timeperiod=14).iloc[-1]
@@ -351,7 +353,7 @@ def relative_strength_eval(df, nifty_hist=None, sector_hist=None):
     if atr / close > 0.05:
         return {"passed": False, "reasons": ["ATR > 5%"]}
         
-    return {"passed": True, "score": 1.0, "trigger_type": "Relative Strength Momentum"}
+    return {"passed": True, "score": 1.0, "alpha_score": alpha_score, "trigger_type": "Relative Strength Momentum"}
 
 # Define strategies here.
 STRATEGIES = [

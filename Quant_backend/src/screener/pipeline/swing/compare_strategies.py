@@ -631,16 +631,22 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                         if pd.notna(atr) and atr > 0:
                             risk_atr = primary.get('risk_atr', 2.0)
                             reward_atr = primary.get('reward_atr', 4.0)
+                            alpha_score = p_res.get('alpha_score', 0.0) if p_res else 0.0
                             new_candidates.append({
                                 "symbol": sym,
                                 "price": close,
                                 "stop_loss": close - (atr * risk_atr),
                                 "target": close + (atr * reward_atr),
-                                "risk_pct": risk_pct
+                                "risk_pct": risk_pct,
+                                "alpha_score": alpha_score
                             })
                             
         # Allocate cash
         if new_candidates:
+            # Rank candidates by alpha score (best first) if enabled
+            if arch_config.get("rank_candidates"):
+                new_candidates.sort(key=lambda x: x.get('alpha_score', 0.0), reverse=True)
+            
             total_equity = cash + sum(p['shares'] * p['current_price'] for p in open_positions.values())
             max_alloc_per_trade = total_equity * MAX_WEIGHT_PER_TRADE * risk_multiplier
             
@@ -796,12 +802,6 @@ def main():
     
     ARCHITECTURES = [
         {
-            "name": "Exp 4: RS Alpha + Mom Conf",
-            "primary": rs_strat,
-            "confirmation": mom_strat,
-            "sizing_logic": "alpha_confirmation"
-        },
-        {
             "name": "E4_Champion_V1",
             "primary": rs_strat,
             "confirmation": mom_strat,
@@ -811,40 +811,14 @@ def main():
             "friction_pct": 0.0015
         },
         {
-            "name": "E4_Param_Low",
-            "primary": rs_strat,
-            "confirmation": mom_strat,
-            "sizing_logic": "alpha_confirmation",
-            "dynamic_risk_scaling": True,
-            "dd_penalty_factor": 4.0,
-            "friction_pct": 0.0015
-        },
-        {
-            "name": "E4_Param_High",
-            "primary": rs_strat,
-            "confirmation": mom_strat,
-            "sizing_logic": "alpha_confirmation",
-            "dynamic_risk_scaling": True,
-            "dd_penalty_factor": 6.0,
-            "friction_pct": 0.0015
-        },
-        {
-            "name": "E4_Stress_Mod",
+            "name": "A1_Alpha_Ranked",
             "primary": rs_strat,
             "confirmation": mom_strat,
             "sizing_logic": "alpha_confirmation",
             "dynamic_risk_scaling": True,
             "dd_penalty_factor": 5.0,
-            "friction_pct": 0.0025
-        },
-        {
-            "name": "E4_Stress_High",
-            "primary": rs_strat,
-            "confirmation": mom_strat,
-            "sizing_logic": "alpha_confirmation",
-            "dynamic_risk_scaling": True,
-            "dd_penalty_factor": 5.0,
-            "friction_pct": 0.0035
+            "friction_pct": 0.0015,
+            "rank_candidates": True
         }
     ]
     
