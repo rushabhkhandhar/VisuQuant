@@ -14,7 +14,7 @@ from datetime import datetime
 # Add the project root (Quant_backend) to sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.screener.pipeline.run_daily_screen import run_screener
+from src.screener.pipeline.archive.run_daily_screen import run_screener
 
 app = FastAPI(title="VisuQuant Engine API")
 
@@ -102,7 +102,7 @@ def trigger_custom_screener_stream(req: CustomScreenerRequest):
         q.put({"type": "log", "message": msg, "level": level})
 
     def run_engine():
-        from src.screener.pipeline.run_custom_screen import run_custom_screener
+        from src.screener.pipeline.archive.run_custom_screen import run_custom_screener
         try:
             results = run_custom_screener(
                 as_of_date=as_of_date, 
@@ -198,7 +198,7 @@ def download_report(path: str, background_tasks: BackgroundTasks):
 
 @app.post("/api/backtest")
 def run_strategy_backtest(req: BacktestRequest):
-    from src.screener.pipeline.backtest import run_backtest
+    from src.screener.pipeline.swing.backtest import run_backtest
     try:
         results = run_backtest(months=req.months, symbols=[req.symbol], return_json=True)
         return {"status": "success", "data": results}
@@ -207,7 +207,7 @@ def run_strategy_backtest(req: BacktestRequest):
 
 @app.post("/api/backtest_custom_strategy")
 def backtest_custom_strategy_endpoint(req: CustomScreenerRequest):
-    from src.screener.pipeline.run_custom_backtest import run_custom_backtest
+    from src.screener.pipeline.archive.run_custom_backtest import run_custom_backtest
     try:
         results = run_custom_backtest(
             months=12,

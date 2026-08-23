@@ -76,8 +76,21 @@ def run_live_strategies(bulk_data, nifty_hist):
     """Run the strategy evaluations on the live bulk data."""
     new_signals = []
     
-    # We do not have sector_hist in the live feed for simplicity, we pass None
-    # Our relative strength uses nifty_hist fallback anyway.
+    # Build sector indices for consistency with backtester
+    from src.data.nse_fetcher import load_nifty500_industry_mapping
+    industry_mapping = load_nifty500_industry_mapping()
+    sector_indices = {}
+    sectors = {}
+    for sym, df in bulk_data.items():
+        if sym in industry_mapping and not df.empty:
+            ind = industry_mapping[sym]
+            if ind not in sectors:
+                sectors[ind] = []
+            sectors[ind].append(df['Close'].pct_change().fillna(0))
+    for ind, returns_list in sectors.items():
+        avg_returns = pd.concat(returns_list, axis=1).mean(axis=1)
+        synthetic_price = 100 * (1 + avg_returns).cumprod()
+        sector_indices[ind] = pd.DataFrame({"Close": synthetic_price})
     
     for strategy in LIVE_STRATEGIES:
         logger.info(f"Evaluating {strategy['name']} on live data...")
@@ -88,7 +101,13 @@ def run_live_strategies(bulk_data, nifty_hist):
                 continue
                 
             try:
-                res = eval_func(df, nifty_hist=nifty_hist, sector_hist=None)
+                sector_hist = None
+                if symbol in industry_mapping:
+                    ind = industry_mapping[symbol]
+                    if ind in sector_indices:
+                        sector_hist = sector_indices[ind]
+                
+                res = eval_func(df, nifty_hist=nifty_hist, sector_hist=sector_hist)
                 if res and res.get("passed", False):
                     live_close = df['Close'].iloc[-1]
                     new_signals.append({

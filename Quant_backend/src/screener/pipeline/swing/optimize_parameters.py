@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 INITIAL_CAPITAL = 1_000_000.0
 MAX_WEIGHT_PER_TRADE = 0.20
+FRICTION_PCT = 0.0015  # 0.15% cost per trade leg
 
 PARAM_GRID = [
     {"sl": 1.0, "tp": 2.0},
@@ -78,7 +79,7 @@ def calculate_metrics(daily_equity, trades):
         "Total Trades": len(trades)
     }
 
-def run_parameter_backtest(params, strategy, test_dates, bulk_data):
+def run_parameter_backtest(params, strategy, test_dates, bulk_data, nifty_data=None):
     logger.info(f"Backtesting {strategy['name']} with SL {params['sl']} ATR / Target {params['tp']} ATR...")
     
     cash = INITIAL_CAPITAL
@@ -87,6 +88,7 @@ def run_parameter_backtest(params, strategy, test_dates, bulk_data):
     trades_log = []
     
     for current_date in test_dates:
+        # 1. Check exits
         symbols_to_remove = []
         for sym, pos in open_positions.items():
             if sym in bulk_data:
@@ -99,27 +101,38 @@ def run_parameter_backtest(params, strategy, test_dates, bulk_data):
                     pos['current_price'] = close
                     
                     if low <= pos['stop_loss']:
-                        pnl = (pos['stop_loss'] - pos['entry_price']) / pos['entry_price']
-                        cash += pos['shares'] * pos['stop_loss']
+                        exit_price = pos['stop_loss']
+                        net_entry_cost = pos['entry_price'] * (1 + FRICTION_PCT)
+                        net_exit_revenue = exit_price * (1 - FRICTION_PCT)
+                        pnl = (net_exit_revenue - net_entry_cost) / net_entry_cost
+                        cash += pos['shares'] * exit_price * (1 - FRICTION_PCT)
                         symbols_to_remove.append(sym)
                         trades_log.append({"symbol": sym, "pnl_pct": pnl, "status": "Loss"})
                     elif high >= pos['target']:
-                        pnl = (pos['target'] - pos['entry_price']) / pos['entry_price']
-                        cash += pos['shares'] * pos['target']
+                        exit_price = pos['target']
+                        net_entry_cost = pos['entry_price'] * (1 + FRICTION_PCT)
+                        net_exit_revenue = exit_price * (1 - FRICTION_PCT)
+                        pnl = (net_exit_revenue - net_entry_cost) / net_entry_cost
+                        cash += pos['shares'] * exit_price * (1 - FRICTION_PCT)
                         symbols_to_remove.append(sym)
                         trades_log.append({"symbol": sym, "pnl_pct": pnl, "status": "Win"})
                         
         for sym in symbols_to_remove: del open_positions[sym]
             
+        # 2. Evaluate new candidates (MOC execution at ~3:15 PM Close)
         new_candidates = []
         if cash > (INITIAL_CAPITAL * 0.05):
+            nifty_hist = None
+            if nifty_data is not None and current_date in nifty_data.index:
+                nifty_hist = nifty_data[nifty_data.index <= current_date]
+            
             for sym, df in bulk_data.items():
                 if sym in open_positions: continue
                 hist_df = df[df.index <= current_date]
                 if len(hist_df) < 200: continue
                     
                 try:
-                    res = strategy['func'](hist_df)
+                    res = strategy['func'](hist_df, nifty_hist=nifty_hist)
                     if res.get('passed', False):
                         close = hist_df['Close'].iloc[-1]
                         atr = talib.ATR(hist_df['High'], hist_df['Low'], hist_df['Close'], timeperiod=14).iloc[-1]
@@ -133,20 +146,28 @@ def run_parameter_backtest(params, strategy, test_dates, bulk_data):
                 except:
                     pass 
                     
+        # 3. Allocate Cash (MOC entry at Close price)
         if new_candidates:
             total_equity = cash + sum(p['shares'] * p['current_price'] for p in open_positions.values())
             max_alloc_per_trade = total_equity * MAX_WEIGHT_PER_TRADE
-            alloc_per_trade = min(cash / len(new_candidates), max_alloc_per_trade)
             
             for cand in new_candidates:
-                if cash >= alloc_per_trade and alloc_per_trade > 1000:
-                    shares = int(alloc_per_trade // cand['price'])
-                    if shares > 0:
-                        cash -= shares * cand['price']
-                        open_positions[cand['symbol']] = {
-                            "shares": shares, "entry_price": cand['price'], "current_price": cand['price'],
-                            "stop_loss": cand['stop_loss'], "target": cand['target']
-                        }
+                risk_amount = total_equity * 0.02
+                risk_per_share = cand['price'] - cand['stop_loss']
+                if risk_per_share <= 0:
+                    continue
+                    
+                ideal_shares = int(risk_amount / risk_per_share)
+                max_shares = int(max_alloc_per_trade / cand['price'])
+                shares = min(ideal_shares, max_shares)
+                
+                required_cash = shares * cand['price'] * (1 + FRICTION_PCT)
+                if shares > 0 and cash >= required_cash:
+                    cash -= required_cash
+                    open_positions[cand['symbol']] = {
+                        "shares": shares, "entry_price": cand['price'], "current_price": cand['price'],
+                        "stop_loss": cand['stop_loss'], "target": cand['target']
+                    }
                         
         total_equity = cash + sum(p['shares'] * p['current_price'] for p in open_positions.values())
         daily_equity_curve.append(total_equity)
@@ -165,14 +186,19 @@ def main():
     logger.info(f"Loading NIFTY 500 universe...")
     universe = load_nifty500_symbols()
     
+    if "NIFTYBEES" not in universe:
+        universe.append("NIFTYBEES")
+        
     logger.info(f"Fetching bulk history for last {total_lookback} days...")
     bulk_data = fetch_bulk_history(universe, date.today(), lookback_days=total_lookback)
     
-    all_dates = set()
-    for df in bulk_data.values():
-        if not df.empty: all_dates.update(df.index.tolist())
-    sorted_dates = sorted(list(all_dates))
-    test_dates = sorted_dates[-backtest_days:]
+    # Use NIFTYBEES as the source of truth for trading days
+    if "NIFTYBEES" not in bulk_data:
+        logger.error("NIFTYBEES missing from bulk data. Cannot align dates.")
+        return
+        
+    nifty_data = bulk_data.pop("NIFTYBEES")
+    test_dates = sorted(nifty_data.index)[-backtest_days:]
     
     logger.info(f"Optimizing all strategies over {len(test_dates)} trading days...")
     
@@ -180,7 +206,7 @@ def main():
     
     for strategy in STRATEGIES:
         for params in PARAM_GRID:
-            metrics = run_parameter_backtest(params, strategy, test_dates, bulk_data)
+            metrics = run_parameter_backtest(params, strategy, test_dates, bulk_data, nifty_data=nifty_data)
             all_results.append(metrics)
             
     results_df = pd.DataFrame(all_results)

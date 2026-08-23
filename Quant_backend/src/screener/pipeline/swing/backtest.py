@@ -42,13 +42,13 @@ def run_backtest(months: int = 3, symbols: List[str] = None, return_json: bool =
     # Fetch all data once for extreme speed
     bulk_data = fetch_bulk_history(universe, date.today(), lookback_days=total_lookback)
     
-    # Extract a master list of all unique trading dates from the loaded data
-    all_dates = set()
-    for df in bulk_data.values():
-        if not df.empty:
-            all_dates.update(df.index.tolist())
-            
-    sorted_dates = sorted(list(all_dates))
+    # Use NIFTYBEES as the source of truth for trading days to avoid phantom dates
+    nifty_df = bulk_data.get("NIFTYBEES")
+    if nifty_df is None or nifty_df.empty:
+        logger.error("NIFTYBEES missing from bulk data. Cannot align dates.")
+        return
+        
+    sorted_dates = sorted(nifty_df.index.tolist())
     
     if len(sorted_dates) <= backtest_days:
         logger.error("Not enough data fetched for backtest.")

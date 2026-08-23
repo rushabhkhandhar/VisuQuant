@@ -500,6 +500,22 @@ def run_strategies(trades, as_of_date):
     
     nifty_hist = bulk_data.pop("NIFTYBEES") if "NIFTYBEES" in bulk_data else None
     
+    # Build sector indices for consistency with backtester
+    from src.data.nse_fetcher import load_nifty500_industry_mapping
+    industry_mapping = load_nifty500_industry_mapping()
+    sector_indices = {}
+    sectors = {}
+    for sym, df in bulk_data.items():
+        if sym in industry_mapping and not df.empty:
+            ind = industry_mapping[sym]
+            if ind not in sectors:
+                sectors[ind] = []
+            sectors[ind].append(df['Close'].pct_change().fillna(0))
+    for ind, returns_list in sectors.items():
+        avg_returns = pd.concat(returns_list, axis=1).mean(axis=1)
+        synthetic_price = 100 * (1 + avg_returns).cumprod()
+        sector_indices[ind] = pd.DataFrame({"Close": synthetic_price})
+    
     all_raw_candidates = []
     
     for strategy in STRATEGIES:
@@ -510,11 +526,20 @@ def run_strategies(trades, as_of_date):
             
         strategy_candidates = []
         for symbol, df in bulk_data.items():
+            # Explicit date slice for safety against timezone/caching edge cases
+            df = df[df.index <= pd.Timestamp(as_of_date)]
             if len(df) < 200:
                 continue
             
             try:
-                res = eval_func(df, nifty_hist=nifty_hist, sector_hist=None)
+                # Build sector_hist for this symbol
+                sector_hist = None
+                if symbol in industry_mapping:
+                    ind = industry_mapping[symbol]
+                    if ind in sector_indices:
+                        sector_hist = sector_indices[ind][sector_indices[ind].index <= pd.Timestamp(as_of_date)]
+                
+                res = eval_func(df, nifty_hist=nifty_hist, sector_hist=sector_hist)
                 if res and res.get("passed", False):
                     close_price = df['Close'].iloc[-1]
                     

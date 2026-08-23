@@ -111,7 +111,17 @@ def run_strategy_backtest(strategy, test_dates, bulk_data, industry_mapping=None
                         cash += pos['shares'] * exit_price * (1 - FRICTION_PCT)
                         symbols_to_remove.append(sym)
                         
-                        trades_log.append({"symbol": sym, "pnl_pct": pnl, "status": "Loss"})
+                        trades_log.append({
+                            "symbol": sym, 
+                            "entry_date": pos.get("entry_date", ""),
+                            "exit_date": current_date.strftime("%Y-%m-%d"),
+                            "entry_price": pos["entry_price"],
+                            "exit_price": exit_price,
+                            "stop_loss": pos["stop_loss"],
+                            "target": pos["target"],
+                            "pnl_pct": pnl, 
+                            "status": "Loss"
+                        })
                     elif high >= pos['target']:
                         exit_price = pos['target']
                         net_entry_cost = pos['entry_price'] * (1 + FRICTION_PCT)
@@ -119,14 +129,24 @@ def run_strategy_backtest(strategy, test_dates, bulk_data, industry_mapping=None
                         pnl = (net_exit_revenue - net_entry_cost) / net_entry_cost
                         cash += pos['shares'] * exit_price * (1 - FRICTION_PCT)
                         symbols_to_remove.append(sym)
-                        trades_log.append({"symbol": sym, "pnl_pct": pnl, "status": "Win"})
+                        trades_log.append({
+                            "symbol": sym, 
+                            "entry_date": pos.get("entry_date", ""),
+                            "exit_date": current_date.strftime("%Y-%m-%d"),
+                            "entry_price": pos["entry_price"],
+                            "exit_price": exit_price,
+                            "stop_loss": pos["stop_loss"],
+                            "target": pos["target"],
+                            "pnl_pct": pnl, 
+                            "status": "Win"
+                        })
                         
         for sym in symbols_to_remove:
             del open_positions[sym]
             
-        # 2. Evaluate new candidates if we have cash
+        # 2. Evaluate new candidates (MOC execution: signal + entry at ~3:15 PM Close)
         new_candidates = []
-        if cash > (INITIAL_CAPITAL * 0.05): # Minimum 5% cash to bother looking for trades
+        if cash > (INITIAL_CAPITAL * 0.05):
             nifty_hist = None
             if "NIFTYBEES" in bulk_data:
                 nifty_df = bulk_data["NIFTYBEES"]
@@ -167,7 +187,7 @@ def run_strategy_backtest(strategy, test_dates, bulk_data, industry_mapping=None
                 except Exception as e:
                     pass # Skip if eval fails
                     
-        # 3. Allocate Cash
+        # 3. Allocate Cash (MOC entry at Close price)
         if new_candidates:
             total_equity = cash + sum(p['shares'] * p['current_price'] for p in open_positions.values())
             max_alloc_per_trade = total_equity * MAX_WEIGHT_PER_TRADE
@@ -181,8 +201,6 @@ def run_strategy_backtest(strategy, test_dates, bulk_data, industry_mapping=None
                     continue
                     
                 ideal_shares = int(risk_amount / risk_per_share)
-                
-                # Cap the trade value to MAX_WEIGHT_PER_TRADE
                 max_shares = int(max_alloc_per_trade / cand['price'])
                 shares = min(ideal_shares, max_shares)
                 
@@ -192,6 +210,7 @@ def run_strategy_backtest(strategy, test_dates, bulk_data, industry_mapping=None
                     cash -= required_cash
                     open_positions[cand['symbol']] = {
                         "shares": shares,
+                        "entry_date": current_date.strftime("%Y-%m-%d"),
                         "entry_price": cand['price'],
                         "current_price": cand['price'],
                         "stop_loss": cand['stop_loss'],
@@ -204,7 +223,7 @@ def run_strategy_backtest(strategy, test_dates, bulk_data, industry_mapping=None
         
     metrics = calculate_metrics(daily_equity_curve, trades_log)
     metrics["Strategy"] = strategy["name"]
-    return metrics, daily_equity_curve
+    return metrics, daily_equity_curve, trades_log
 
 
 
@@ -243,7 +262,17 @@ def run_ensemble_backtest(strategies, test_dates, bulk_data, industry_mapping=No
                         cash += pos['shares'] * exit_price * (1 - FRICTION_PCT)
                         symbols_to_remove.append(sym)
                         
-                        trades_log.append({"symbol": sym, "pnl_pct": pnl, "status": "Loss"})
+                        trades_log.append({
+                            "symbol": sym, 
+                            "entry_date": pos.get("entry_date", ""),
+                            "exit_date": current_date.strftime("%Y-%m-%d"),
+                            "entry_price": pos["entry_price"],
+                            "exit_price": exit_price,
+                            "stop_loss": pos["stop_loss"],
+                            "target": pos["target"],
+                            "pnl_pct": pnl, 
+                            "status": "Loss"
+                        })
                     elif high >= pos['target']:
                         exit_price = pos['target']
                         net_entry_cost = pos['entry_price'] * (1 + FRICTION_PCT)
@@ -251,14 +280,24 @@ def run_ensemble_backtest(strategies, test_dates, bulk_data, industry_mapping=No
                         pnl = (net_exit_revenue - net_entry_cost) / net_entry_cost
                         cash += pos['shares'] * exit_price * (1 - FRICTION_PCT)
                         symbols_to_remove.append(sym)
-                        trades_log.append({"symbol": sym, "pnl_pct": pnl, "status": "Win"})
+                        trades_log.append({
+                            "symbol": sym, 
+                            "entry_date": pos.get("entry_date", ""),
+                            "exit_date": current_date.strftime("%Y-%m-%d"),
+                            "entry_price": pos["entry_price"],
+                            "exit_price": exit_price,
+                            "stop_loss": pos["stop_loss"],
+                            "target": pos["target"],
+                            "pnl_pct": pnl, 
+                            "status": "Win"
+                        })
                         
         for sym in symbols_to_remove:
             del open_positions[sym]
             
-        # 2. Evaluate new candidates if we have cash
+        # 2. Evaluate new candidates (MOC execution at ~3:15 PM Close)
         new_candidates = []
-        if cash > (INITIAL_CAPITAL * 0.05): # Minimum 5% cash to bother looking for trades
+        if cash > (INITIAL_CAPITAL * 0.05):
             nifty_hist = None
             if "NIFTYBEES" in bulk_data:
                 nifty_df = bulk_data["NIFTYBEES"]
@@ -271,13 +310,15 @@ def run_ensemble_backtest(strategies, test_dates, bulk_data, industry_mapping=No
                 if sym in open_positions:
                     continue
                     
-                # Slice history up to current date
                 hist_df = df[df.index <= current_date]
                 if len(hist_df) < 200:
                     continue
                     
-                # Run eval for all strategies
-                for strategy in strategies:
+                # Run eval for target strategies (Intersection)
+                passed_strategies = []
+                target_strategies = [s for s in strategies if s['name'] in ["Relative Strength", "Momentum Breakout"]]
+                
+                for strategy in target_strategies:
                     try:
                         sector_hist = None
                         if industry_mapping and sector_indices and sym in industry_mapping:
@@ -287,28 +328,31 @@ def run_ensemble_backtest(strategies, test_dates, bulk_data, industry_mapping=No
                                 
                         res = strategy['func'](hist_df, nifty_hist=nifty_hist, sector_hist=sector_hist)
                         if res.get('passed', False):
-                            close = hist_df['Close'].iloc[-1]
-                            atr = talib.ATR(hist_df['High'], hist_df['Low'], hist_df['Close'], timeperiod=14).iloc[-1]
-                            
-                            if pd.notna(atr) and atr > 0:
-                                new_candidates.append({
-                                    "symbol": sym,
-                                    "price": close,
-                                    "stop_loss": close - (atr * strategy['risk_atr']),
-                                    "target": close + (atr * strategy['reward_atr']),
-                                    "strategy_name": strategy['name']
-                                })
-                                break # Do not evaluate further strategies for this symbol if one triggered
+                            passed_strategies.append(strategy)
                     except Exception as e:
-                        pass # Skip if eval fails
+                        pass
+                
+                # Check if BOTH RS and Momentum passed
+                if len(passed_strategies) == 2:
+                    strategy = passed_strategies[0]
+                    close = hist_df['Close'].iloc[-1]
+                    atr = talib.ATR(hist_df['High'], hist_df['Low'], hist_df['Close'], timeperiod=14).iloc[-1]
                     
-        # 3. Allocate Cash
+                    if pd.notna(atr) and atr > 0:
+                        new_candidates.append({
+                            "symbol": sym,
+                            "price": close,
+                            "stop_loss": close - (atr * strategy['risk_atr']),
+                            "target": close + (atr * strategy['reward_atr']),
+                            "strategy_name": "RS + Momentum (Intersection)"
+                        })
+                    
+        # 3. Allocate Cash (MOC entry at Close price)
         if new_candidates:
             total_equity = cash + sum(p['shares'] * p['current_price'] for p in open_positions.values())
             max_alloc_per_trade = total_equity * MAX_WEIGHT_PER_TRADE
             
             for cand in new_candidates:
-                # Volatility sizing: Risk 2% of total equity
                 risk_amount = total_equity * 0.02
                 risk_per_share = cand['price'] - cand['stop_loss']
                 
@@ -316,8 +360,6 @@ def run_ensemble_backtest(strategies, test_dates, bulk_data, industry_mapping=No
                     continue
                     
                 ideal_shares = int(risk_amount / risk_per_share)
-                
-                # Cap the trade value to MAX_WEIGHT_PER_TRADE
                 max_shares = int(max_alloc_per_trade / cand['price'])
                 shares = min(ideal_shares, max_shares)
                 
@@ -327,6 +369,7 @@ def run_ensemble_backtest(strategies, test_dates, bulk_data, industry_mapping=No
                     cash -= required_cash
                     open_positions[cand['symbol']] = {
                         "shares": shares,
+                        "entry_date": current_date.strftime("%Y-%m-%d"),
                         "entry_price": cand['price'],
                         "current_price": cand['price'],
                         "stop_loss": cand['stop_loss'],
@@ -339,14 +382,20 @@ def run_ensemble_backtest(strategies, test_dates, bulk_data, industry_mapping=No
         daily_equity_curve.append(total_equity)
         
     metrics = calculate_metrics(daily_equity_curve, trades_log)
-    metrics["Strategy"] = "Ensemble (Combined)"
-    return metrics, daily_equity_curve
+    metrics["Strategy"] = "Ensemble (Intersection)"
+    return metrics, daily_equity_curve, trades_log
 
 
 
 def main():
-    years = 2
-    backtest_days = int(years * 252)
+    # Fixed start date so backtest always covers from Jan 2022 onwards
+    from datetime import datetime
+    start_date = datetime(2022, 1, 1).date()
+    today = date.today()
+    calendar_days_since_start = (today - start_date).days
+    # ~252 trading days per 365 calendar days
+    backtest_days = int(calendar_days_since_start * 252 / 365)
+    # Need 300 extra days of history before start for indicator warmup (SMA200 etc.)
     total_lookback = backtest_days + 300
     
     logger.info(f"Loading NIFTY 500 universe...")
@@ -357,17 +406,14 @@ def main():
     logger.info(f"Fetching bulk history for last {total_lookback} days...")
     bulk_data = fetch_bulk_history(universe, date.today(), lookback_days=total_lookback)
     
-
-    
-    # Align dates
-    all_dates = set()
-    for df in bulk_data.values():
-        if not df.empty:
-            all_dates.update(df.index.tolist())
-    sorted_dates = sorted(list(all_dates))
-    
-    test_dates = sorted_dates[-backtest_days:]
-    logger.info(f"Backtesting over {len(test_dates)} trading days...")
+    # Align dates using NIFTYBEES as the source of truth for trading days
+    if "NIFTYBEES" not in bulk_data:
+        logger.error("NIFTYBEES missing from bulk data. Cannot align dates.")
+        return
+        
+    nifty_all_dates = sorted(bulk_data["NIFTYBEES"].index)
+    test_dates = [d for d in nifty_all_dates if d.date() >= start_date]
+    logger.info(f"Backtesting over {len(test_dates)} trading days (from {test_dates[0].date()} to {test_dates[-1].date()})...")
     
     results = []
     curves = {}
@@ -377,6 +423,7 @@ def main():
     
     # Construct sector indices
     sector_indices = {}
+    
     sectors = {}
     for sym, df in bulk_data.items():
         if sym in industry_mapping and not df.empty:
@@ -392,16 +439,29 @@ def main():
         # Create a synthetic price index starting at 100
         synthetic_price = 100 * (1 + avg_returns).cumprod()
         sector_indices[ind] = pd.DataFrame({"Close": synthetic_price})
+    tear_sheet_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))), "front_testing", "strategy_tear_sheet.csv")
     
     for strategy in STRATEGIES:
-        metrics, curve = run_strategy_backtest(strategy, test_dates, bulk_data, industry_mapping, sector_indices)
+        metrics, curve, trades = run_strategy_backtest(strategy, test_dates, bulk_data, industry_mapping, sector_indices)
         results.append(metrics)
         curves[strategy['name']] = curve
         
+        # Save trades log
+        if trades:
+            trades_df = pd.DataFrame(trades)
+            safe_name = strategy['name'].replace(" ", "_")
+            trades_csv_path = os.path.join(os.path.dirname(tear_sheet_path), f"{safe_name}_backtest_trades.csv")
+            trades_df.to_csv(trades_csv_path, index=False)
+        
     # Run Ensemble
-    ensemble_metrics, ensemble_curve = run_ensemble_backtest(STRATEGIES, test_dates, bulk_data, industry_mapping, sector_indices)
+    ensemble_metrics, ensemble_curve, ensemble_trades = run_ensemble_backtest(STRATEGIES, test_dates, bulk_data, industry_mapping, sector_indices)
     results.append(ensemble_metrics)
-    curves["Ensemble (Combined)"] = ensemble_curve
+    curves["Ensemble (Intersection)"] = ensemble_curve
+    
+    if ensemble_trades:
+        trades_df = pd.DataFrame(ensemble_trades)
+        trades_csv_path = os.path.join(os.path.dirname(tear_sheet_path), "Ensemble_backtest_trades.csv")
+        trades_df.to_csv(trades_csv_path, index=False)
         
     # Compile Tear Sheet
     results_df = pd.DataFrame(results)
@@ -444,7 +504,8 @@ def main():
     
     logger.info(f"Tear sheet successfully generated and saved to {tear_sheet_path}")
     logger.info(f"Appended results to {experiment_log_path}")
-    print("\n================= STRATEGY TEAR SHEET (LAST 2 YEARS) =================")
+    years = round(calendar_days_since_start / 365, 1)
+    print(f"\n================= STRATEGY TEAR SHEET (LAST {years} YEARS) =================")
     print(results_df.to_string())
     print("======================================================================\n")
 
