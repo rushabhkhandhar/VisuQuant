@@ -332,8 +332,8 @@ def run_ensemble_backtest(strategies, test_dates, bulk_data, industry_mapping=No
                     except Exception as e:
                         pass
                 
-                # Check if BOTH RS and Momentum passed
-                if len(passed_strategies) == 2:
+                # Check if AT LEAST ONE strategy passed (OR logic)
+                if len(passed_strategies) >= 1:
                     strategy = passed_strategies[0]
                     close = hist_df['Close'].iloc[-1]
                     atr = talib.ATR(hist_df['High'], hist_df['Low'], hist_df['Close'], timeperiod=14).iloc[-1]
@@ -344,7 +344,7 @@ def run_ensemble_backtest(strategies, test_dates, bulk_data, industry_mapping=No
                             "price": close,
                             "stop_loss": close - (atr * strategy['risk_atr']),
                             "target": close + (atr * strategy['reward_atr']),
-                            "strategy_name": "RS + Momentum (Intersection)"
+                            "strategy_name": "RS OR Momentum (Union)"
                         })
                     
         # 3. Allocate Cash (MOC entry at Close price)
@@ -481,7 +481,7 @@ def main():
     # Run Ensemble
     ensemble_metrics, ensemble_curve, ensemble_trades = run_ensemble_backtest(STRATEGIES, test_dates, bulk_data, industry_mapping, sector_indices)
     results.append(ensemble_metrics)
-    curves["Ensemble (Intersection)"] = ensemble_curve
+    curves["Ensemble (Union)"] = ensemble_curve
     
     if ensemble_trades:
         trades_df = pd.DataFrame(ensemble_trades)
