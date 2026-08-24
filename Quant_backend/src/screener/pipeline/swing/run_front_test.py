@@ -414,6 +414,55 @@ def save_state(trades):
     with open(STATE_FILE, "w") as f:
         json.dump(trades, f, indent=4)
 
+
+def record_live_signals(trades, signals, signal_timestamp):
+    """Append the exact near-close signals emitted by ``run_live_screener``.
+
+    This is intentionally a ledger operation.  It never recomputes a signal
+    from finalized EOD data, which would make the forward test diverge from the
+    3:15 PM strategy that was actually traded.
+    """
+    signal_time = pd.Timestamp(signal_timestamp)
+    signal_date = signal_time.date().isoformat()
+    added = 0
+    for signal in signals:
+        symbol = signal["symbol"]
+        duplicate = any(
+            trade["symbol"] == symbol
+            and trade.get("signal_date") == signal_date
+            and trade.get("status") == "OPEN"
+            for trade in trades
+        )
+        if duplicate:
+            continue
+        entry_price = float(signal["entry_price"])
+        trades.append({
+            "trade_id": str(uuid.uuid4()),
+            "strategy_name": signal["strategy_name"],
+            "symbol": symbol,
+            "signal_date": signal_date,
+            "signal_timestamp": signal_time.isoformat(),
+            "entry_date": signal_date,
+            "entry_price": entry_price,
+            "close_price": entry_price,
+            "stop_loss": signal["stop_loss"],
+            "target": signal["target"],
+            "risk_pct": signal["risk_pct"],
+            "alpha_score": signal["alpha_score"],
+            "regime_state": signal["regime_state"],
+            "entry_regime": f"E12_STATE_{signal['regime_state']}",
+            "bcr": signal["bcr"],
+            "breadth": signal["breadth"],
+            "status": "OPEN",
+            "exit_date": None,
+            "exit_regime": None,
+            "exit_price": None,
+            "pnl_pct": None,
+        })
+        added += 1
+    logger.info("Recorded %s exact 3:15 PM E12 signals for %s.", added, signal_date)
+    return trades
+
 def get_market_regime(as_of_date):
     bulk_data = fetch_bulk_history(["NIFTYBEES"], as_of_date, lookback_days=100)
     nifty = bulk_data.get("NIFTYBEES")
@@ -486,7 +535,7 @@ def update_open_trades(trades, as_of_date):
 
 def run_strategies(trades, as_of_date):
     """
-    E11_Three_State regime-adaptive signal generation (mirrors compare_strategies.py E11).
+    Deprecated: new entries must come from the 3:15 PM live screener.
 
     STATE 1 — TREND      (BCR > 52%):                RS Alpha primary + Momentum Confirmation
     STATE 2 — MEAN-REVERT (BCR ≤ 52%, breadth ≥ 30%): Oversold Uptrend + Trend Pullback
@@ -494,6 +543,10 @@ def run_strategies(trades, as_of_date):
 
     All regime inputs use strictly historical data — no forward bias.
     """
+    raise RuntimeError(
+        "run_strategies is disabled to prevent final-EOD rescans from diverging "
+        "from run_live_screener's 3:15 PM E12 signals. Use record_live_signals instead."
+    )
     import talib
 
     BCR_THRESHOLD = 0.52    # Momentum must beat coin flip to enter trend mode
@@ -770,8 +823,8 @@ def main():
     # 1. Update Open Trades
     trades = update_open_trades(trades, as_of_date)
     
-    # 2. Run Strategies to find new candidates
-    trades = run_strategies(trades, as_of_date)
+    # New entries are recorded by run_live_screener at 3:15 PM.  Do not rescan
+    # after close: that would use a different (final EOD) information set.
     
     # 3. Save State (JSON for machine readability)
     save_state(trades)
@@ -785,15 +838,17 @@ def main():
     # 6. Continuous Portfolio Tracking & Optimization
     date_str = as_of_date.strftime("%Y-%m-%d")
     
-    strategy_names = ["Momentum Breakout", "Volatility Compression", "Relative Strength", "Ensemble Strategy"]
-    for s_name in strategy_names:
-        s_candidates = [t for t in trades if t.get("entry_date") == date_str and t.get("status") == "OPEN" and t["strategy_name"] == s_name]
-        
-        try:
-            from src.screener.portfolio.portfolio_tracker import step_portfolio
-            step_portfolio(s_candidates, as_of_date, strategy_name=s_name)
-        except Exception as e:
-            logger.error(f"Error during portfolio tracking/optimization for {s_name}: {e}")
+    e12_candidates = [
+        trade for trade in trades
+        if trade.get("entry_date") == date_str
+        and trade.get("status") == "OPEN"
+        and trade.get("strategy_name", "").startswith("E12-")
+    ]
+    try:
+        from src.screener.portfolio.portfolio_tracker import step_portfolio
+        step_portfolio(e12_candidates, as_of_date, strategy_name="E12_Three_State")
+    except Exception as e:
+        logger.error(f"Error during portfolio tracking/optimization for E12_Three_State: {e}")
     
     logger.info("--- Forward Test Engine Completed ---")
     cleanup_cache()

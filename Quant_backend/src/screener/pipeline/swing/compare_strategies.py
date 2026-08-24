@@ -1,6 +1,8 @@
 import os
 import sys
 import logging
+import hashlib
+import json
 import pandas as pd
 import numpy as np
 from datetime import date, timedelta
@@ -17,6 +19,10 @@ from src.screener.pipeline.swing.run_front_test import (
     volatility_compression_eval,
     relative_strength_eval
 )
+from src.screener.pipeline.swing.e12_strategy import (
+    BCR_THRESHOLD, BREADTH_THRESHOLD, MAX_CONFIRMED_SIGNALS, MAX_PRIMARY_SIGNALS,
+    RISK_ATR, REWARD_ATR, RISK_CONFIRMED, RISK_PRIMARY,
+)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -25,6 +31,7 @@ INITIAL_CAPITAL = 5_00_000.0  #   This does NOT affect architectural backtests (
                               # Architectural backtests use a hardcoded 5L in run_architectural_backtest().
 MAX_WEIGHT_PER_TRADE = 0.20  # Max 20% of total equity per trade
 FRICTION_PCT = 0.0015  # 0.15% cost per trade leg
+HOLDOUT_START = pd.Timestamp("2024-08-25")
 
 STRATEGIES = [
     # {"name": "Trend Pullback", "func": trend_pullback_eval, "risk_atr": 1.5, "reward_atr": 3.0},
@@ -142,6 +149,33 @@ def calculate_regime_metrics(trades, nifty_df):
         
     return metrics
 
+
+def summarize_equity_period(strategy_name, equity_curve, dates, period_name, start, end=None):
+    """Return an auditable, calendar-time performance summary for one period."""
+    series = pd.Series(equity_curve, index=pd.to_datetime(dates), dtype=float)
+    period = series[series.index >= pd.Timestamp(start)]
+    if end is not None:
+        period = period[period.index < pd.Timestamp(end)]
+    if len(period) < 2:
+        return None
+
+    years = max((period.index[-1] - period.index[0]).days / 365.25, 1 / 365.25)
+    total_return = period.iloc[-1] / period.iloc[0] - 1
+    cagr = (period.iloc[-1] / period.iloc[0]) ** (1 / years) - 1
+    drawdown = period / period.cummax() - 1
+    return {
+        "Strategy": strategy_name,
+        "Period": period_name,
+        "Start": period.index[0].date().isoformat(),
+        "End": period.index[-1].date().isoformat(),
+        "Sessions": len(period),
+        "Start Equity": round(period.iloc[0], 2),
+        "End Equity": round(period.iloc[-1], 2),
+        "Total Return (%)": round(total_return * 100, 2),
+        "CAGR (%)": round(cagr * 100, 2),
+        "Max Drawdown (%)": round(drawdown.min() * 100, 2),
+    }
+
 def run_strategy_backtest(strategy, test_dates, bulk_data, industry_mapping=None, sector_indices=None):
     logger.info(f"Backtesting {strategy['name']}...")
     
@@ -179,6 +213,7 @@ def run_strategy_backtest(strategy, test_dates, bulk_data, industry_mapping=None
                         
                         trades_log.append({
                             "symbol": sym, 
+                            "signal_date": pos.get("signal_date", pos.get("entry_date", "")),
                             "entry_date": pos.get("entry_date", ""),
                             "exit_date": current_date.strftime("%Y-%m-%d"),
                             "entry_price": pos["entry_price"],
@@ -197,6 +232,7 @@ def run_strategy_backtest(strategy, test_dates, bulk_data, industry_mapping=None
                         symbols_to_remove.append(sym)
                         trades_log.append({
                             "symbol": sym, 
+                            "signal_date": pos.get("signal_date", pos.get("entry_date", "")),
                             "entry_date": pos.get("entry_date", ""),
                             "exit_date": current_date.strftime("%Y-%m-%d"),
                             "entry_price": pos["entry_price"],
@@ -330,6 +366,7 @@ def run_ensemble_backtest(strategies, test_dates, bulk_data, industry_mapping=No
                         
                         trades_log.append({
                             "symbol": sym, 
+                            "signal_date": pos.get("signal_date", pos.get("entry_date", "")),
                             "entry_date": pos.get("entry_date", ""),
                             "exit_date": current_date.strftime("%Y-%m-%d"),
                             "entry_price": pos["entry_price"],
@@ -348,6 +385,7 @@ def run_ensemble_backtest(strategies, test_dates, bulk_data, industry_mapping=No
                         symbols_to_remove.append(sym)
                         trades_log.append({
                             "symbol": sym, 
+                            "signal_date": pos.get("signal_date", pos.get("entry_date", "")),
                             "entry_date": pos.get("entry_date", ""),
                             "exit_date": current_date.strftime("%Y-%m-%d"),
                             "entry_price": pos["entry_price"],
@@ -547,6 +585,7 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                         
                         trades_log.append({
                             "symbol": sym, 
+                            "signal_date": pos.get("signal_date", pos.get("entry_date", "")),
                             "entry_date": pos.get("entry_date", ""),
                             "exit_date": current_date.strftime("%Y-%m-%d"),
                             "entry_price": pos["entry_price"],
@@ -565,6 +604,7 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                         symbols_to_remove.append(sym)
                         trades_log.append({
                             "symbol": sym, 
+                            "signal_date": pos.get("signal_date", pos.get("entry_date", "")),
                             "entry_date": pos.get("entry_date", ""),
                             "exit_date": current_date.strftime("%Y-%m-%d"),
                             "entry_price": pos["entry_price"],
@@ -678,10 +718,10 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                         is_confirmed = False
                         if p_res and p_res.get('passed'):
                             if c_res and c_res.get('passed'):
-                                risk_pct = 0.025
+                                risk_pct = RISK_CONFIRMED
                                 is_confirmed = True
                             else:
-                                risk_pct = 0.01
+                                risk_pct = RISK_PRIMARY
                     elif sizing_logic == "momentum_risk_filter":
                         if p_res and p_res.get('passed'):
                             if c_res and c_res.get('passed'): risk_pct = 0.02
@@ -710,11 +750,14 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                     
                     if risk_pct > 0:
                         risk_pct = risk_pct * risk_multiplier
-                        close = hist_df['Close'].iloc[-1]
+                        # Canonical E12 uses a near-close/MOC entry.  The live
+                        # screener records its 3:15 price; this historical proxy
+                        # uses that day's close and must be interpreted as such.
+                        entry_price = hist_df['Close'].iloc[-1]
                         atr = talib.ATR(hist_df['High'], hist_df['Low'], hist_df['Close'], timeperiod=14).iloc[-1]
                         if pd.notna(atr) and atr > 0:
-                            risk_atr = primary.get('risk_atr', 2.0)
-                            reward_atr = primary.get('reward_atr', 4.0)
+                            risk_atr = RISK_ATR
+                            reward_atr = REWARD_ATR
                             
                             # A2+A3: Adaptive Risk/Reward based on confirmation
                             if arch_config.get("adaptive_rr") and sizing_logic == "alpha_confirmation":
@@ -728,18 +771,23 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                             alpha_score = p_res.get('alpha_score', 0.0) if p_res else 0.0
                             new_candidates.append({
                                 "symbol": sym,
-                                "price": close,
-                                "stop_loss": close - (atr * risk_atr),
-                                "target": close + (atr * reward_atr),
+                                "price": entry_price,
+                                "entry_date": current_date.strftime("%Y-%m-%d"),
+                                "signal_date": current_date.strftime("%Y-%m-%d"),
+                                "stop_loss": entry_price - (atr * risk_atr),
+                                "target": entry_price + (atr * reward_atr),
                                 "risk_pct": risk_pct,
-                                "alpha_score": alpha_score
+                                "alpha_score": alpha_score,
+                                "confirmed": is_confirmed,
                             })
                             
         # Allocate cash
         if new_candidates:
             # Rank candidates by alpha score (best first) if enabled
             if arch_config.get("rank_candidates"):
-                new_candidates.sort(key=lambda x: x.get('alpha_score', 0.0), reverse=True)
+                confirmed = sorted((c for c in new_candidates if c["confirmed"]), key=lambda c: c["alpha_score"], reverse=True)
+                primary = sorted((c for c in new_candidates if not c["confirmed"]), key=lambda c: c["alpha_score"], reverse=True)
+                new_candidates = confirmed[:MAX_CONFIRMED_SIGNALS] + primary[:MAX_PRIMARY_SIGNALS]
             
             total_equity = cash + sum(p['shares'] * p['current_price'] for p in open_positions.values())
             max_alloc_per_trade = total_equity * MAX_WEIGHT_PER_TRADE * risk_multiplier
@@ -781,7 +829,8 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                         cash -= required_cash
                         open_positions[cand['symbol']] = {
                             "shares": final_shares,
-                            "entry_date": current_date.strftime("%Y-%m-%d"),
+                            "entry_date": cand["entry_date"],
+                            "signal_date": cand["signal_date"],
                             "entry_price": cand['price'],
                             "current_price": cand['price'],
                             "stop_loss": cand['stop_loss'],
@@ -801,7 +850,8 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                         cash -= required_cash
                         open_positions[cand['symbol']] = {
                             "shares": shares,
-                            "entry_date": current_date.strftime("%Y-%m-%d"),
+                            "entry_date": cand["entry_date"],
+                            "signal_date": cand["signal_date"],
                             "entry_price": cand['price'],
                             "current_price": cand['price'],
                             "stop_loss": cand['stop_loss'],
@@ -837,12 +887,10 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
 
 
 def main():
-    # Backtest covers exactly the last 4 years
     from datetime import datetime, timedelta
-    # ⚠️ DO NOT CHANGE years_to_test for architectural comparison runs.
-    # The full 6-year window is required to capture both the bull regime (2020-2024)
-    # and the mean-reverting regime (2024-2026). Reducing to 2 years only shows
-    # the recent bad period and makes ALL strategies look broken.
+    # Keep this full history for context, but judge the frozen strategy primarily
+    # on validation_report.csv's post-2024-08-25 holdout period. Do not retune
+    # parameters after inspecting that holdout.
     years_to_test = 6
     today = date.today()
     calendar_days_since_start = years_to_test * 365
@@ -904,22 +952,6 @@ def main():
     
     ARCHITECTURES = [
         {
-            "name": "E11_Regime_Adaptive",
-            "primary": rs_strat,
-            "primary_momentum": rs_strat,
-            "confirmation_momentum": mom_strat,
-            "primary_meanrev": oversold_strat,
-            "confirmation_meanrev": pullback_strat,
-            "sizing_logic": "alpha_confirmation",
-            "dynamic_risk_scaling": True,
-            "dd_penalty_factor": 5.0,
-            "friction_pct": 0.0015,
-            "rank_candidates": True,
-            "regime_adaptive": True,
-            "bcr_threshold": 0.52
-            # No cash_preservation — always finds a signal (State 1 or State 2)
-        },
-        {
             "name": "E12_Three_State",
             "primary": rs_strat,
             "primary_momentum": rs_strat,
@@ -927,14 +959,14 @@ def main():
             "primary_meanrev": oversold_strat,
             "confirmation_meanrev": pullback_strat,
             "sizing_logic": "alpha_confirmation",
-            "dynamic_risk_scaling": True,
+            "dynamic_risk_scaling": False,
             "dd_penalty_factor": 5.0,
             "friction_pct": 0.0015,
             "rank_candidates": True,
             "regime_adaptive": True,
-            "bcr_threshold": 0.52,   # Principled: above coin flip = trend-persistent
+            "bcr_threshold": BCR_THRESHOLD,
             "cash_preservation": True,
-            "breadth_threshold": 0.30  # Principled: <30% stocks above SMA50 = extreme weakness
+            "breadth_threshold": BREADTH_THRESHOLD
         }
     ]
     
@@ -985,6 +1017,50 @@ def main():
     curves_df = pd.DataFrame(curves, index=test_dates)
     curves_path = os.path.join(os.path.dirname(tear_sheet_path), "strategy_equity_curves.csv")
     curves_df.to_csv(curves_path)
+
+    # Write a separate validation report.  The holdout starts after the model
+    # design period and must not be used for parameter selection.
+    validation_rows = []
+    for strategy_name, curve in curves.items():
+        in_sample = summarize_equity_period(
+            strategy_name, curve, test_dates, "In-sample (frozen design)", test_dates[0], HOLDOUT_START
+        )
+        holdout = summarize_equity_period(
+            strategy_name, curve, test_dates, "Holdout (no retuning)", HOLDOUT_START
+        )
+        if in_sample:
+            validation_rows.append(in_sample)
+        if holdout:
+            validation_rows.append(holdout)
+    validation_path = os.path.join(os.path.dirname(tear_sheet_path), "validation_report.csv")
+    pd.DataFrame(validation_rows).to_csv(validation_path, index=False)
+
+    def serializable_architecture(architecture):
+        return {
+            key: (value["name"] if isinstance(value, dict) and "name" in value else value)
+            for key, value in architecture.items()
+            if key != "func"
+        }
+
+    run_config = {
+        "run_date": today.isoformat(),
+        "test_start": test_dates[0].date().isoformat(),
+        "test_end": test_dates[-1].date().isoformat(),
+        "holdout_start": HOLDOUT_START.date().isoformat(),
+        "universe": "Current NIFTY 500 constituents plus NIFTYBEES benchmark",
+        "universe_limitation": "Not point-in-time constituents; obtain a historical constituent dataset before treating results as survivorship-bias-free.",
+        "execution": "Signal at 3:15 PM; near-close/MOC fill proxied by the daily close in historical data",
+        "transaction_cost_per_leg": FRICTION_PCT,
+        "position_cap": MAX_WEIGHT_PER_TRADE,
+        "starting_capital": 5_00_000.0,
+        "data_integrity": "Weekends rejected; exchange holidays excluded when no valid bhavcopy is available",
+        "architectures": [serializable_architecture(architecture) for architecture in ARCHITECTURES],
+    }
+    config_payload = json.dumps(run_config, sort_keys=True, indent=2)
+    run_config["config_sha256"] = hashlib.sha256(config_payload.encode("utf-8")).hexdigest()
+    config_path = os.path.join(os.path.dirname(tear_sheet_path), "backtest_run_config.json")
+    with open(config_path, "w") as config_file:
+        json.dump(run_config, config_file, indent=2)
     
     # Append to experiment log
     from datetime import datetime
@@ -1014,6 +1090,8 @@ def main():
         log_df.to_csv(experiment_log_path, index=False)
     
     logger.info(f"Tear sheet successfully generated and saved to {tear_sheet_path}")
+    logger.info(f"Validation report saved to {validation_path}")
+    logger.info(f"Reproducible run configuration saved to {config_path}")
     logger.info(f"Appended results to {experiment_log_path}")
     years = round(calendar_days_since_start / 365, 1)
     print(f"\n================= STRATEGY TEAR SHEET (LAST {years} YEARS) =================")

@@ -21,6 +21,18 @@ _BHAVCOPY_CACHE: Dict[str, Optional[pd.DataFrame]] = {}
 _CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bhavcopy_cache")
 os.makedirs(_CACHE_DIR, exist_ok=True)
 
+
+def _is_regular_nse_session(candidate_date: date) -> bool:
+    """Return whether a date can be a regular NSE cash-market session.
+
+    Bhavcopy archive endpoints occasionally return a parseable response for a
+    non-trading day.  Treating that response as a candle on the requested date
+    creates phantom weekend bars, which corrupts rolling indicators and
+    backtest execution.  Special weekend sessions are intentionally excluded:
+    they must be supplied explicitly by a verified exchange calendar/data feed.
+    """
+    return candidate_date.weekday() < 5
+
 def cleanup_cache():
     """Delete the disk cache to free up space after execution."""
     import shutil
@@ -34,6 +46,11 @@ def cleanup_cache():
 def _download_bhavcopy_for_date(trade_date: date) -> Optional[pd.DataFrame]:
     """Download one NSE full bhavcopy day (or load from disk/in-memory cache)."""
     key = trade_date.strftime("%Y-%m-%d")
+
+    # Never infer a weekend candle from an archive response.
+    if not _is_regular_nse_session(trade_date):
+        _BHAVCOPY_CACHE[key] = None
+        return None
     
     # 1. Check in-memory
     if key in _BHAVCOPY_CACHE:
@@ -147,7 +164,11 @@ def fetch_daily_candles(symbol: str, as_of_date: date, lookback_days: int = 320)
     rows: List[Dict[str, Any]] = []
 
     # 1. Pre-fetch all missing days in parallel to drastically speed up network I/O
-    days_to_fetch = [as_of_date - timedelta(days=offset) for offset in range(lookback_days + 1)]
+    days_to_fetch = [
+        as_of_date - timedelta(days=offset)
+        for offset in range(lookback_days + 1)
+        if _is_regular_nse_session(as_of_date - timedelta(days=offset))
+    ]
     missing_days = []
     for d in days_to_fetch:
         key = d.strftime("%Y-%m-%d")
@@ -201,7 +222,11 @@ def fetch_daily_candles(symbol: str, as_of_date: date, lookback_days: int = 320)
 
 def fetch_bulk_history(symbols: List[str], end_date: date, lookback_days: int) -> Dict[str, pd.DataFrame]:
     """Highly optimized vectorized fetcher that returns history for multiple symbols in one pass."""
-    days_to_fetch = [end_date - timedelta(days=offset) for offset in range(lookback_days + 1)]
+    days_to_fetch = [
+        end_date - timedelta(days=offset)
+        for offset in range(lookback_days + 1)
+        if _is_regular_nse_session(end_date - timedelta(days=offset))
+    ]
     missing_days = []
     for d in days_to_fetch:
         key = d.strftime("%Y-%m-%d")
@@ -432,4 +457,3 @@ def get_ohlcv(symbol: str, start: date, end: date) -> Optional[pd.DataFrame]:
     df["is_corporate_action_gap"] = gap_pct > 0.20
     
     return df
-

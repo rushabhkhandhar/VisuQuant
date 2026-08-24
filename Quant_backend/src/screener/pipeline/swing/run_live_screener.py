@@ -10,7 +10,11 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
 from src.data.nse_fetcher import load_nifty500_symbols
 from src.data.live_tv_fetcher import get_tv_fetcher
 from src.screener.pipeline.swing.compare_strategies import STRATEGIES
-from src.screener.pipeline.swing.run_front_test import load_state, STATE_FILE
+from src.screener.pipeline.swing.run_front_test import (
+    load_state, STATE_FILE, record_live_signals, save_state,
+    relative_strength_eval, momentum_breakout_eval, oversold_uptrend_eval, trend_pullback_eval,
+)
+from src.screener.pipeline.swing.e12_strategy import generate_e12_signals
 import json
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -132,6 +136,22 @@ def run_live_strategies(bulk_data, nifty_hist):
     
     All regime inputs are backward-looking only. No forward bias.
     """
+    # The canonical generator is also used by the forward-test ledger and the
+    # historical comparator.  Do not add live-only filters here.
+    from src.data.nse_fetcher import load_nifty500_industry_mapping
+    return generate_e12_signals(
+        bulk_data=bulk_data,
+        nifty_hist=nifty_hist,
+        as_of_date=pd.Timestamp.now(),
+        industry_mapping=load_nifty500_industry_mapping(),
+        evaluators={
+            "relative_strength": relative_strength_eval,
+            "momentum_breakout": momentum_breakout_eval,
+            "oversold_uptrend": oversold_uptrend_eval,
+            "trend_pullback": trend_pullback_eval,
+        },
+    )
+
     import talib
     
     BCR_THRESHOLD = 0.52   # Principled: momentum must beat a coin flip
@@ -298,6 +318,11 @@ def main():
     
     logger.info("Scanning for new BUY signals...")
     buy_signals = run_live_strategies(bulk_data, nifty_hist)
+
+    # Persist the exact 3:15 PM candidates.  The EOD process is a ledger: it
+    # updates these records, it must not independently rescan final-close data.
+    trades = record_live_signals(trades, buy_signals, datetime.now())
+    save_state(trades)
     
     # We do NOT save state here. State is managed by the EOD backtester/tracker.
     # This script is purely for generating live execution signals for the user.
