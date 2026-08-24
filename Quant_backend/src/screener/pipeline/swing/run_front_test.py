@@ -482,27 +482,84 @@ def update_open_trades(trades, as_of_date):
                 t["exit_regime"] = current_regime
                 t["pnl_pct"] = ((t["exit_price"] - t["entry_price"]) / t["entry_price"]) * 100
                 logger.info(f"Trade {t['trade_id']} ({sym}) CLOSED at WIN: {t['pnl_pct']:.2f}%")
-
     return trades
 
 def run_strategies(trades, as_of_date):
     """
-    Runs all predefined strategies on today's EOD data and adds new trades to state.
+    E11_Three_State regime-adaptive signal generation (mirrors compare_strategies.py E11).
+
+    STATE 1 — TREND      (BCR > 52%):                RS Alpha primary + Momentum Confirmation
+    STATE 2 — MEAN-REVERT (BCR ≤ 52%, breadth ≥ 30%): Oversold Uptrend + Trend Pullback
+    STATE 3 — CASH        (BCR ≤ 52%, breadth < 30%):  No new entries
+
+    All regime inputs use strictly historical data — no forward bias.
     """
+    import talib
+
+    BCR_THRESHOLD = 0.52    # Momentum must beat coin flip to enter trend mode
+    BREADTH_THRESHOLD = 0.30  # <30% stocks above SMA50 = extreme weakness → cash
+
     date_str = as_of_date.strftime("%Y-%m-%d")
     current_regime = get_market_regime(as_of_date)
-    
+
     logger.info("Loading NIFTY 500 universe...")
     symbols = load_nifty500_symbols()
     if "NIFTYBEES" not in symbols:
         symbols.append("NIFTYBEES")
-        
+
     logger.info(f"Fetching bulk history up to {date_str}...")
     bulk_data = fetch_bulk_history(symbols, end_date=as_of_date, lookback_days=300)
-    
+
     nifty_hist = bulk_data.pop("NIFTYBEES") if "NIFTYBEES" in bulk_data else None
-    
-    # Build sector indices for consistency with backtester
+
+    # --- BCR: Breakout Continuation Rate (lookback 120→30 days ago, 20-day outcomes) ---
+    breakout_events = []
+    for sym, df in bulk_data.items():
+        if len(df) < 60:
+            continue
+        high_40 = df['High'].rolling(40).max().shift(1)
+        cutoff_end = pd.Timestamp(as_of_date) - pd.Timedelta(days=30)
+        cutoff_start = pd.Timestamp(as_of_date) - pd.Timedelta(days=140)
+        mask = (df.index >= cutoff_start) & (df.index <= cutoff_end)
+        for pos_idx in df.index[mask]:
+            pos = df.index.get_loc(pos_idx)
+            if pos + 20 >= len(df):
+                continue
+            if pd.notna(high_40.iloc[pos]) and df['Close'].iloc[pos] > high_40.iloc[pos]:
+                entry_p = df['Close'].iloc[pos]
+                future_p = df['Close'].iloc[pos + 20]
+                breakout_events.append(1 if future_p > entry_p else 0)
+    bcr = sum(breakout_events) / len(breakout_events) if len(breakout_events) >= 10 else 0.5
+
+    # --- Breadth: % stocks with Close > SMA50 today ---
+    above = sum(
+        1 for df in bulk_data.values()
+        if len(df) >= 50
+        and pd.notna(df['Close'].rolling(50).mean().iloc[-1])
+        and df['Close'].iloc[-1] > df['Close'].rolling(50).mean().iloc[-1]
+    )
+    total_valid = sum(1 for df in bulk_data.values() if len(df) >= 50)
+    breadth = above / total_valid if total_valid > 0 else 0.5
+
+    # --- Determine regime state ---
+    if bcr > BCR_THRESHOLD:
+        regime_state = 1
+        primary_func = relative_strength_eval
+        confirm_func = momentum_breakout_eval
+        signal_label = "E11-Trend"
+        logger.info(f"Regime STATE 1 — TREND (BCR={bcr:.3f}). Using RS + Momentum signals.")
+    elif breadth < BREADTH_THRESHOLD:
+        regime_state = 3
+        logger.info(f"Regime STATE 3 — CASH PRESERVATION (BCR={bcr:.3f}, Breadth={breadth:.1%}). No new entries.")
+        return trades  # Existing positions managed by update_open_trades — no new entries
+    else:
+        regime_state = 2
+        primary_func = oversold_uptrend_eval
+        confirm_func = trend_pullback_eval
+        signal_label = "E11-MeanRev"
+        logger.info(f"Regime STATE 2 — MEAN-REVERT (BCR={bcr:.3f}, Breadth={breadth:.1%}). Using Oversold + Pullback signals.")
+
+    # --- Build sector indices ---
     from src.data.nse_fetcher import load_nifty500_industry_mapping
     industry_mapping = load_nifty500_industry_mapping()
     sector_indices = {}
@@ -517,117 +574,87 @@ def run_strategies(trades, as_of_date):
         avg_returns = pd.concat(returns_list, axis=1).mean(axis=1)
         synthetic_price = 100 * (1 + avg_returns).cumprod()
         sector_indices[ind] = pd.DataFrame({"Close": synthetic_price})
-    
-    all_raw_candidates = []
-    
-    for strategy in STRATEGIES:
-        logger.info(f"Running strategy: {strategy['name']}...")
-        eval_func = strategy.get("precompiled_eval_func")
-        if not eval_func:
+
+    # --- Evaluate all symbols ---
+    all_candidates = []
+    for symbol, df in bulk_data.items():
+        df = df[df.index <= pd.Timestamp(as_of_date)]
+        if len(df) < 200:
             continue
-            
-        strategy_candidates = []
-        for symbol, df in bulk_data.items():
-            # Explicit date slice for safety against timezone/caching edge cases
-            df = df[df.index <= pd.Timestamp(as_of_date)]
-            if len(df) < 200:
+        try:
+            sector_hist = None
+            if symbol in industry_mapping:
+                ind = industry_mapping[symbol]
+                if ind in sector_indices:
+                    sector_hist = sector_indices[ind][sector_indices[ind].index <= pd.Timestamp(as_of_date)]
+
+            p_res = primary_func(df, nifty_hist=nifty_hist, sector_hist=sector_hist)
+            if not p_res or not p_res.get("passed"):
                 continue
-            
+
             try:
-                # Build sector_hist for this symbol
-                sector_hist = None
-                if symbol in industry_mapping:
-                    ind = industry_mapping[symbol]
-                    if ind in sector_indices:
-                        sector_hist = sector_indices[ind][sector_indices[ind].index <= pd.Timestamp(as_of_date)]
-                
-                res = eval_func(df, nifty_hist=nifty_hist, sector_hist=sector_hist)
-                if res and res.get("passed", False):
-                    close_price = df['Close'].iloc[-1]
-                    
-                    # Compute score for ranking
-                    close_20 = df['Close'].iloc[-21] if len(df) > 20 else df['Close'].iloc[0]
-                    score = (close_price - close_20) / close_20
-                    
-                    # Calculate ATR for stop loss
-                    atr = (df['High'] - df['Low']).rolling(14).mean().iloc[-1]
-                    risk_str = strategy.get("risk_management", "ATR 1.5")
-                    try:
-                        mult = float(risk_str.split(" ")[1])
-                    except:
-                        mult = 1.5
-                    
-                    stop_loss = close_price - (mult * atr) if pd.notna(atr) else close_price * 0.95
-                    risk = close_price - stop_loss
-                    target = close_price + (2.0 * risk) # RR 1:2
-                    
-                    strategy_candidates.append({
-                        "strategy_name": strategy["name"],
-                        "symbol": symbol,
-                        "tradingview_link": f"https://in.tradingview.com/chart/?symbol=NSE:{symbol}",
-                        "entry_date": date_str,
-                        "entry_regime": current_regime,
-                        "entry_price": close_price,
-                        "close_price": close_price,
-                        "stop_loss": stop_loss,
-                        "target": target,
-                        "status": "OPEN",
-                        "exit_date": None,
-                        "exit_regime": None,
-                        "exit_price": None,
-                        "pnl_pct": None,
-                        "score": score
-                    })
-            except Exception as e:
-                pass
-                
-        all_raw_candidates.extend(strategy_candidates)
-        
-    # Build Ensemble Strategy
-    symbol_counts = {}
-    for t in all_raw_candidates:
-        if t["entry_date"] == date_str:
-            symbol = t["symbol"]
-            if symbol not in symbol_counts:
-                symbol_counts[symbol] = []
-            symbol_counts[symbol].append(t)
-            
-    ensemble_candidates = []
-    for symbol, t_list in symbol_counts.items():
-        if len(t_list) >= 2:
-            base_t = t_list[0]
-            strategy_names = [t["strategy_name"] for t in t_list]
-            ensemble_t = base_t.copy()
-            ensemble_t["trade_id"] = str(uuid.uuid4())
-            ensemble_t["strategy_name"] = "Ensemble Strategy"
-            ensemble_t["note"] = f"Passed {len(t_list)} strategies: {', '.join(strategy_names)}"
-            ensemble_t["score"] = base_t["score"] + 1000 # Boost to top
-            ensemble_candidates.append(ensemble_t)
-            
-    all_raw_candidates.extend(ensemble_candidates)
-    
-    # Filter by strategy, sort by score, take top 5, and add to trades
-    strategies_to_process = [s["name"] for s in STRATEGIES] + ["Ensemble Strategy"]
-    for s_name in strategies_to_process:
-        s_cands = [c for c in all_raw_candidates if c["strategy_name"] == s_name]
-        s_cands = sorted(s_cands, key=lambda x: x.get("score", 0), reverse=True)[:5]
-        
-        if s_cands:
-            logger.info(f"Strategy '{s_name}' found {len(s_cands)} candidates today after ranking.")
-            
-        for c in s_cands:
-            is_duplicate = any(t["symbol"] == c["symbol"] and t["strategy_name"] == s_name and t["status"] == "OPEN" for t in trades)
-            if is_duplicate:
-                logger.info(f"Skipping {c['symbol']} - already have an OPEN trade for this strategy.")
+                c_res = confirm_func(df, nifty_hist=nifty_hist, sector_hist=sector_hist)
+            except:
+                c_res = None
+
+            confirmed = c_res and c_res.get("passed")
+            close_price = df['Close'].iloc[-1]
+            atr = (df['High'] - df['Low']).rolling(14).mean().iloc[-1]
+            if pd.isna(atr) or atr <= 0:
                 continue
-                
-            c["trade_id"] = str(uuid.uuid4())
-            
-            # Remove score before saving
-            trade_to_save = {k: v for k, v in c.items() if k != "score"}
-            trades.append(trade_to_save)
-            logger.info(f"Logged new OPEN trade: {c['symbol']} at {c['entry_price']} (Data from {date_str})")
-            
+
+            stop_loss = close_price - (2.0 * atr)
+            target = close_price + (4.0 * atr)
+            alpha_score = p_res.get("alpha_score", 0.0)
+            strategy_name = f"{signal_label}-{'Confirmed' if confirmed else 'Primary'}"
+
+            all_candidates.append({
+                "strategy_name": strategy_name,
+                "symbol": symbol,
+                "tradingview_link": f"https://in.tradingview.com/chart/?symbol=NSE:{symbol}",
+                "entry_date": date_str,
+                "entry_regime": current_regime,
+                "regime_state": regime_state,
+                "bcr": round(bcr, 4),
+                "breadth": round(breadth, 4),
+                "entry_price": close_price,
+                "close_price": close_price,
+                "stop_loss": round(stop_loss, 2),
+                "target": round(target, 2),
+                "alpha_score": round(alpha_score, 4),
+                "status": "OPEN",
+                "exit_date": None,
+                "exit_regime": None,
+                "exit_price": None,
+                "pnl_pct": None,
+                "score": alpha_score
+            })
+        except Exception:
+            pass
+
+    # --- Rank by alpha score, take top 5 confirmed + top 5 primary-only ---
+    confirmed_cands = sorted([c for c in all_candidates if "Confirmed" in c["strategy_name"]],
+                              key=lambda x: x["score"], reverse=True)[:5]
+    primary_cands = sorted([c for c in all_candidates if "Primary" in c["strategy_name"]],
+                            key=lambda x: x["score"], reverse=True)[:5]
+    top_candidates = confirmed_cands + primary_cands
+
+    added = 0
+    for c in top_candidates:
+        already_open = any(
+            t["symbol"] == c["symbol"] and t["status"] == "OPEN"
+            for t in trades
+        )
+        if already_open:
+            logger.info(f"Skipping {c['symbol']} — already have an OPEN trade.")
+            continue
+        c["trade_id"] = str(uuid.uuid4())
+        trade_to_save = {k: v for k, v in c.items() if k != "score"}
+        trades.append(trade_to_save)
+        logger.info(f"Logged new OPEN trade: {c['symbol']} ({c['strategy_name']}) at {c['entry_price']:.2f}")
+        added += 1
+
+    logger.info(f"Added {added} new trades. Regime: State {regime_state}, BCR={bcr:.3f}, Breadth={breadth:.1%}")
     return trades
 
 def calculate_metrics(trades):

@@ -21,7 +21,8 @@ from src.screener.pipeline.swing.run_front_test import (
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-INITIAL_CAPITAL = 5_00_000.0
+INITIAL_CAPITAL = 5_00_000.0  #   This does NOT affect architectural backtests (E4/A1/E11 etc).
+                              # Architectural backtests use a hardcoded 5L in run_architectural_backtest().
 MAX_WEIGHT_PER_TRADE = 0.20  # Max 20% of total equity per trade
 FRICTION_PCT = 0.0015  # 0.15% cost per trade leg
 
@@ -457,7 +458,10 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
     logger = logging.getLogger(__name__)
     logger.info(f"Backtesting Architecture: {arch_config['name']}...")
     
-    cash = 5_00_000.0 # INITIAL_CAPITAL
+    # ⚠️ ARCHITECTURAL BACKTEST ALWAYS STARTS WITH 5L — INDEPENDENT OF INITIAL_CAPITAL CONSTANT ABOVE
+    # Changing INITIAL_CAPITAL at the top of the file has NO effect here.
+    ARCH_STARTING_CAPITAL = 5_00_000.0
+    cash = ARCH_STARTING_CAPITAL
     FRICTION_PCT = arch_config.get("friction_pct", 0.0015)
     MAX_WEIGHT_PER_TRADE = 0.20
     open_positions = {}
@@ -465,6 +469,59 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
     trades_log = []
     daily_exposure_log = []
     high_water_mark = cash
+    
+    # Pre-calculate Breakout Continuation Rate (BCR) for regime-adaptive architectures
+    bcr_series = {}
+    breadth_series = {}  # % of stocks with Close > 50-day SMA — purely historical per day
+    if arch_config.get("regime_adaptive"):
+        logger.info("  Pre-calculating BCR and Market Breadth...")
+        
+        # --- BCR: use breakouts from 120→30 days ago with 20-day outcomes (all past data) ---
+        breakout_events = []
+        for sym, df in bulk_data.items():
+            if sym == "NIFTYBEES" or len(df) < 60:
+                continue
+            high_40 = df['High'].rolling(40).max().shift(1)
+            for idx in range(40, len(df) - 20):
+                if df['Close'].iloc[idx] > high_40.iloc[idx]:
+                    entry_p = df['Close'].iloc[idx]
+                    future_p = df['Close'].iloc[idx + 20]
+                    breakout_events.append({
+                        'date': df.index[idx],
+                        'continued': 1 if future_p > entry_p else 0
+                    })
+        if breakout_events:
+            ev_df = pd.DataFrame(breakout_events)
+            ev_df['date'] = pd.to_datetime(ev_df['date'])
+            for td in test_dates:
+                td_ts = pd.Timestamp(td)
+                win_start = td_ts - pd.Timedelta(days=120)
+                win_end = td_ts - pd.Timedelta(days=30)
+                window = ev_df[(ev_df['date'] >= win_start) & (ev_df['date'] <= win_end)]
+                bcr_series[td_ts] = window['continued'].mean() if len(window) >= 10 else 0.5
+        
+        # --- Breadth: % stocks with Close > SMA50 on each day (purely historical) ---
+        # Pre-compute each stock's Close > SMA50 as a boolean series
+        above_sma_by_sym = {}
+        for sym, df in bulk_data.items():
+            if sym == "NIFTYBEES" or len(df) < 50:
+                continue
+            sma50 = df['Close'].rolling(50).mean()
+            above_sma_by_sym[sym] = (df['Close'] > sma50)
+        
+        n_stocks = len(above_sma_by_sym)
+        for td in test_dates:
+            td_ts = pd.Timestamp(td)
+            if n_stocks == 0:
+                breadth_series[td_ts] = 0.5
+                continue
+            above = sum(
+                1 for ab in above_sma_by_sym.values()
+                if td_ts in ab.index and bool(ab.get(td_ts, False))
+            )
+            breadth_series[td_ts] = above / n_stocks
+        
+        logger.info(f"  BCR and Breadth calculated for {len(bcr_series)} days.")
     
     for i, current_date in enumerate(test_dates):
         # 1. Update prices and check exits
@@ -564,13 +621,36 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                         if ind in sector_indices:
                             sector_hist = sector_indices[ind][sector_indices[ind].index <= current_date]
                     
-                    # Core Eval
-                    primary = arch_config['primary']
+                    # Core Eval — Three-State Regime-Adaptive or Standard
+                    if arch_config.get("regime_adaptive"):
+                        bcr_val = bcr_series.get(pd.Timestamp(current_date), 0.5)
+                        bcr_threshold = arch_config.get("bcr_threshold", 0.52)
+                        breadth_val = breadth_series.get(pd.Timestamp(current_date), 0.5)
+                        breadth_threshold = arch_config.get("breadth_threshold", 0.30)
+                        
+                        if bcr_val > bcr_threshold:
+                            # STATE 1 — TREND: BCR above coin flip → momentum signals
+                            primary = arch_config.get('primary_momentum', arch_config['primary'])
+                            confirmation = arch_config.get('confirmation_momentum', arch_config.get('confirmation'))
+                        elif arch_config.get("cash_preservation") and breadth_val < breadth_threshold:
+                            # STATE 3 — CASH PRESERVATION: BCR weak AND breadth extremely weak
+                            # Skip this stock entirely — no new positions in this environment.
+                            # (Existing positions still managed via stops/targets above.)
+                            # FORWARD-BIAS NOTE: breadth_val uses Close > SMA50 on the CURRENT day
+                            # — purely historical, no look-ahead.
+                            continue
+                        else:
+                            # STATE 2 — MEAN-REVERSION: BCR weak but breadth not extreme
+                            primary = arch_config.get('primary_meanrev', arch_config['primary'])
+                            confirmation = arch_config.get('confirmation_meanrev', arch_config.get('confirmation'))
+                    else:
+                        primary = arch_config['primary']
+                        confirmation = arch_config.get('confirmation')
+                    
                     try:
                         p_res = primary['func'](hist_df, nifty_hist=nifty_hist, sector_hist=sector_hist)
                     except: p_res = {}
                     
-                    confirmation = arch_config.get('confirmation')
                     try:
                         c_res = confirmation['func'](hist_df, nifty_hist=nifty_hist, sector_hist=sector_hist) if confirmation else None
                     except: c_res = None
@@ -595,9 +675,13 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                         if score == 1: risk_pct = 0.01
                         elif score == 2: risk_pct = 0.02
                     elif sizing_logic == "alpha_confirmation":
+                        is_confirmed = False
                         if p_res and p_res.get('passed'):
-                            if c_res and c_res.get('passed'): risk_pct = 0.025
-                            else: risk_pct = 0.01
+                            if c_res and c_res.get('passed'):
+                                risk_pct = 0.025
+                                is_confirmed = True
+                            else:
+                                risk_pct = 0.01
                     elif sizing_logic == "momentum_risk_filter":
                         if p_res and p_res.get('passed'):
                             if c_res and c_res.get('passed'): risk_pct = 0.02
@@ -631,6 +715,16 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                         if pd.notna(atr) and atr > 0:
                             risk_atr = primary.get('risk_atr', 2.0)
                             reward_atr = primary.get('reward_atr', 4.0)
+                            
+                            # A2+A3: Adaptive Risk/Reward based on confirmation
+                            if arch_config.get("adaptive_rr") and sizing_logic == "alpha_confirmation":
+                                if is_confirmed:
+                                    risk_atr = 1.5    # Tighter stop on high conviction
+                                    reward_atr = 5.0   # Let right tail run
+                                else:
+                                    risk_atr = 2.5    # Wider stop on lower conviction
+                                    reward_atr = 4.0   # Standard target
+                            
                             alpha_score = p_res.get('alpha_score', 0.0) if p_res else 0.0
                             new_candidates.append({
                                 "symbol": sym,
@@ -745,6 +839,10 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
 def main():
     # Backtest covers exactly the last 4 years
     from datetime import datetime, timedelta
+    # ⚠️ DO NOT CHANGE years_to_test for architectural comparison runs.
+    # The full 6-year window is required to capture both the bull regime (2020-2024)
+    # and the mean-reverting regime (2024-2026). Reducing to 2 years only shows
+    # the recent bad period and makes ALL strategies look broken.
     years_to_test = 6
     today = date.today()
     calendar_days_since_start = years_to_test * 365
@@ -800,25 +898,43 @@ def main():
     mom_strat = next(s for s in STRATEGIES if s["name"] == "Momentum Breakout")
     vol_strat = next(s for s in STRATEGIES if s["name"] == "Volatility Compression")
     
+    # Define mean-reversion strategies for E11/E12
+    oversold_strat = {"name": "Oversold Uptrend", "func": oversold_uptrend_eval, "risk_atr": 2.0, "reward_atr": 4.0}
+    pullback_strat = {"name": "Trend Pullback", "func": trend_pullback_eval, "risk_atr": 2.0, "reward_atr": 4.0}
+    
     ARCHITECTURES = [
         {
-            "name": "E4_Champion_V1",
+            "name": "E11_Regime_Adaptive",
             "primary": rs_strat,
-            "confirmation": mom_strat,
-            "sizing_logic": "alpha_confirmation",
-            "dynamic_risk_scaling": True,
-            "dd_penalty_factor": 5.0,
-            "friction_pct": 0.0015
-        },
-        {
-            "name": "A1_Alpha_Ranked",
-            "primary": rs_strat,
-            "confirmation": mom_strat,
+            "primary_momentum": rs_strat,
+            "confirmation_momentum": mom_strat,
+            "primary_meanrev": oversold_strat,
+            "confirmation_meanrev": pullback_strat,
             "sizing_logic": "alpha_confirmation",
             "dynamic_risk_scaling": True,
             "dd_penalty_factor": 5.0,
             "friction_pct": 0.0015,
-            "rank_candidates": True
+            "rank_candidates": True,
+            "regime_adaptive": True,
+            "bcr_threshold": 0.52
+            # No cash_preservation — always finds a signal (State 1 or State 2)
+        },
+        {
+            "name": "E12_Three_State",
+            "primary": rs_strat,
+            "primary_momentum": rs_strat,
+            "confirmation_momentum": mom_strat,
+            "primary_meanrev": oversold_strat,
+            "confirmation_meanrev": pullback_strat,
+            "sizing_logic": "alpha_confirmation",
+            "dynamic_risk_scaling": True,
+            "dd_penalty_factor": 5.0,
+            "friction_pct": 0.0015,
+            "rank_candidates": True,
+            "regime_adaptive": True,
+            "bcr_threshold": 0.52,   # Principled: above coin flip = trend-persistent
+            "cash_preservation": True,
+            "breadth_threshold": 0.30  # Principled: <30% stocks above SMA50 = extreme weakness
         }
     ]
     

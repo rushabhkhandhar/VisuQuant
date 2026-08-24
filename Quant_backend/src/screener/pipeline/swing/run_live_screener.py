@@ -72,13 +72,98 @@ def check_open_trades_live(trades, bulk_data):
                 
     return closed_trades
 
-def run_live_strategies(bulk_data, nifty_hist):
-    """Run A1_Alpha_Ranked architecture: RS Alpha primary + Momentum confirmation, ranked by alpha score."""
-    import talib
-    new_signals = []
+def compute_live_bcr(bulk_data, lookback_days=120, outcome_days=20, min_gap_days=30):
+    """
+    Breakout Continuation Rate: % of 40-day-high breakouts (from lookback_days→min_gap_days ago)
+    that were higher outcome_days later.
+    Uses ONLY historical data — no forward bias.
+    Returns float in [0,1]. Default 0.5 (neutral) if insufficient data.
+    """
+    from datetime import datetime, timedelta
+    cutoff_end = pd.Timestamp.today() - pd.Timedelta(days=min_gap_days)
+    cutoff_start = pd.Timestamp.today() - pd.Timedelta(days=lookback_days + outcome_days)
     
-    # Build sector indices for consistency with backtester
+    continued = []
+    for sym, df in bulk_data.items():
+        if len(df) < 60:
+            continue
+        high_40 = df['High'].rolling(40).max().shift(1)
+        mask = (df.index >= cutoff_start) & (df.index <= cutoff_end)
+        for idx in df.index[mask]:
+            pos = df.index.get_loc(idx)
+            if pos + outcome_days >= len(df):
+                continue
+            if pd.notna(high_40.iloc[pos]) and df['Close'].iloc[pos] > high_40.iloc[pos]:
+                entry_p = df['Close'].iloc[pos]
+                future_p = df['Close'].iloc[pos + outcome_days]
+                continued.append(1 if future_p > entry_p else 0)
+    
+    if len(continued) < 10:
+        return 0.5  # neutral — not enough data
+    return sum(continued) / len(continued)
+
+
+def compute_live_breadth(bulk_data):
+    """
+    Market breadth: fraction of stocks with Close > 50-day SMA today.
+    Purely historical — uses only current bar data. No forward bias.
+    """
+    above = 0
+    total = 0
+    for sym, df in bulk_data.items():
+        if len(df) < 50:
+            continue
+        sma50 = df['Close'].rolling(50).mean().iloc[-1]
+        close = df['Close'].iloc[-1]
+        if pd.notna(sma50):
+            total += 1
+            if close > sma50:
+                above += 1
+    return above / total if total > 0 else 0.5
+
+
+def run_live_strategies(bulk_data, nifty_hist):
+    """
+    E11_Three_State regime-adaptive architecture (mirrors compare_strategies.py E11).
+    
+    STATE 1 — TREND (BCR > 52%):         RS Alpha + Momentum Confirmation
+    STATE 2 — MEAN-REVERT (BCR ≤ 52%, breadth ≥ 30%): Oversold Uptrend + Trend Pullback
+    STATE 3 — CASH (BCR ≤ 52%, breadth < 30%):  No new signals
+    
+    All regime inputs are backward-looking only. No forward bias.
+    """
+    import talib
+    
+    BCR_THRESHOLD = 0.52   # Principled: momentum must beat a coin flip
+    BREADTH_THRESHOLD = 0.30  # Principled: <30% stocks above SMA50 = extreme weakness
+    
+    # --- Compute live regime indicators ---
+    bcr = compute_live_bcr(bulk_data)
+    breadth = compute_live_breadth(bulk_data)
+    
+    if bcr > BCR_THRESHOLD:
+        regime_state = 1
+        regime_label = f"TREND-PERSISTENT (BCR={bcr:.3f} > {BCR_THRESHOLD}) → Momentum Signals"
+    elif breadth < BREADTH_THRESHOLD:
+        regime_state = 3
+        regime_label = f"CASH PRESERVATION (BCR={bcr:.3f} ≤ {BCR_THRESHOLD}, Breadth={breadth:.1%} < {BREADTH_THRESHOLD:.0%}) → No New Entries"
+    else:
+        regime_state = 2
+        regime_label = f"MEAN-REVERTING (BCR={bcr:.3f} ≤ {BCR_THRESHOLD}, Breadth={breadth:.1%} ≥ {BREADTH_THRESHOLD:.0%}) → Oversold Signals"
+    
+    print(f"\n>>> E11 REGIME STATE {regime_state}: {regime_label}\n")
+    logger.info(f"Live BCR={bcr:.3f}, Breadth={breadth:.1%}, Regime State={regime_state}")
+    
+    if regime_state == 3:
+        logger.info("CASH PRESERVATION mode — no new signals generated.")
+        return []
+    
+    # --- Build sector indices ---
     from src.data.nse_fetcher import load_nifty500_industry_mapping
+    from src.screener.pipeline.swing.run_front_test import (
+        relative_strength_eval, momentum_breakout_eval,
+        oversold_uptrend_eval, trend_pullback_eval
+    )
     industry_mapping = load_nifty500_industry_mapping()
     sector_indices = {}
     sectors = {}
@@ -93,15 +178,22 @@ def run_live_strategies(bulk_data, nifty_hist):
         synthetic_price = 100 * (1 + avg_returns).cumprod()
         sector_indices[ind] = pd.DataFrame({"Close": synthetic_price})
     
-    # Get strategy definitions
-    from src.screener.pipeline.swing.run_front_test import relative_strength_eval, momentum_breakout_eval
+    # --- Assign primary/confirmation by regime state ---
+    if regime_state == 1:
+        primary_func = relative_strength_eval
+        confirm_func = momentum_breakout_eval
+        signal_prefix = "Trend"
+    else:  # state 2
+        primary_func = oversold_uptrend_eval
+        confirm_func = trend_pullback_eval
+        signal_prefix = "MeanRev"
     
-    logger.info("Evaluating A1_Alpha_Ranked architecture (RS Primary + Momentum Confirmation)...")
+    logger.info(f"Scanning universe with State {regime_state} signals...")
+    new_signals = []
     
     for symbol, df in bulk_data.items():
         if len(df) < 200:
             continue
-            
         try:
             sector_hist = None
             if symbol in industry_mapping:
@@ -109,26 +201,18 @@ def run_live_strategies(bulk_data, nifty_hist):
                 if ind in sector_indices:
                     sector_hist = sector_indices[ind]
             
-            # Primary: Relative Strength
-            p_res = relative_strength_eval(df, nifty_hist=nifty_hist, sector_hist=sector_hist)
-            
+            p_res = primary_func(df, nifty_hist=nifty_hist, sector_hist=sector_hist)
             if not p_res or not p_res.get('passed'):
                 continue
-                
-            # Confirmation: Momentum Breakout
+            
             try:
-                c_res = momentum_breakout_eval(df, nifty_hist=nifty_hist, sector_hist=sector_hist)
+                c_res = confirm_func(df, nifty_hist=nifty_hist, sector_hist=sector_hist)
             except:
                 c_res = None
             
-            # Alpha Confirmation Sizing Logic
             confirmed = c_res and c_res.get('passed')
-            if confirmed:
-                risk_pct = 0.025  # 2.5% risk on confirmed
-                signal_type = "RS + Momentum CONFIRMED"
-            else:
-                risk_pct = 0.01   # 1.0% risk on RS-only
-                signal_type = "RS Alpha Only"
+            risk_pct = 0.025 if confirmed else 0.01
+            signal_type = f"{signal_prefix}: {'CONFIRMED' if confirmed else 'Primary Only'}"
             
             live_close = df['Close'].iloc[-1]
             atr = talib.ATR(df['High'], df['Low'], df['Close'], timeperiod=14).iloc[-1]
@@ -147,14 +231,14 @@ def run_live_strategies(bulk_data, nifty_hist):
                     "target": round(target, 2),
                     "risk_pct": risk_pct,
                     "alpha_score": round(alpha_score, 4),
-                    "note": f"Alpha: {alpha_score:.4f} | Risk: {risk_pct*100:.1f}% | SL: {stop_loss:.2f} | TGT: {target:.2f}"
+                    "regime_state": regime_state,
+                    "note": f"BCR={bcr:.3f} | Breadth={breadth:.1%} | Alpha={alpha_score:.4f} | Risk={risk_pct*100:.1f}%"
                 })
-        except Exception as e:
+        except Exception:
             pass
     
-    # RANK BY ALPHA SCORE (highest first) — the core A1 innovation
+    # Rank by alpha score (highest first) — best conviction signals first
     new_signals.sort(key=lambda x: x.get('alpha_score', 0.0), reverse=True)
-    
     return new_signals
 
 def print_terminal_table(title, items):
