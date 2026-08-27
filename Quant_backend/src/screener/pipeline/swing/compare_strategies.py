@@ -975,12 +975,12 @@ def main():
     
     ARCHITECTURES = [
         {
-            "name": "E12_Three_State",
-            "primary": rs_strat,
-            "primary_momentum": rs_strat,
-            "confirmation_momentum": mom_strat,
-            "primary_meanrev": oversold_strat,
-            "confirmation_meanrev": pullback_strat,
+            "name": "E12_Vol_Pullback",
+            "primary": vol_strat,
+            "primary_momentum": vol_strat,
+            "confirmation_momentum": pullback_strat,
+            "primary_meanrev": pullback_strat,
+            "confirmation_meanrev": oversold_strat,
             "sizing_logic": "alpha_confirmation",
             "dynamic_risk_scaling": False,
             "dd_penalty_factor": 5.0,
