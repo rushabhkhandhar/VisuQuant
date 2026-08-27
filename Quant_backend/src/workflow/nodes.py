@@ -291,7 +291,10 @@ def node_vision_analysis(state: TradingState) -> dict:
         cleaned_str = cleaned_str.strip()
         
         try:
-            parsed_json = json.loads(cleaned_str)
+            import json_repair
+            parsed_json = json_repair.loads(cleaned_str)
+            if not isinstance(parsed_json, dict):
+                raise ValueError("json_repair did not return a dictionary")
             
             # Post-processing: Filter low confidence patterns and trends
             if "patterns" in parsed_json:
@@ -575,7 +578,18 @@ def node_confluence_engine(state: TradingState) -> dict:
                 format=confluence_schema
             )
             raw_analysis = response['message']['content']
-            parsed_json = json.loads(raw_analysis)
+            
+            # Robust parsing: Extract from first '{' to last '}' to ignore any preambles or markdown tags
+            cleaned_str = raw_analysis.strip()
+            start_idx = cleaned_str.find('{')
+            end_idx = cleaned_str.rfind('}')
+            if start_idx != -1 and end_idx != -1 and end_idx >= start_idx:
+                cleaned_str = cleaned_str[start_idx:end_idx+1]
+            
+            import json_repair
+            parsed_json = json_repair.loads(cleaned_str)
+            if not isinstance(parsed_json, dict):
+                raise ValueError("json_repair did not return a dictionary")
             break
         except Exception as e:
             print(f"[{ticker}] Warning: Failed to generate/parse structured JSON on attempt {attempt+1}: {e}")
@@ -794,7 +808,10 @@ def node_decision_engine(state: TradingState) -> dict:
 
         
         try:
-            parsed_json = json.loads(cleaned_str)
+            import json_repair
+            parsed_json = json_repair.loads(cleaned_str)
+            if not isinstance(parsed_json, dict):
+                raise ValueError("json_repair did not return a dictionary")
             
             if parsed_json and "decision" in parsed_json:
                 decision = parsed_json["decision"]

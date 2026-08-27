@@ -40,29 +40,29 @@ def summarize_text_with_llm(raw_text: str) -> str:
     </text>
     """
 
-    try:
-        api_keys_str = os.environ.get("GEMINI_API_KEYS", "")
-        if not api_keys_str:
-            return "Error: GEMINI_API_KEYS not found in .env."
-            
-        # Use the first key for VisuQuant fetching
-        api_key = api_keys_str.split(",")[0].strip()
+    api_keys_str = os.environ.get("GEMINI_API_KEYS", "")
+    if not api_keys_str:
+        return "Error: GEMINI_API_KEYS not found in .env."
         
-        models_to_try = [
+    # Use the first key for VisuQuant fetching
+    api_key = api_keys_str.split(",")[0].strip()
+    
+    models_to_try = [
             "gemini-3.6-flash",
             "gemini-3.5-flash-lite",
             "gemini-1.5-flash"
-        ]
-        
-        headers = {"Content-Type": "application/json"}
-        payload = {
-            "contents": [{"parts": [{"text": prompt}]}]
-        }
-        
-        for model_name in models_to_try:
+    ]
+    
+    headers = {"Content-Type": "application/json"}
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}]
+    }
+    
+    for model_name in models_to_try:
+        try:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
             
-            res = requests.post(url, headers=headers, json=payload, timeout=30)
+            res = requests.post(url, headers=headers, json=payload, timeout=60)
             if res.status_code == 200:
                 data = res.json()
                 raw_text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
@@ -75,20 +75,24 @@ def summarize_text_with_llm(raw_text: str) -> str:
                 if raw_text.endswith("```"):
                     raw_text = raw_text[:-3]
                     
-                return json.loads(raw_text.strip())
-            elif res.status_code in [503, 429]:
-                print(f"Warning: {model_name} returned {res.status_code}. Falling back to next model...")
+                import json_repair
+                return json_repair.loads(raw_text.strip())
+                
+            elif res.status_code in [503, 429, 404, 400]:
+                print(f"Warning: {model_name} returned {res.status_code}: {res.text}. Falling back to next model...")
                 continue
             else:
                 print(f"Gemini API Error {res.status_code} on {model_name}: {res.text}")
-                # For non-503/429 errors (like 400 Bad Request), it's usually fatal for all models
-                break
+                continue
                 
-        return {"error": "Summary failed. All models overloaded or encountered API errors."}
+        except requests.exceptions.Timeout:
+            print(f"Warning: Model {model_name} timed out. Falling back to next model...")
+            continue
+        except Exception as e:
+            print(f"Error calling {model_name}: {e}")
+            continue
             
-    except Exception as e:
-        print(f"Error during Gemini summarization: {e}")
-        return {"error": f"Summary failed. Showing raw snippet: {truncated_text[:200]}"}
+    return {"error": f"Summary failed. All models failed or timed out. Showing raw snippet: {truncated_text[:200]}"}
 
 def download_and_parse_pdf(pdf_url: str) -> str:
     headers = {

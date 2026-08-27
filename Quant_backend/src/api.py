@@ -148,7 +148,7 @@ def run_analysis(req: AnalyzeRequest):
     import time
     
     app_graph = build_graph()
-    payload = {"ticker": req.symbol, "as_of_date": req.date}
+    payload = {"ticker": req.symbol.strip(), "as_of_date": req.date}
     
     start_time = time.time()
     final_state = app_graph.invoke(payload)
@@ -200,7 +200,7 @@ def download_report(path: str, background_tasks: BackgroundTasks):
 def run_strategy_backtest(req: BacktestRequest):
     from src.screener.pipeline.swing.backtest import run_backtest
     try:
-        results = run_backtest(months=req.months, symbols=[req.symbol], return_json=True)
+        results = run_backtest(months=req.months, symbols=[req.symbol.strip()], return_json=True)
         return {"status": "success", "data": results}
     except Exception as e:
         return {"status": "error", "message": str(e)}
