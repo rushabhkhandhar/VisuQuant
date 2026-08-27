@@ -21,7 +21,7 @@ from src.screener.pipeline.swing.run_front_test import (
 )
 from src.screener.pipeline.swing.e12_strategy import (
     BCR_THRESHOLD, BREADTH_THRESHOLD, MAX_CONFIRMED_SIGNALS, MAX_PRIMARY_SIGNALS,
-    RISK_ATR, REWARD_ATR, RISK_CONFIRMED, RISK_PRIMARY,
+    RISK_ATR, REWARD_ATR, RISK_CONFIRMED, RISK_PRIMARY, MAX_HOLDING_SESSIONS
 )
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -614,6 +614,29 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                             "pnl_pct": pnl, 
                             "status": "Win"
                         })
+                    else:
+                        # Fix 3: Time-based exit after MAX_HOLDING_SESSIONS
+                        entry_dt = pd.Timestamp(pos.get("entry_date", current_date))
+                        sessions_held = len([d for d in test_dates[:i+1] if d >= entry_dt]) - 1
+                        if sessions_held >= MAX_HOLDING_SESSIONS:
+                            exit_price = close
+                            net_entry_cost = pos['entry_price'] * (1 + FRICTION_PCT)
+                            net_exit_revenue = exit_price * (1 - FRICTION_PCT)
+                            pnl = (net_exit_revenue - net_entry_cost) / net_entry_cost
+                            cash += pos['shares'] * exit_price * (1 - FRICTION_PCT)
+                            symbols_to_remove.append(sym)
+                            trades_log.append({
+                                "symbol": sym,
+                                "signal_date": pos.get("signal_date", pos.get("entry_date", "")),
+                                "entry_date": pos.get("entry_date", ""),
+                                "exit_date": current_date.strftime("%Y-%m-%d"),
+                                "entry_price": pos["entry_price"],
+                                "exit_price": exit_price,
+                                "stop_loss": pos["stop_loss"],
+                                "target": pos["target"],
+                                "pnl_pct": pnl,
+                                "status": "TimeStop"
+                            })
                         
         for sym in symbols_to_remove:
             del open_positions[sym]

@@ -73,6 +73,26 @@ def check_open_trades_live(trades, bulk_data):
                     "price": live_close,
                     "pnl": ((live_close - t["entry_price"]) / t["entry_price"]) * 100
                 })
+            else:
+                # Fix 3: Time-stop check for live trades
+                if t.get("status") == "OPEN":
+                    from src.screener.pipeline.swing.e12_strategy import MAX_HOLDING_SESSIONS
+                    from datetime import datetime
+                    import numpy as np
+                    
+                    try:
+                        entry_dt = datetime.strptime(t.get("entry_date", pd.Timestamp.today().strftime("%Y-%m-%d")), "%Y-%m-%d")
+                        days_held = np.busday_count(entry_dt.date(), pd.Timestamp.today().date())
+                        if days_held >= MAX_HOLDING_SESSIONS:
+                            closed_trades.append({
+                                "symbol": sym,
+                                "strategy": t["strategy_name"],
+                                "action": f"SELL (TIME STOP: {days_held}d)",
+                                "price": live_close,
+                                "pnl": ((live_close - t["entry_price"]) / t["entry_price"]) * 100
+                            })
+                    except Exception:
+                        pass
                 
     return closed_trades
 

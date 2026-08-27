@@ -89,8 +89,14 @@ def trend_pullback_eval(df, nifty_hist=None, sector_hist=None):
     vol_sma20 = df['Volume'].rolling(20).mean().iloc[-1]
     if vol < vol_sma20:
         return {"passed": False, "reasons": ["Bounce volume below average"]}
-         
-    return {"passed": True, "score": 1.0, "trigger_type": "Trend Pullback"}
+
+    # Alpha score for quality ranking (Fix 2: MeanRev alpha)
+    rsi_score = max(0.0, (65 - rsi) / 25)  # deeper pullback = higher score
+    ema_score = max(0.0, 1.0 - (min(dist_20, dist_50) / 0.03))  # closer to EMA = higher
+    vol_score = min(2.0, vol / vol_sma20) / 2.0  # volume ratio capped at 2x
+    alpha_score = (rsi_score * 0.4) + (ema_score * 0.3) + (vol_score * 0.3)
+
+    return {"passed": True, "score": 1.0, "alpha_score": alpha_score, "trigger_type": "Trend Pullback"}
 
 def momentum_breakout_eval(df, nifty_hist=None, sector_hist=None):
     if len(df) < 200:
@@ -212,8 +218,17 @@ def oversold_uptrend_eval(df, nifty_hist=None, sector_hist=None):
     
     if not (is_strong_close or is_engulfing or is_hammer):
         return {"passed": False, "reasons": ["No reversal confirmation"]}
-        
-    return {"passed": True, "score": 1.0, "trigger_type": "Oversold Uptrend"}
+
+    # Alpha score for quality ranking (Fix 2: MeanRev alpha)
+    rsi_score = max(0.0, (45 - rsi) / 15)  # deeper oversold = higher score
+    ema_score = max(0.0, 1.0 - (dist_50 / 0.06))  # closer to 50 EMA = higher
+    reversal_score = 0.0
+    if is_engulfing: reversal_score = 1.0
+    elif is_hammer: reversal_score = 0.8
+    elif is_strong_close: reversal_score = 0.6
+    alpha_score = (rsi_score * 0.4) + (ema_score * 0.3) + (reversal_score * 0.3)
+
+    return {"passed": True, "score": 1.0, "alpha_score": alpha_score, "trigger_type": "Oversold Uptrend"}
 
 def volatility_compression_eval(df, nifty_hist=None, sector_hist=None):
     if len(df) < 200:
@@ -531,6 +546,22 @@ def update_open_trades(trades, as_of_date):
                 t["exit_regime"] = current_regime
                 t["pnl_pct"] = ((t["exit_price"] - t["entry_price"]) / t["entry_price"]) * 100
                 logger.info(f"Trade {t['trade_id']} ({sym}) CLOSED at WIN: {t['pnl_pct']:.2f}%")
+            else:
+                # Fix 3: Time-based exit
+                from src.screener.pipeline.swing.e12_strategy import MAX_HOLDING_SESSIONS
+                from datetime import datetime
+                import numpy as np
+                entry_dt = datetime.strptime(t.get("entry_date", date_str), "%Y-%m-%d")
+                # Approximate trading days (business days) since entry
+                days_held = np.busday_count(entry_dt.date(), as_of_date.date())
+                if days_held >= MAX_HOLDING_SESSIONS:
+                    t["status"] = "TIMESTOP"
+                    t["exit_date"] = date_str
+                    t["exit_price"] = today_close
+                    t["exit_regime"] = current_regime
+                    t["pnl_pct"] = ((t["exit_price"] - t["entry_price"]) / t["entry_price"]) * 100
+                    logger.info(f"Trade {t['trade_id']} ({sym}) CLOSED at TIMESTOP ({days_held} days): {t['pnl_pct']:.2f}%")
+                    
     return trades
 
 def run_strategies(trades, as_of_date):
@@ -702,7 +733,7 @@ def run_strategies(trades, as_of_date):
             logger.info(f"Skipping {c['symbol']} — already have an OPEN trade.")
             continue
         c["trade_id"] = str(uuid.uuid4())
-        trade_to_save = {k: v for k, v in c.items() if k != "score"}
+        trade_to_save = {k: v for k, v in c.items() if k != "score" and k != "pending_confirmation"}
         trades.append(trade_to_save)
         logger.info(f"Logged new OPEN trade: {c['symbol']} ({c['strategy_name']}) at {c['entry_price']:.2f}")
         added += 1

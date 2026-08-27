@@ -18,6 +18,7 @@ RISK_ATR = 2.0
 REWARD_ATR = 4.0
 MAX_CONFIRMED_SIGNALS = 5
 MAX_PRIMARY_SIGNALS = 5
+MAX_HOLDING_SESSIONS = 25  # Fix 3: Time-based exit after ~1 month
 
 
 def compute_bcr(bulk_data: Dict[str, pd.DataFrame], as_of_date) -> float:
@@ -126,6 +127,7 @@ def generate_e12_signals(
             "regime_state": state,
             "bcr": round(float(bcr), 4),
             "breadth": round(float(breadth), 4),
+            "pending_confirmation": True,  # Fix 1: Wait 1 session before entry
         })
 
     confirmed = sorted((c for c in candidates if "Confirmed" in c["strategy_name"]), key=lambda c: c["alpha_score"], reverse=True)
