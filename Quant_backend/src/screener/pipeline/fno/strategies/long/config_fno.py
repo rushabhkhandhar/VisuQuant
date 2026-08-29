@@ -1,7 +1,7 @@
 STRATEGY_CONFIG = {
     # Account Settings
-    "starting_capital": 5000000.0,  # 50 Lakhs (needed for proper risk-adjusted F&O lot sizing)
-    "risk_per_trade_pct": 0.02,    # Risk 2% of capital per trade
+    "starting_capital": 300000.0,   # 1 Lakh
+    "risk_per_trade_pct": 0.15,     # Increased to 15% so a 3 Lakh account can afford 1 lot of F&O risk
     
     # Portfolio constraints
     "max_open_positions": 2,       # Only buy top 2 strongest stocks
