@@ -1,7 +1,7 @@
 import os
 import sys
 import logging
-from datetime import date
+from datetime import date, timedelta
 import pandas as pd
 import numpy as np
 
@@ -11,6 +11,11 @@ from tvDatafeed import Interval
 from src.data.nse_fetcher import fetch_bulk_history, load_fno_symbols, load_nifty500_industry_mapping
 from src.data.live_tv_fetcher import get_tv_fetcher
 from src.screener.pipeline.fno.strategies.long.config_fno import STRATEGY_CONFIG
+
+def is_last_thursday(d: date) -> bool:
+    """Returns True if the given date is the last Thursday of the month."""
+    return d.weekday() == 3 and (d + timedelta(days=7)).month != d.month
+
 from src.screener.pipeline.fno.strategies.long.screener import FnoLongScreener
 from src.screener.pipeline.intraday.features import calculate_atr
 
@@ -111,6 +116,11 @@ class FnoLongBacktest:
                     exit_price = pos['target']
                     exit_type = "TARGET"
                     
+                # Check for forced exit on expiry day
+                if exit_price == 0 and is_last_thursday(current_date):
+                    exit_price = t_row['Close']
+                    exit_type = "EXPIRY_CLOSE"
+                
                 if exit_price > 0:
                     # Execute Exit
                     gross_pnl = (exit_price - pos['entry_price']) * pos['qty']
