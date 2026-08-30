@@ -2,7 +2,13 @@ import os
 import sys
 import logging
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, date
+import requests
+from dotenv import load_dotenv
+
+# Load environment variables for Telegram
+env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))), ".env")
+load_dotenv(env_path)
 
 # Add the project root to sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))))
@@ -23,6 +29,28 @@ logger = logging.getLogger(__name__)
 # Filter down to the 3 proven strategies we want to run live
 LIVE_STRATEGY_NAMES = ["Momentum Breakout", "Relative Strength", "Volatility Compression"]
 LIVE_STRATEGIES = [s for s in STRATEGIES if s["name"] in LIVE_STRATEGY_NAMES]
+
+def send_telegram_message(message: str):
+    bot_token = os.getenv("TELEGRAM_BOT_TOKEN_SWING")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID_SWING")
+    
+    if not bot_token or not chat_id:
+        logger.warning("Telegram Bot Token or Chat ID not found in .env. Skipping Telegram notification.")
+        return
+        
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": message,
+        "parse_mode": "HTML"
+    }
+    
+    try:
+        response = requests.post(url, json=payload, timeout=10)
+        response.raise_for_status()
+        logger.info("Successfully sent Telegram notification.")
+    except Exception as e:
+        logger.error(f"Failed to send Telegram notification: {e}")
 
 def get_live_market_regime(nifty_hist):
     if nifty_hist is not None and not nifty_hist.empty and len(nifty_hist) >= 60:
@@ -242,6 +270,25 @@ def main():
     
     print_terminal_table("SELL SIGNALS (STOP / TARGET HIT)", closed_signals)
     print_terminal_table("BUY SIGNALS (NEW BREAKOUTS)", buy_signals)
+    
+    # Format and send Telegram Message
+    today = date.today().strftime('%Y-%m-%d')
+    tg_msg = f"<b>📈 Swing Strategy (3:15 PM Update): {today} 📈</b>\n\n"
+    
+    tg_msg += "<b>🟢 FRESH BUY SIGNALS:</b>\n"
+    if not buy_signals:
+        tg_msg += "No signals found.\n\n"
+    else:
+        for item in buy_signals:
+            tg_msg += (
+                f"• <b>{item['symbol']}</b> | {item.get('strategy', 'Unknown')}\n"
+                f"  Entry Proxy: ₹{item.get('price', 0):.2f}\n"
+                f"  Stop Loss: ₹{item.get('stop_loss', '-')}\n"
+                f"  Target: ₹{item.get('target', '-')}\n"
+                f"  Alpha Score: {item.get('alpha_score', 0):.4f}\n\n"
+            )
+            
+    send_telegram_message(tg_msg)
     
 if __name__ == "__main__":
     main()

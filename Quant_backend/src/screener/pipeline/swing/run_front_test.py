@@ -3,12 +3,18 @@ import sys
 import json
 import csv
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import pandas as pd
 import numpy as np
 import uuid
 import talib
+import requests
+from dotenv import load_dotenv
 from sklearn.linear_model import LinearRegression
+
+# Load environment variables for Telegram
+env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))), ".env")
+load_dotenv(env_path)
 
 # Add the project root to sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))))
@@ -407,6 +413,30 @@ STRATEGIES = [
     }
 ]
 
+METRICS_DAYS = 90
+
+def send_telegram_message(message: str):
+    bot_token = os.getenv("TELEGRAM_BOT_TOKEN_SWING_PORTFOLIO")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID_SWING")
+    
+    if not bot_token or not chat_id:
+        logger.warning("Telegram Bot Token or Chat ID not found in .env. Skipping Telegram notification.")
+        return
+        
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": message,
+        "parse_mode": "HTML"
+    }
+    
+    try:
+        response = requests.post(url, json=payload, timeout=10)
+        response.raise_for_status()
+        logger.info("Successfully sent Telegram notification.")
+    except Exception as e:
+        logger.error(f"Failed to send Telegram notification: {e}")
+
 def load_state():
     if os.path.exists(STATE_FILE):
         with open(STATE_FILE, "r") as f:
@@ -628,20 +658,20 @@ def run_strategies(trades, as_of_date):
     # --- Determine regime state ---
     if bcr > BCR_THRESHOLD:
         regime_state = 1
-        primary_func = relative_strength_eval
-        confirm_func = momentum_breakout_eval
-        signal_label = "E11-Trend"
-        logger.info(f"Regime STATE 1 — TREND (BCR={bcr:.3f}). Using RS + Momentum signals.")
+        primary_func = volatility_compression_eval
+        confirm_func = trend_pullback_eval
+        signal_label = "E12-Trend"
+        logger.info(f"Regime STATE 1 — TREND (BCR={bcr:.3f}). Using Volatility Compression + Trend Pullback.")
     elif breadth < BREADTH_THRESHOLD:
         regime_state = 3
         logger.info(f"Regime STATE 3 — CASH PRESERVATION (BCR={bcr:.3f}, Breadth={breadth:.1%}). No new entries.")
         return trades  # Existing positions managed by update_open_trades — no new entries
     else:
         regime_state = 2
-        primary_func = oversold_uptrend_eval
-        confirm_func = trend_pullback_eval
-        signal_label = "E11-MeanRev"
-        logger.info(f"Regime STATE 2 — MEAN-REVERT (BCR={bcr:.3f}, Breadth={breadth:.1%}). Using Oversold + Pullback signals.")
+        primary_func = trend_pullback_eval
+        confirm_func = oversold_uptrend_eval
+        signal_label = "E12-MeanRev"
+        logger.info(f"Regime STATE 2 — MEAN-REVERT (BCR={bcr:.3f}, Breadth={breadth:.1%}). Using Trend Pullback + Oversold Uptrend.")
 
     # --- Build sector indices ---
     from src.data.nse_fetcher import load_nifty500_industry_mapping
@@ -880,6 +910,45 @@ def main():
         step_portfolio(e12_candidates, as_of_date, strategy_name="E12_Three_State")
     except Exception as e:
         logger.error(f"Error during portfolio tracking/optimization for E12_Three_State: {e}")
+        
+    # Format and send Telegram Message
+    tg_msg = f"<b>📊 Swing Portfolio Update (5:30 PM): {date_str} 📊</b>\n\n"
+    
+    closed_today = [t for t in trades if t.get('status') == 'CLOSED' and t.get('exit_date') == date_str]
+    open_trades = [t for t in trades if t.get('status') == 'OPEN']
+    
+    tg_msg += "<b>🔴 CLOSED TRADES TODAY:</b>\n"
+    if not closed_today:
+        tg_msg += "No trades closed today.\n\n"
+    else:
+        for t in closed_today:
+            pnl = t.get('pnl_pct', 0)
+            emoji = "🟢" if pnl > 0 else "🔴"
+            tg_msg += (
+                f"• <b>{t['symbol']}</b> | {t.get('strategy_name', 'Unknown')}\n"
+                f"  Exit Strategy: {t.get('exit_reason', 'Unknown')}\n"
+                f"  PNL: {emoji} {pnl:.2f}%\n"
+                f"  Holding Period: {t.get('holding_period_days', 0)} days\n\n"
+            )
+            
+    tg_msg += "<b>💼 ACTIVE PORTFOLIO:</b>\n"
+    if not open_trades:
+        tg_msg += "No open positions.\n\n"
+    else:
+        for t in open_trades:
+            pnl = t.get('pnl_pct', 0)
+            emoji = "🟢" if pnl > 0 else "🔴"
+            tg_msg += (
+                f"• <b>{t['symbol']}</b> | {emoji} {pnl:.2f}%\n"
+                f"  Entry: ₹{t.get('entry_price', 0):.2f} | Current: ₹{t.get('current_price', 0):.2f}\n"
+                f"  SL: ₹{t.get('stop_loss', 0):.2f} | Target: ₹{t.get('target', 0):.2f}\n\n"
+            )
+
+    # Prevent message from exceeding telegram length limits
+    if len(tg_msg) > 4000:
+        tg_msg = tg_msg[:4000] + "\n...[Message Truncated]..."
+        
+    send_telegram_message(tg_msg)
     
     logger.info("--- Forward Test Engine Completed ---")
     cleanup_cache()
