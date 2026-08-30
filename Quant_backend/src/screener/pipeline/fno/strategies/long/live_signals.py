@@ -4,6 +4,8 @@ import json
 import logging
 from datetime import date, timedelta
 import pandas as pd
+import requests
+from dotenv import load_dotenv
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))))))
 
@@ -18,6 +20,32 @@ logger = logging.getLogger(__name__)
 
 OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
 STATE_FILE = os.path.join(OUT_DIR, "active_fno_long_trades.json")
+
+# Load environment variables (for Telegram bot tokens)
+env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))))), ".env")
+load_dotenv(env_path)
+
+def send_telegram_message(message: str):
+    bot_token = os.getenv("TELEGRAM_BOT_TOKEN_FNO")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID_FNO")
+    
+    if not bot_token or not chat_id:
+        logger.warning("Telegram Bot Token or Chat ID not found in .env. Skipping Telegram notification.")
+        return
+        
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": message,
+        "parse_mode": "HTML"
+    }
+    
+    try:
+        response = requests.post(url, json=payload, timeout=10)
+        response.raise_for_status()
+        logger.info("Successfully sent Telegram notification.")
+    except Exception as e:
+        logger.error(f"Failed to send Telegram notification: {e}")
 
 def is_last_thursday(d: date) -> bool:
     """Returns True if the given date is the last Thursday of the month."""
@@ -185,6 +213,39 @@ def generate_live_signals():
     # Save today's exact buy recommendations for reference
     out_path = os.path.join(OUT_DIR, "daily_signals.csv")
     buy_df.to_csv(out_path, index=False)
+    
+    # Send Telegram Notification
+    tg_msg = f"<b>🔥 F&O Long Strategy: {today} 🔥</b>\n\n"
+    
+    tg_msg += "<b>🔴 SELL SIGNALS:</b>\n"
+    if closed_df.empty:
+        tg_msg += "No signals found.\n\n"
+    else:
+        for _, row in closed_df.iterrows():
+            tg_msg += (
+                f"• <b>{row['Symbol']}</b> | {row['Action']}\n"
+                f"  Exit Price: ₹{row['Exit_Price']}\n"
+                f"  PnL: {row['PnL_Pct']}%\n"
+            )
+        tg_msg += "\n"
+        
+    tg_msg += "<b>🟢 BUY SIGNALS:</b>\n"
+    if buy_df.empty:
+        if slots_available <= 0:
+            tg_msg += "Portfolio full (0/2 slots available). Skipping new generation.\n"
+        else:
+            tg_msg += "No signals found.\n"
+    else:
+        for _, row in buy_df.iterrows():
+            tg_msg += (
+                f"• <b>{row['Symbol']}</b> | {row['Action']}\n"
+                f"  Entry Proxy: ₹{row['Entry_Price_Proxy']}\n"
+                f"  Stop Loss: ₹{row['Stop_Loss']}\n"
+                f"  Target: ₹{row['Target']}\n"
+                f"  Risk/Share: ₹{row['Risk_Per_Share']}\n\n"
+            )
+            
+    send_telegram_message(tg_msg)
     
 if __name__ == "__main__":
     generate_live_signals()

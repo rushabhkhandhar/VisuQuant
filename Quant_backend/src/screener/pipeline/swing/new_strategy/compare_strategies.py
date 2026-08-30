@@ -13,7 +13,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
 
 from src.data.nse_fetcher import fetch_bulk_history, load_nifty500_symbols, load_nifty500_industry_mapping
 from src.screener.pipeline.swing.new_strategy.run_front_test import (
-    fibonacci_pullback_eval
+    deep_mean_reversion_eval
 )
 from src.screener.pipeline.swing.new_strategy.e12_strategy import (
     BCR_THRESHOLD, BREADTH_THRESHOLD, MAX_CONFIRMED_SIGNALS, MAX_PRIMARY_SIGNALS,
@@ -30,7 +30,7 @@ FRICTION_PCT = 0.0015  # 0.15% cost per trade leg
 HOLDOUT_START = pd.Timestamp("2024-08-25")
 
 STRATEGIES = [
-    {"name": "Fibonacci_Sniper", "func": fibonacci_pullback_eval, "risk_atr": 2.0, "reward_atr": 4.0},
+    {"name": "Deep_Mean_Reversion", "func": deep_mean_reversion_eval, "risk_atr": 1.5, "reward_atr": 1.5},
 ]
 
 def calculate_metrics(daily_equity, trades):
@@ -718,6 +718,7 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                     # Architecture Logic
                     sizing_logic = arch_config.get('sizing_logic', 'primary_only')
                     risk_pct = 0.0
+                    is_confirmed = False
                     
                     if sizing_logic == "primary_only":
                         if p_res and p_res.get('passed'): risk_pct = 0.02
@@ -730,7 +731,6 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                         if score == 1: risk_pct = 0.01
                         elif score == 2: risk_pct = 0.02
                     elif sizing_logic == "alpha_confirmation":
-                        is_confirmed = False
                         if p_res and p_res.get('passed'):
                             if c_res and c_res.get('passed'):
                                 risk_pct = RISK_CONFIRMED
@@ -957,17 +957,17 @@ def main():
         sector_indices[ind] = pd.DataFrame({"Close": synthetic_price})
 
     # Find strategy definitions
-    fib_strat = next(s for s in STRATEGIES if s["name"] == "Fibonacci_Sniper")
+    dmr_strat = next(s for s in STRATEGIES if s["name"] == "Deep_Mean_Reversion")
     
     ARCHITECTURES = [
         {
-            "name": "Fibonacci_Sniper",
-            "primary": fib_strat,
-            "primary_momentum": fib_strat,
-            "confirmation_momentum": fib_strat,
-            "primary_meanrev": fib_strat,
-            "confirmation_meanrev": fib_strat,
-            "sizing_logic": "alpha_confirmation",
+            "name": "Deep_Mean_Reversion_Strategy",
+            "primary": dmr_strat,
+            "primary_momentum": dmr_strat,
+            "confirmation_momentum": dmr_strat,
+            "primary_meanrev": dmr_strat,
+            "confirmation_meanrev": dmr_strat,
+            "sizing_logic": "primary_only",
             "dynamic_risk_scaling": False,
             "dd_penalty_factor": 5.0,
             "friction_pct": 0.0015,

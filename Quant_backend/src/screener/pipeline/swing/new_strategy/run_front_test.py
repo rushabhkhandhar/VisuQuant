@@ -284,74 +284,34 @@ def volatility_compression_eval(df, nifty_hist=None, sector_hist=None):
         
     return {"passed": True, "score": 1.0, "trigger_type": "Volatility Compression Breakout"}
 
-def fibonacci_pullback_eval(df, nifty_hist=None, sector_hist=None):
+def deep_mean_reversion_eval(df, nifty_hist=None, sector_hist=None):
     if len(df) < 200:
-        return {"passed": False, "reasons": ["Not enough data"]}
+        return {"passed": False, "reasons": ["Not enough data for 200 SMA"]}
         
     close = df['Close'].iloc[-1]
-    open_p = df['Open'].iloc[-1]
-    high = df['High'].iloc[-1]
-    low = df['Low'].iloc[-1]
-    volume = df['Volume'].iloc[-1]
     
-    # 1. Long-term trend filter
+    # 1. Structural Strength
     sma200 = df['Close'].rolling(window=200).mean().iloc[-1]
     if close < sma200:
         return {"passed": False, "reasons": ["Below 200 SMA"]}
         
-    # 2. Identify 60-day Swing High and Swing Low
-    recent_df = df.iloc[-60:]
-    swing_high = recent_df['High'].max()
-    swing_low = recent_df['Low'].min()
-    
-    # Require uptrend (swing high must be after swing low)
-    idx_high = recent_df['High'].idxmax()
-    idx_low = recent_df['Low'].idxmin()
-    if idx_high <= idx_low:
-        return {"passed": False, "reasons": ["Swing High is before Swing Low (not an uptrend)"]}
+    # 2. Lower Bollinger Band (20, 2)
+    upperband, middleband, lowerband = talib.BBANDS(df['Close'], timeperiod=20, nbdevup=2, nbdevdn=2, matype=0)
+    if close > lowerband.iloc[-1]:
+        return {"passed": False, "reasons": ["Not below Lower Bollinger Band"]}
         
-    # Check if we have pulled back from the swing high
-    if close >= swing_high * 0.98:
-        return {"passed": False, "reasons": ["Too close to swing high, no pullback"]}
+    # 3. RSI(2) < 10
+    rsi2 = talib.RSI(df['Close'], timeperiod=2).iloc[-1]
+    if rsi2 >= 10:
+        return {"passed": False, "reasons": ["RSI(2) not oversold enough"]}
         
-    # 3. Fibonacci Levels
-    move_range = swing_high - swing_low
-    if move_range == 0:
-        return {"passed": False, "reasons": ["Zero move range"]}
-        
-    fib_382 = swing_high - (move_range * 0.382)
-    fib_500 = swing_high - (move_range * 0.500)
-    fib_618 = swing_high - (move_range * 0.618)
-    
-    # Check if today's low pierced the golden zone (between 38.2 and 61.8)
-    if not (fib_618 <= low <= fib_382):
-        return {"passed": False, "reasons": ["Low did not pierce the Fibonacci Golden Zone"]}
-        
-    # 4. Candlestick Pattern (Bullish Reversal)
-    candle_range = high - low
-    if candle_range == 0:
-        return {"passed": False, "reasons": ["Zero candle range"]}
-        
-    is_bullish_close = close > open_p
-    close_strength = (close - low) / candle_range
-    is_hammer = close_strength > 0.6 and (open_p - low) / candle_range > 0.6
-    
-    prev_open = df['Open'].iloc[-2]
-    prev_close = df['Close'].iloc[-2]
-    is_engulfing = is_bullish_close and (close > prev_open) and (open_p < prev_close) and (prev_close < prev_open)
-    
-    if not (is_hammer or is_engulfing):
-        return {"passed": False, "reasons": ["No bullish reversal candle at Fibonacci level"]}
-        
-    # 5. Volume Confirmation
+    # 4. Liquidity
     vol_sma20 = df['Volume'].rolling(20).mean().iloc[-1]
-    if volume <= vol_sma20:
-        return {"passed": False, "reasons": ["Volume <= 20-day Average"]}
+    turnover = vol_sma20 * close
+    if turnover < 50_000_000:
+        return {"passed": False, "reasons": ["Low Turnover"]}
         
-    alpha_score = (volume / vol_sma20) * 0.5 + close_strength * 0.5
-    alpha_score = min(alpha_score, 1.0)
-    
-    return {"passed": True, "score": 1.0, "alpha_score": alpha_score, "trigger_type": "Fibonacci Reversal"}
+    return {"passed": True, "score": 1.0, "alpha_score": 1.0, "trigger_type": "Deep Mean Reversion"}
 
 def relative_strength_eval(df, nifty_hist=None, sector_hist=None):
     if len(df) < 200:

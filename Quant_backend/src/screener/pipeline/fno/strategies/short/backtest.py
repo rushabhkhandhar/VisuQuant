@@ -67,7 +67,7 @@ class FnoShortBacktest:
         ind_map = load_nifty500_industry_mapping()
         
         logger.info("Fetching static Cash EOD data for Screener logic...")
-        cash_data = fetch_bulk_history(symbols + ["NIFTY"], end_date=date.today(), lookback_days=150)
+        cash_data = fetch_bulk_history(symbols + ["NIFTY"], end_date=date.today(), lookback_days=1000)
         
         logger.info("Fetching Continuous Futures data for execution...")
         futures_data = self.get_futures_data(symbols, end_date=date.today())
@@ -203,9 +203,14 @@ class FnoShortBacktest:
         self.generate_report()
         
     def generate_report(self):
+        out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
+        os.makedirs(out_dir, exist_ok=True)
+        out_path = os.path.join(out_dir, "fno_short_results.csv")
+        
         df = pd.DataFrame(self.trades)
         if df.empty:
-            logger.info("No trades generated during backtest!")
+            logger.info("No trades generated during backtest! Saving empty report.")
+            df.to_csv(out_path, index=False)
             return
             
         win_rate = (df['Net_PnL'] > 0).mean() * 100
@@ -215,8 +220,8 @@ class FnoShortBacktest:
         logger.info(f"Total Net PnL: Rs {df['Net_PnL'].sum():.2f}")
         logger.info(f"Final Capital: Rs {self.capital:.2f}")
         
-        df.to_csv("fno_short_results.csv", index=False)
-
+        df.to_csv(out_path, index=False)
+        logger.info(f"Results saved to {out_path}")
 if __name__ == "__main__":
     engine = FnoShortBacktest(STRATEGY_CONFIG)
     engine.run()

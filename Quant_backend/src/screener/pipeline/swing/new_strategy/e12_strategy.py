@@ -18,7 +18,7 @@ RISK_ATR = 2.0
 REWARD_ATR = 4.0
 MAX_CONFIRMED_SIGNALS = 5
 MAX_PRIMARY_SIGNALS = 5
-MAX_HOLDING_SESSIONS = 10  # Fix 3: Time-based exit after ~2 weeks
+MAX_HOLDING_SESSIONS = 5  # Quick time-based exit for Mean Reversion
 
 
 def compute_bcr(bulk_data: Dict[str, pd.DataFrame], as_of_date) -> float:

@@ -1,7 +1,7 @@
 {
-  "run_date": "2026-08-28",
+  "run_date": "2026-08-29",
   "test_start": "2020-08-31",
-  "test_end": "2026-08-27",
+  "test_end": "2026-08-28",
   "holdout_start": "2024-08-25",
   "universe": "Current NIFTY 500 constituents plus NIFTYBEES benchmark",
   "universe_limitation": "Not point-in-time constituents; obtain a historical constituent dataset before treating results as survivorship-bias-free.",
@@ -12,13 +12,13 @@
   "data_integrity": "Weekends rejected; exchange holidays excluded when no valid bhavcopy is available",
   "architectures": [
     {
-      "name": "Fibonacci_Sniper",
-      "primary": "Fibonacci_Sniper",
-      "primary_momentum": "Fibonacci_Sniper",
-      "confirmation_momentum": "Fibonacci_Sniper",
-      "primary_meanrev": "Fibonacci_Sniper",
-      "confirmation_meanrev": "Fibonacci_Sniper",
-      "sizing_logic": "alpha_confirmation",
+      "name": "Deep_Mean_Reversion_Strategy",
+      "primary": "Deep_Mean_Reversion",
+      "primary_momentum": "Deep_Mean_Reversion",
+      "confirmation_momentum": "Deep_Mean_Reversion",
+      "primary_meanrev": "Deep_Mean_Reversion",
+      "confirmation_meanrev": "Deep_Mean_Reversion",
+      "sizing_logic": "primary_only",
       "dynamic_risk_scaling": false,
       "dd_penalty_factor": 5.0,
       "friction_pct": 0.0015,
@@ -29,5 +29,5 @@
       "breadth_threshold": 0.3
     }
   ],
-  "config_sha256": "46cd32b3d95f68ec870d82c622e6a5a07a71a4c1398248aa34b8af692a9021b3"
+  "config_sha256": "4d8a38c6ce0aeb570c73d728d270df4fc59e0117647350a8a870faddb6be9612"
 }
