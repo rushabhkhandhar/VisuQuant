@@ -1,0 +1,54 @@
+name: F&O Long Strategy - Live Signals (3:15 PM)
+
+on:
+  schedule:
+    # 09:45 UTC is 15:15 (3:15 PM) IST
+    # Runs Monday through Friday
+    - cron: '45 9 * * 1-5'
+  workflow_dispatch: # Allows you to run this manually from the Actions tab
+
+jobs:
+  run-fno-long-strategy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          # Using a Personal Access Token or the default GITHUB_TOKEN
+          # If using default, ensure workflow permissions allow read/write
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r Quant_backend/requirements.txt
+
+      - name: Run F&O Long Live Signals
+        env:
+          # Expose GitHub Secrets as environment variables for the Python script
+          TELEGRAM_BOT_TOKEN_FNO: ${{ secrets.TELEGRAM_BOT_TOKEN_FNO }}
+          TELEGRAM_CHAT_ID_FNO: ${{ secrets.TELEGRAM_CHAT_ID_FNO }}
+        run: |
+          cd Quant_backend
+          python src/screener/pipeline/fno/strategies/long/live_signals.py
+
+      - name: Commit and Push Updated Ledger
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Only commit files in the F&O output directory if they changed
+          git add Quant_backend/src/screener/pipeline/fno/strategies/long/output/
+          
+          # Commit only if there are changes
+          git diff --staged --quiet || git commit -m "chore: update F&O long ledger and daily signals [skip ci]"
+          
+          # Push back to main
+          git push origin main
