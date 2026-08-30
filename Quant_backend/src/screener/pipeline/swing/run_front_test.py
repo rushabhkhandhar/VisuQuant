@@ -927,7 +927,8 @@ def main():
         tg_msg += "No trades closed today.\n\n"
     else:
         for t in closed_today:
-            pnl = t.get('pnl_pct', 0)
+            pnl = t.get('pnl_pct')
+            pnl = pnl if pnl is not None else 0
             emoji = "🟢" if pnl > 0 else "🔴"
             tg_msg += (
                 f"• <b>{t['symbol']}</b> | {t.get('strategy_name', 'Unknown')}\n"
@@ -941,7 +942,8 @@ def main():
         tg_msg += "No open positions.\n\n"
     else:
         for t in open_trades:
-            pnl = t.get('pnl_pct', 0)
+            pnl = t.get('pnl_pct')
+            pnl = pnl if pnl is not None else 0
             emoji = "🟢" if pnl > 0 else "🔴"
             tg_msg += (
                 f"• <b>{t['symbol']}</b> | {emoji} {pnl:.2f}%\n"
