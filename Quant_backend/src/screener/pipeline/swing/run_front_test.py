@@ -945,9 +945,15 @@ def main():
             pnl = t.get('pnl_pct')
             pnl = pnl if pnl is not None else 0
             emoji = "🟢" if pnl > 0 else "🔴"
+            
+            # Fallback for brand new trades where current_price hasn't updated yet
+            curr_price = t.get('current_price')
+            if not curr_price:
+                curr_price = t.get('entry_price', 0)
+                
             tg_msg += (
                 f"• <b>{t['symbol']}</b> | {emoji} {pnl:.2f}%\n"
-                f"  Entry: ₹{t.get('entry_price', 0):.2f} | Current: ₹{t.get('current_price', 0):.2f}\n"
+                f"  Entry: ₹{t.get('entry_price', 0):.2f} | Current: ₹{curr_price:.2f}\n"
                 f"  SL: ₹{t.get('stop_loss', 0):.2f} | Target: ₹{t.get('target', 0):.2f}\n\n"
             )
 
