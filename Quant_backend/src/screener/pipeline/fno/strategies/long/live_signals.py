@@ -1,7 +1,8 @@
 import os
 import sys
+import json
 import logging
-from datetime import date
+from datetime import date, timedelta
 import pandas as pd
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))))))
@@ -15,8 +16,86 @@ from src.screener.pipeline.intraday.features import calculate_atr
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
+STATE_FILE = os.path.join(OUT_DIR, "active_fno_long_trades.json")
+
+def is_last_thursday(d: date) -> bool:
+    """Returns True if the given date is the last Thursday of the month."""
+    return d.weekday() == 3 and (d + timedelta(days=7)).month != d.month
+
+def load_state():
+    if os.path.exists(STATE_FILE):
+        with open(STATE_FILE, "r") as f:
+            return json.load(f)
+    return []
+
+def save_state(trades):
+    os.makedirs(OUT_DIR, exist_ok=True)
+    with open(STATE_FILE, "w") as f:
+        json.dump(trades, f, indent=4)
+
+def check_open_trades_live(trades, cash_data, today_date):
+    """Check if open trades hit SL/Target/Expiry based on live data."""
+    open_trades = [t for t in trades if t["status"] == "OPEN"]
+    closed_signals = []
+    
+    if not open_trades:
+        return closed_signals
+        
+    for t in open_trades:
+        sym = t["symbol"]
+        df = cash_data.get(sym)
+        if df is None or df.empty:
+            continue
+            
+        live_low = df['Low'].iloc[-1]
+        live_high = df['High'].iloc[-1]
+        live_close = df['Close'].iloc[-1]
+        
+        exit_price = 0
+        action = ""
+        
+        # Check SL/Target
+        if live_low <= t["stop_loss"]:
+            exit_price = t["stop_loss"]
+            action = "SELL (STOP LOSS)"
+        elif live_high >= t["target"]:
+            exit_price = t["target"]
+            action = "SELL (TARGET)"
+            
+        # Check Expiry Force Close
+        if exit_price == 0 and is_last_thursday(today_date):
+            exit_price = live_close
+            action = "SELL (EXPIRY CLOSE)"
+            
+        if exit_price > 0:
+            t["status"] = "CLOSED"
+            t["exit_price"] = exit_price
+            t["exit_date"] = today_date.strftime("%Y-%m-%d")
+            pnl = ((exit_price - t["entry_price"]) / t["entry_price"]) * 100
+            
+            closed_signals.append({
+                "Date": today_date.strftime("%Y-%m-%d"),
+                "Symbol": sym,
+                "Action": action,
+                "Exit_Price": round(exit_price, 2),
+                "PnL_Pct": round(pnl, 2)
+            })
+            
+    return closed_signals
+
+def print_terminal_table(title, df):
+    print("\n" + "="*80)
+    print(f"🔥 {title} 🔥".center(80))
+    print("="*80)
+    if df.empty:
+        print("No signals found.")
+    else:
+        print(df.to_markdown(index=False))
+    print("="*80 + "\n")
+
 def generate_live_signals():
-    logger.info("Initializing F&O Long Live Signal Generator...")
+    logger.info("Initializing F&O Long Live Signal Generator (With State Tracking)...")
     
     symbols = load_fno_symbols()
     ind_map = load_nifty500_industry_mapping()
@@ -24,64 +103,88 @@ def generate_live_signals():
     today = date.today()
     logger.info(f"Fetching REAL-TIME live data from TradingView for {today}...")
     
-    # Use the live TV fetcher to get real-time daily candles at 3:15 PM
     fetcher = get_tv_fetcher()
     cash_data = fetcher.fetch_bulk_live(symbols + ["NIFTY"], n_bars=100, max_workers=10)
     
-    screener = FnoLongScreener(STRATEGY_CONFIG)
-    picks = screener.screen(today, cash_data, ind_map)
+    # 1. Check existing open trades
+    logger.info("Evaluating existing open portfolio trades...")
+    trades = load_state()
+    closed_signals_list = check_open_trades_live(trades, cash_data, today)
     
-    if not picks:
-        logger.info("MARKET REGIME OR SETUP BLOCK: No valid Long signals generated for today.")
-        return
-        
-    logger.info(f"Top {len(picks)} Strongest F&O Setup(s) Found: {picks}")
+    closed_df = pd.DataFrame(closed_signals_list)
+    print_terminal_table(f"SELL SIGNALS FOR: {today}", closed_df)
     
-    signals = []
+    # 2. Check position capacity
+    open_trades = [t for t in trades if t["status"] == "OPEN"]
+    slots_available = STRATEGY_CONFIG['max_open_positions'] - len(open_trades)
     
-    for sym in picks:
-        df = cash_data.get(sym)
-        if df is None or df.empty:
-            continue
-            
-        # The entry price is the current market price (last closed candle)
-        current_price = df['Close'].iloc[-1]
-        
-        # Calculate Stop Loss using ATR
-        atr = calculate_atr(df, period=STRATEGY_CONFIG['atr_period'])
-        
-        stop_loss = current_price - (atr * STRATEGY_CONFIG['atr_stop_loss_multiplier'])
-        risk = current_price - stop_loss
-        target = current_price + (risk * STRATEGY_CONFIG['target_r_multiple'])
-        
-        signals.append({
-            "Date": today.strftime("%Y-%m-%d"),
-            "Symbol": sym,
-            "Action": "BUY",
-            "Instrument": "Current Month Futures",
-            "Entry_Price_Proxy": round(current_price, 2),
-            "Stop_Loss": round(stop_loss, 2),
-            "Target": round(target, 2),
-            "Risk_Per_Share": round(risk, 2)
-        })
-        
-    sig_df = pd.DataFrame(signals)
+    logger.info(f"Portfolio slots available: {slots_available} / {STRATEGY_CONFIG['max_open_positions']}")
     
-    print("\n" + "="*50)
-    print(f"🔥 LIVE SIGNALS FOR: {today} 🔥")
-    print("="*50)
-    if sig_df.empty:
-        print("No valid signals could be generated due to missing data.")
+    buy_signals_list = []
+    
+    if slots_available > 0:
+        screener = FnoLongScreener(STRATEGY_CONFIG)
+        picks = screener.screen(today, cash_data, ind_map)
+        
+        if picks:
+            for sym in picks:
+                if slots_available <= 0:
+                    break
+                # Don't double down
+                if any(p["symbol"] == sym for p in open_trades):
+                    continue
+                    
+                df = cash_data.get(sym)
+                if df is None or df.empty:
+                    continue
+                    
+                current_price = df['Close'].iloc[-1]
+                atr = calculate_atr(df, period=STRATEGY_CONFIG['atr_period'])
+                
+                stop_loss = current_price - (atr * STRATEGY_CONFIG['atr_stop_loss_multiplier'])
+                risk = current_price - stop_loss
+                target = current_price + (risk * STRATEGY_CONFIG['target_r_multiple'])
+                
+                new_trade = {
+                    "symbol": sym,
+                    "entry_date": today.strftime("%Y-%m-%d"),
+                    "entry_price": round(current_price, 2),
+                    "stop_loss": round(stop_loss, 2),
+                    "target": round(target, 2),
+                    "status": "OPEN",
+                    "exit_date": None,
+                    "exit_price": None
+                }
+                trades.append(new_trade)
+                open_trades.append(new_trade)
+                
+                buy_signals_list.append({
+                    "Date": today.strftime("%Y-%m-%d"),
+                    "Symbol": sym,
+                    "Action": "BUY",
+                    "Instrument": "Current Month Futures",
+                    "Entry_Price_Proxy": round(current_price, 2),
+                    "Stop_Loss": round(stop_loss, 2),
+                    "Target": round(target, 2),
+                    "Risk_Per_Share": round(risk, 2)
+                })
+                
+                slots_available -= 1
+        else:
+            logger.info("MARKET REGIME OR SETUP BLOCK: No valid Long signals generated for today.")
     else:
-        print(sig_df.to_markdown(index=False))
-    print("="*50 + "\n")
+        logger.info("Portfolio is full. Skipping new BUY signal generation.")
+        
+    buy_df = pd.DataFrame(buy_signals_list)
+    print_terminal_table(f"BUY SIGNALS FOR: {today}", buy_df)
     
-    out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
-    os.makedirs(out_dir, exist_ok=True)
-    out_path = os.path.join(out_dir, "daily_signals.csv")
+    # Save the updated ledger
+    save_state(trades)
+    logger.info(f"Ledger state saved to {STATE_FILE}")
     
-    sig_df.to_csv(out_path, index=False)
-    logger.info(f"Signals saved to {out_path}")
-
+    # Save today's exact buy recommendations for reference
+    out_path = os.path.join(OUT_DIR, "daily_signals.csv")
+    buy_df.to_csv(out_path, index=False)
+    
 if __name__ == "__main__":
     generate_live_signals()
