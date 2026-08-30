@@ -865,7 +865,12 @@ def export_to_csv(trades):
         logger.info(f"Exported {len(s_trades)} trades to {csv_path}")
 
 def main():
-    date_input = input("Enter the date to run the screener for (YYYY-MM-DD) or press Enter for today: ").strip()
+    if len(sys.argv) > 1:
+        date_input = sys.argv[1]
+    elif sys.stdin.isatty():
+        date_input = input("Enter the date to run the screener for (YYYY-MM-DD) or press Enter for today: ").strip()
+    else:
+        date_input = ""
     
     if date_input:
         try:
