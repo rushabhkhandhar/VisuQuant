@@ -10,6 +10,8 @@ on:
 jobs:
   run-fno-long-strategy:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     
     steps:
       - name: Checkout Repository
@@ -24,6 +26,22 @@ jobs:
         with:
           python-version: '3.9'
           cache: 'pip'
+
+      - name: Cache TA-Lib
+        id: cache-talib
+        uses: actions/cache@v4
+        with:
+          path: /usr/lib/libta_lib*
+          key: talib-0.4.0-ubuntu-noble
+
+      - name: Install TA-Lib from source
+        if: steps.cache-talib.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get install -y build-essential wget
+          wget -q http://prdownloads.sourceforge.net/ta-lib/ta-lib-0.4.0-src.tar.gz
+          tar -xzf ta-lib-0.4.0-src.tar.gz
+          cd ta-lib && ./configure --prefix=/usr && make && sudo make install
+          cd .. && rm -rf ta-lib ta-lib-0.4.0-src.tar.gz
 
       - name: Install Dependencies
         run: |
