@@ -36,10 +36,13 @@ jobs:
           python-version: '3.9'
           cache: 'pip'
 
-      - name: Install System Dependencies (TA-Lib)
+      - name: Install System Dependencies (TA-Lib from source)
         run: |
-          sudo apt-get update -q
-          sudo apt-get install -y build-essential libta-lib-dev
+          sudo apt-get install -y build-essential wget
+          wget -q http://prdownloads.sourceforge.net/ta-lib/ta-lib-0.4.0-src.tar.gz
+          tar -xzf ta-lib-0.4.0-src.tar.gz
+          cd ta-lib && ./configure --prefix=/usr && make && sudo make install
+          cd .. && rm -rf ta-lib ta-lib-0.4.0-src.tar.gz
 
       - name: Install Dependencies
         run: |
@@ -82,10 +85,13 @@ jobs:
           python-version: '3.9'
           cache: 'pip'
 
-      - name: Install System Dependencies (TA-Lib)
+      - name: Install System Dependencies (TA-Lib from source)
         run: |
-          sudo apt-get update -q
-          sudo apt-get install -y build-essential libta-lib-dev
+          sudo apt-get install -y build-essential wget
+          wget -q http://prdownloads.sourceforge.net/ta-lib/ta-lib-0.4.0-src.tar.gz
+          tar -xzf ta-lib-0.4.0-src.tar.gz
+          cd ta-lib && ./configure --prefix=/usr && make && sudo make install
+          cd .. && rm -rf ta-lib ta-lib-0.4.0-src.tar.gz
 
       - name: Install Dependencies
         run: |
