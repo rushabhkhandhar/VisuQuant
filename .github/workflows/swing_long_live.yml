@@ -4,8 +4,8 @@ on:
   schedule:
     # 09:45 UTC is 15:15 (3:15 PM) IST (BUY Signals)
     - cron: '45 9 * * 1-5'
-    # 12:00 UTC is 17:30 (5:30 PM) IST (Portfolio Updates)
-    - cron: '0 12 * * 1-5'
+    # 12:00 UTC is 17:30 (5:30 PM) IST (Portfolio Updates) - DISABLED
+    # - cron: '0 12 * * 1-5'
   workflow_dispatch:
     inputs:
       job_to_run:
@@ -77,9 +77,7 @@ jobs:
           git push origin main
 
   run-swing-portfolio-update:
-    if: |
-      (github.event_name == 'schedule' && github.event.schedule == '0 12 * * 1-5') ||
-      (github.event_name == 'workflow_dispatch' && (github.event.inputs.job_to_run == 'all' || github.event.inputs.job_to_run == 'portfolio_only'))
+    if: false  # DISABLED - re-enable when portfolio job is ready
     runs-on: ubuntu-latest
     permissions:
       contents: write
