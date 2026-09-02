@@ -2,11 +2,17 @@ langgraph
 ollama
 playwright
 pandas
+numpy
+requests
+python-dotenv
+scikit-learn
+scipy
+TA-Lib
+tvDatafeed
 langchain-core
-pandas-ta
+# pandas-ta removed - abandoned on PyPI (requires Python >=3.12), use talib instead
 PyMuPDF
 pytest
-scipy
 fastapi
 uvicorn
 mplfinance
