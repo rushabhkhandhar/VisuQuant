@@ -8,7 +8,7 @@ python-dotenv
 scikit-learn
 scipy
 TA-Lib
-tvdatafeed
+git+https://github.com/rongardF/tvdatafeed.git
 langchain-core
 # pandas-ta removed - abandoned on PyPI (requires Python >=3.12), use talib instead
 PyMuPDF
