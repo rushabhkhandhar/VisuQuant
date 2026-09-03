@@ -26,31 +26,49 @@ jobs:
         with:
           python-version: '3.9'
           cache: 'pip'
+          cache-dependency-path: 'Quant_backend/requirements.txt'
 
-      - name: Cache TA-Lib
+      - name: Cache TA-Lib Compiled Source
         id: cache-talib
         uses: actions/cache@v4
         with:
-          path: /usr/lib/libta_lib*
-          key: talib-0.4.0-ubuntu-noble
+          path: ta-lib
+          key: ${{ runner.os }}-talib-0.4.0
 
-      - name: Install TA-Lib from source
+      - name: Build TA-Lib
         if: steps.cache-talib.outputs.cache-hit != 'true'
         run: |
           sudo apt-get install -y build-essential wget
           wget -q http://prdownloads.sourceforge.net/ta-lib/ta-lib-0.4.0-src.tar.gz
           tar -xzf ta-lib-0.4.0-src.tar.gz
-          cd ta-lib && ./configure --prefix=/usr && make && sudo make install
-          cd .. && rm -rf ta-lib ta-lib-0.4.0-src.tar.gz
+          cd ta-lib && ./configure --prefix=/usr && make
+          cd .. && rm -f ta-lib-0.4.0-src.tar.gz
+
+      - name: Install TA-Lib to System
+        run: |
+          cd ta-lib && sudo make install
 
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r Quant_backend/requirements.txt
 
+      - name: Cache Playwright Browsers
+        uses: actions/cache@v4
+        id: cache-playwright
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-chromium
+
       - name: Install Playwright Browsers
         run: |
           playwright install chromium --with-deps
+
+      - name: Cache Ollama Models
+        uses: actions/cache@v4
+        with:
+          path: ~/.ollama
+          key: ${{ runner.os }}-ollama-qwen2.5vl-3b
 
       - name: Install and Start Ollama
         run: |
