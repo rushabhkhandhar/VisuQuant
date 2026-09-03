@@ -65,38 +65,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r Quant_backend/requirements.txt
 
-      - name: Cache Playwright Browsers
-        uses: actions/cache@v4
-        id: cache-playwright
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-chromium
-
-      - name: Install Playwright Browsers
-        run: |
-          playwright install chromium --with-deps
-
-      - name: Cache Ollama Models
-        uses: actions/cache@v4
-        with:
-          path: ~/.ollama
-          key: ${{ runner.os }}-ollama-qwen2.5vl-3b
-
-      - name: Install and Start Ollama
-        run: |
-          curl -fsSL https://ollama.com/install.sh | sh
-          ollama serve &
-          for i in {1..30}; do
-            curl -s http://localhost:11434 && break || sleep 1
-          done
-          ollama pull qwen2.5vl:3b
-
       - name: Run Swing Buy Signals (3:15 PM)
         env:
           TELEGRAM_BOT_TOKEN_SWING: ${{ secrets.TELEGRAM_BOT_TOKEN_SWING }}
           TELEGRAM_CHAT_ID_SWING: ${{ secrets.TELEGRAM_CHAT_ID_SWING }}
-          GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
-          OLLAMA_MODEL: "qwen2.5vl:3b"
         run: |
           cd Quant_backend
           python src/screener/pipeline/swing/run_live_screener.py
