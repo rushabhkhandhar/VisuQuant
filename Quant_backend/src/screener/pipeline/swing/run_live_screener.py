@@ -52,6 +52,29 @@ def send_telegram_message(message: str):
     except Exception as e:
         logger.error(f"Failed to send Telegram notification: {e}")
 
+def send_telegram_document(file_path: str, caption: str = ""):
+    bot_token = os.getenv("TELEGRAM_BOT_TOKEN_SWING")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID_SWING")
+    
+    if not bot_token or not chat_id:
+        logger.warning("Telegram Bot Token or Chat ID not found. Skipping Telegram document.")
+        return
+        
+    if not os.path.exists(file_path):
+        logger.warning(f"File not found: {file_path}")
+        return
+        
+    url = f"https://api.telegram.org/bot{bot_token}/sendDocument"
+    try:
+        with open(file_path, "rb") as f:
+            files = {"document": f}
+            data = {"chat_id": chat_id, "caption": caption, "parse_mode": "HTML"}
+            response = requests.post(url, data=data, files=files, timeout=60)
+            response.raise_for_status()
+            logger.info(f"Successfully sent Telegram document: {file_path}")
+    except Exception as e:
+        logger.error(f"Failed to send Telegram document: {e}")
+
 def get_live_market_regime(nifty_hist):
     if nifty_hist is not None and not nifty_hist.empty and len(nifty_hist) >= 60:
         sma_50 = nifty_hist["Close"].rolling(50).mean()
@@ -271,8 +294,48 @@ def main():
     print_terminal_table("SELL SIGNALS (STOP / TARGET HIT)", closed_signals)
     print_terminal_table("BUY SIGNALS (NEW BREAKOUTS)", buy_signals)
     
-    # Format and send Telegram Message
     today = date.today().strftime('%Y-%m-%d')
+    
+    # Run VisuQuant Deep Analysis Pipeline for Top candidates
+    visuquant_reports = []
+    if buy_signals:
+        top_candidates = sorted(buy_signals, key=lambda x: x.get('alpha_score', 0), reverse=True)[:5]
+        logger.info(f"Running VisuQuant AI Pipeline on {len(top_candidates)} top candidate(s)...")
+        
+        try:
+            from src.workflow.graph import build_graph
+            from src.reporting.storage import persist_pipeline_results
+            import time
+            
+            app_graph = build_graph()
+            
+            for item in top_candidates:
+                symbol = item["symbol"]
+                logger.info(f">>> Invoking VisuQuant Graph for {symbol} <<<")
+                try:
+                    t0 = time.time()
+                    payload = {"ticker": symbol, "as_of_date": today}
+                    final_state = app_graph.invoke(payload)
+                    t1 = time.time()
+                    
+                    pdf_path = persist_pipeline_results(final_state, t0, t1)
+                    
+                    decision_info = final_state.get("decision", {})
+                    confluence_info = final_state.get("confluence_analysis", {})
+                    unified_trend = final_state.get("unified_trend", {})
+                    
+                    item["visuquant_decision"] = decision_info.get("action") or decision_info.get("decision", "ANALYZED")
+                    item["visuquant_confidence"] = decision_info.get("confidence", "-")
+                    item["visuquant_trend"] = unified_trend.get("direction", "-")
+                    item["visuquant_score"] = confluence_info.get("confluence_score", "-")
+                    item["pdf_path"] = pdf_path
+                    visuquant_reports.append((symbol, pdf_path, item))
+                except Exception as e:
+                    logger.error(f"VisuQuant analysis failed for {symbol}: {e}")
+        except Exception as e:
+            logger.error(f"Failed to initialize VisuQuant graph: {e}")
+    
+    # Format and send Telegram Message
     tg_msg = f"<b>📈 Swing Strategy (3:15 PM Update): {today} 📈</b>\n\n"
     
     tg_msg += "<b>🟢 FRESH BUY SIGNALS:</b>\n"
@@ -285,10 +348,22 @@ def main():
                 f"  Entry Proxy: ₹{item.get('price', 0):.2f}\n"
                 f"  Stop Loss: ₹{item.get('stop_loss', '-')}\n"
                 f"  Target: ₹{item.get('target', '-')}\n"
-                f"  Alpha Score: {item.get('alpha_score', 0):.4f}\n\n"
+                f"  Alpha Score: {item.get('alpha_score', 0):.4f}\n"
             )
+            if item.get("visuquant_decision"):
+                tg_msg += (
+                    f"  🤖 <b>VisuQuant AI:</b> {item['visuquant_decision']} (Conf: {item.get('visuquant_confidence')})\n"
+                    f"  📊 Trend: {item.get('visuquant_trend')} | Confluence: {item.get('visuquant_score')}\n"
+                )
+            tg_msg += "\n"
             
     send_telegram_message(tg_msg)
+    
+    # Send PDF reports for analyzed candidates
+    for symbol, pdf_path, item in visuquant_reports:
+        if pdf_path and os.path.exists(pdf_path):
+            caption = f"📄 <b>VisuQuant Report: {symbol}</b>\nVerdict: <b>{item.get('visuquant_decision', 'ANALYZED')}</b> | Alpha: {item.get('alpha_score', 0):.4f}"
+            send_telegram_document(pdf_path, caption=caption)
     
 if __name__ == "__main__":
     main()

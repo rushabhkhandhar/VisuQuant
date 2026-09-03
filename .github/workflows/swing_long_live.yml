@@ -60,10 +60,23 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r Quant_backend/requirements.txt
 
+      - name: Install Playwright Browsers
+        run: |
+          playwright install chromium --with-deps
+
+      - name: Install and Start Ollama
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          ollama serve &
+          sleep 5
+          ollama pull qwen2.5vl:3b
+
       - name: Run Swing Buy Signals (3:15 PM)
         env:
           TELEGRAM_BOT_TOKEN_SWING: ${{ secrets.TELEGRAM_BOT_TOKEN_SWING }}
           TELEGRAM_CHAT_ID_SWING: ${{ secrets.TELEGRAM_CHAT_ID_SWING }}
+          GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
+          OLLAMA_MODEL: "qwen2.5vl:3b"
         run: |
           cd Quant_backend
           python src/screener/pipeline/swing/run_live_screener.py

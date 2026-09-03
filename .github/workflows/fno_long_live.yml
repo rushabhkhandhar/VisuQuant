@@ -48,11 +48,24 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r Quant_backend/requirements.txt
 
+      - name: Install Playwright Browsers
+        run: |
+          playwright install chromium --with-deps
+
+      - name: Install and Start Ollama
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          ollama serve &
+          sleep 5
+          ollama pull qwen2.5vl:3b
+
       - name: Run F&O Long Live Signals
         env:
           # Expose GitHub Secrets as environment variables for the Python script
           TELEGRAM_BOT_TOKEN_FNO: ${{ secrets.TELEGRAM_BOT_TOKEN_FNO }}
           TELEGRAM_CHAT_ID_FNO: ${{ secrets.TELEGRAM_CHAT_ID_FNO }}
+          GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
+          OLLAMA_MODEL: "qwen2.5vl:3b"
         run: |
           cd Quant_backend
           python src/screener/pipeline/fno/strategies/long/live_signals.py

@@ -47,6 +47,29 @@ def send_telegram_message(message: str):
     except Exception as e:
         logger.error(f"Failed to send Telegram notification: {e}")
 
+def send_telegram_document(file_path: str, caption: str = ""):
+    bot_token = os.getenv("TELEGRAM_BOT_TOKEN_FNO")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID_FNO")
+    
+    if not bot_token or not chat_id:
+        logger.warning("Telegram Bot Token or Chat ID not found in .env. Skipping Telegram document.")
+        return
+        
+    if not os.path.exists(file_path):
+        logger.warning(f"File not found: {file_path}")
+        return
+        
+    url = f"https://api.telegram.org/bot{bot_token}/sendDocument"
+    try:
+        with open(file_path, "rb") as f:
+            files = {"document": f}
+            data = {"chat_id": chat_id, "caption": caption, "parse_mode": "HTML"}
+            response = requests.post(url, data=data, files=files, timeout=60)
+            response.raise_for_status()
+            logger.info(f"Successfully sent Telegram document: {file_path}")
+    except Exception as e:
+        logger.error(f"Failed to send Telegram document: {e}")
+
 def is_last_thursday(d: date) -> bool:
     """Returns True if the given date is the last Thursday of the month."""
     return d.weekday() == 3 and (d + timedelta(days=7)).month != d.month
@@ -229,6 +252,44 @@ def generate_live_signals():
             )
         tg_msg += "\n"
         
+    # Run VisuQuant Deep Analysis Pipeline for BUY candidates
+    visuquant_reports = []
+    if not buy_df.empty:
+        logger.info(f"Running VisuQuant AI Pipeline on {len(buy_df)} F&O candidate(s)...")
+        try:
+            from src.workflow.graph import build_graph
+            from src.reporting.storage import persist_pipeline_results
+            import time
+            
+            app_graph = build_graph()
+            today_str = today.strftime("%Y-%m-%d")
+            
+            for _, row in buy_df.iterrows():
+                symbol = row["Symbol"]
+                logger.info(f">>> Invoking VisuQuant Graph for {symbol} <<<")
+                try:
+                    t0 = time.time()
+                    payload = {"ticker": symbol, "as_of_date": today_str}
+                    final_state = app_graph.invoke(payload)
+                    t1 = time.time()
+                    
+                    pdf_path = persist_pipeline_results(final_state, t0, t1)
+                    decision_info = final_state.get("decision", {})
+                    confluence_info = final_state.get("confluence_analysis", {})
+                    unified_trend = final_state.get("unified_trend", {})
+                    
+                    meta = {
+                        "decision": decision_info.get("action") or decision_info.get("decision", "ANALYZED"),
+                        "confidence": decision_info.get("confidence", "-"),
+                        "trend": unified_trend.get("direction", "-"),
+                        "score": confluence_info.get("confluence_score", "-")
+                    }
+                    visuquant_reports.append((symbol, pdf_path, meta))
+                except Exception as e:
+                    logger.error(f"VisuQuant analysis failed for {symbol}: {e}")
+        except Exception as e:
+            logger.error(f"Failed to initialize VisuQuant graph: {e}")
+
     tg_msg += "<b>🟢 BUY SIGNALS:</b>\n"
     if buy_df.empty:
         if slots_available <= 0:
@@ -236,16 +297,32 @@ def generate_live_signals():
         else:
             tg_msg += "No signals found.\n"
     else:
+        # Map VisuQuant meta by symbol
+        vq_map = {item[0]: item[2] for item in visuquant_reports}
         for _, row in buy_df.iterrows():
+            sym = row['Symbol']
             tg_msg += (
-                f"• <b>{row['Symbol']}</b> | {row['Action']}\n"
+                f"• <b>{sym}</b> | {row['Action']}\n"
                 f"  Entry Proxy: ₹{row['Entry_Price_Proxy']}\n"
                 f"  Stop Loss: ₹{row['Stop_Loss']}\n"
                 f"  Target: ₹{row['Target']}\n"
-                f"  Risk/Share: ₹{row['Risk_Per_Share']}\n\n"
+                f"  Risk/Share: ₹{row['Risk_Per_Share']}\n"
             )
+            if sym in vq_map:
+                m = vq_map[sym]
+                tg_msg += (
+                    f"  🤖 <b>VisuQuant AI:</b> {m['decision']} (Conf: {m['confidence']})\n"
+                    f"  📊 Trend: {m['trend']} | Confluence: {m['score']}\n"
+                )
+            tg_msg += "\n"
             
     send_telegram_message(tg_msg)
+    
+    # Send PDF reports for analyzed candidates
+    for symbol, pdf_path, meta in visuquant_reports:
+        if pdf_path and os.path.exists(pdf_path):
+            caption = f"📄 <b>VisuQuant Report: {symbol}</b>\nVerdict: <b>{meta.get('decision', 'ANALYZED')}</b>"
+            send_telegram_document(pdf_path, caption=caption)
     
 if __name__ == "__main__":
     generate_live_signals()

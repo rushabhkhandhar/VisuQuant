@@ -13,6 +13,8 @@ from src.workflow.state import TradingState
 from src.data.scraper import fetch_nse_data
 from src.data.nse_fetcher import fetch_bulk_history
 
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5vl:3b")
+
 def node_capture_chart(state: TradingState) -> dict:
     ticker = state["ticker"]
     as_of_date = state.get("as_of_date")
@@ -102,6 +104,35 @@ def node_capture_chart(state: TradingState) -> dict:
                     print(f"[{ticker}] Failed to capture chart from {url}: {e}")
                     
             browser.close()
+                
+        if not b64_image:
+            print(f"[{ticker}] Playwright live capture unavailable or failed. Falling back to mplfinance...")
+            try:
+                outputs_dir = os.path.join(os.path.dirname(__file__), '../../outputs')
+                os.makedirs(outputs_dir, exist_ok=True)
+                chart_path = os.path.join(outputs_dir, f"{ticker}_fallback_chart.png")
+                bulk_data = fetch_bulk_history([ticker], datetime.today().date(), lookback_days=300)
+                df = bulk_data.get(ticker)
+                if df is not None and not df.empty:
+                    plot_df = df.tail(150).copy()
+                    plot_df.index.name = 'Date'
+                    mc = mpf.make_marketcolors(up='#00ff88', down='#ff3366', edge='inherit', wick='inherit', volume='in')
+                    s = mpf.make_mpf_style(marketcolors=mc, gridstyle=':', y_on_right=True, base_mpf_style='nightclouds')
+                    apdict = []
+                    if len(df) >= 50:
+                        plot_df['SMA50'] = plot_df['Close'].rolling(50, min_periods=1).mean()
+                        apdict.append(mpf.make_addplot(plot_df['SMA50'], color='#00eeff', width=1.5))
+                    if len(df) >= 200:
+                        plot_df['SMA200'] = plot_df['Close'].rolling(200, min_periods=1).mean()
+                        apdict.append(mpf.make_addplot(plot_df['SMA200'], color='#ffaa00', width=2.0))
+                    mpf.plot(plot_df, type='candle', style=s, volume=True, addplot=apdict, 
+                             title=f"{ticker} Live Fallback", 
+                             savefig=dict(fname=chart_path, dpi=150, bbox_inches='tight'))
+                    with open(chart_path, "rb") as image_file:
+                        b64_image = base64.b64encode(image_file.read()).decode('utf-8')
+                    print(f"[{ticker}] Fallback chart generated successfully.")
+            except Exception as e:
+                print(f"[{ticker}] Fallback chart generation failed: {e}")
                 
         return {"chart_image_base64": b64_image}
 
@@ -268,7 +299,7 @@ def node_vision_analysis(state: TradingState) -> dict:
     # Try up to 2 times to get valid JSON
     for attempt in range(2):
         response = ollama.chat(
-            model='qwen2.5vl:7b',
+            model=OLLAMA_MODEL,
             messages=[{
                 'role': 'user',
                 'content': prompt,
@@ -569,7 +600,7 @@ def node_confluence_engine(state: TradingState) -> dict:
     for attempt in range(2):
         try:
             response = ollama.chat(
-                model='qwen2.5vl:7b',
+                model=OLLAMA_MODEL,
                 messages=[{
                     'role': 'user',
                     'content': prompt
@@ -788,7 +819,7 @@ def node_decision_engine(state: TradingState) -> dict:
     
     for attempt in range(2):
         response = ollama.chat(
-            model='qwen2.5vl:7b',
+            model=OLLAMA_MODEL,
             messages=[{
                 'role': 'user',
                 'content': prompt
@@ -1190,7 +1221,7 @@ def node_report_generator(state: TradingState) -> dict:
     for attempt in range(2):
         try:
             response = ollama.chat(
-                model='qwen2.5vl:7b',
+                model=OLLAMA_MODEL,
                 messages=[{
                     'role': 'user',
                     'content': prompt
