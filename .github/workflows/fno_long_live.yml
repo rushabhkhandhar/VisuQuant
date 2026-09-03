@@ -56,7 +56,9 @@ jobs:
         run: |
           curl -fsSL https://ollama.com/install.sh | sh
           ollama serve &
-          sleep 5
+          for i in {1..30}; do
+            curl -s http://localhost:11434 && break || sleep 1
+          done
           ollama pull qwen2.5vl:3b
 
       - name: Run F&O Long Live Signals
