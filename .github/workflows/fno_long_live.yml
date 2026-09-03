@@ -2,9 +2,9 @@ name: F&O Long Strategy - Live Signals (3:15 PM)
 
 on:
   schedule:
-    # 14:20 UTC is 19:50 (7:50 PM) IST (TESTING)
+    # 09:47 UTC is 15:17 (3:17 PM) IST
     # Runs Monday through Friday
-    - cron: '20 14 * * 1-5'
+    - cron: '47 9 * * 1-5'
   workflow_dispatch: # Allows you to run this manually from the Actions tab
 
 jobs:
