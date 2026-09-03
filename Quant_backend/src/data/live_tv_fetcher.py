@@ -186,8 +186,12 @@ class LiveTVFetcher:
         # Save updated cache to disk
         if needs_save and results:
             try:
+                # Merge existing cache with newly fetched symbols so the full universe is always preserved!
+                all_to_save = dict(cached_dict)
+                all_to_save.update(results)
+                
                 records = []
-                for sym, df in results.items():
+                for sym, df in all_to_save.items():
                     df_copy = df.copy()
                     if not isinstance(df_copy.index, pd.DatetimeIndex):
                         if 'Date' in df_copy.columns:
@@ -201,7 +205,7 @@ class LiveTVFetcher:
                     full_df = pd.concat(records, ignore_index=True)
                     try:
                         full_df.to_parquet(cache_file, compression='snappy')
-                        logger.info(f"Persisted updated incremental cache to {cache_file} ({len(results)} symbols).")
+                        logger.info(f"Persisted updated incremental cache to {cache_file} ({len(all_to_save)} symbols).")
                     except Exception as pe:
                         logger.warning(f"Parquet save skipped ({pe}). Saving gz backup...")
                     gz_file = cache_file.replace(".parquet", ".csv.gz")
