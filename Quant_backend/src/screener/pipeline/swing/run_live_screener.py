@@ -266,7 +266,7 @@ def main():
     symbols.append("NIFTYBEES")
     
     fetcher = get_tv_fetcher()
-    bulk_data = fetcher.fetch_bulk_live(symbols, n_bars=220, max_workers=10)
+    bulk_data = fetcher.fetch_bulk_live_cached(symbols, n_bars=220)
     
     if "NIFTYBEES" not in bulk_data:
         logger.error("Failed to fetch NIFTYBEES for benchmark. Exiting.")

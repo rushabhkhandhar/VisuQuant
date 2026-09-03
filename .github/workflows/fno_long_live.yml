@@ -97,6 +97,7 @@ jobs:
           
           # Only commit files in the F&O output directory if they changed
           git add Quant_backend/src/screener/pipeline/fno/strategies/long/output/
+          git pull --rebase origin main
           
           # Commit only if there are changes
           git diff --staged --quiet || git commit -m "chore: update F&O long ledger and daily signals [skip ci]"
