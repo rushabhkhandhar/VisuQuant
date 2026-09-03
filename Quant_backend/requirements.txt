@@ -21,3 +21,4 @@ PyPortfolioOpt==1.5.5
 xhtml2pdf
 jinja2
 json_repair
+pyarrow

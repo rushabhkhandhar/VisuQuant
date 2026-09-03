@@ -113,20 +113,31 @@ class LiveTVFetcher:
             cache_file = os.path.join(cache_dir, "nifty500_history.parquet")
 
         cached_dict = {}
+        cached_all = None
         if os.path.exists(cache_file):
             try:
                 cached_all = pd.read_parquet(cache_file)
-                if 'Symbol' in cached_all.columns:
-                    for sym, group in cached_all.groupby('Symbol'):
-                        df_sym = group.drop(columns=['Symbol'])
-                        if not isinstance(df_sym.index, pd.DatetimeIndex):
-                            if 'Date' in df_sym.columns:
-                                df_sym['Date'] = pd.to_datetime(df_sym['Date'])
-                                df_sym = df_sym.set_index('Date')
-                        cached_dict[sym] = df_sym.sort_index()
-                logger.info(f"Loaded existing market data cache from {cache_file} ({len(cached_dict)} symbols).")
             except Exception as e:
-                logger.warning(f"Could not load existing parquet cache ({e}). Starting fresh.")
+                logger.warning(f"Could not load parquet cache ({e}). Trying gz backup...")
+        
+        gz_file = cache_file.replace(".parquet", ".csv.gz")
+        if cached_all is None and os.path.exists(gz_file):
+            try:
+                cached_all = pd.read_csv(gz_file)
+                logger.info(f"Loaded existing market data cache from GZ backup {gz_file}.")
+            except Exception as e:
+                logger.warning(f"Could not load GZ backup ({e}). Starting fresh.")
+
+        if cached_all is not None and not cached_all.empty:
+            if 'Symbol' in cached_all.columns:
+                for sym, group in cached_all.groupby('Symbol'):
+                    df_sym = group.drop(columns=['Symbol'])
+                    if not isinstance(df_sym.index, pd.DatetimeIndex):
+                        if 'Date' in df_sym.columns:
+                            df_sym['Date'] = pd.to_datetime(df_sym['Date'])
+                            df_sym = df_sym.set_index('Date')
+                    cached_dict[sym] = df_sym.sort_index()
+            logger.info(f"Loaded {len(cached_dict)} symbols from existing market data cache.")
 
         results = {}
         total = len(symbols)
@@ -188,8 +199,13 @@ class LiveTVFetcher:
                     records.append(df_copy)
                 if records:
                     full_df = pd.concat(records, ignore_index=True)
-                    full_df.to_parquet(cache_file, compression='snappy')
-                    logger.info(f"Persisted updated incremental cache to {cache_file} ({len(results)} symbols).")
+                    try:
+                        full_df.to_parquet(cache_file, compression='snappy')
+                        logger.info(f"Persisted updated incremental cache to {cache_file} ({len(results)} symbols).")
+                    except Exception as pe:
+                        logger.warning(f"Parquet save skipped ({pe}). Saving gz backup...")
+                    gz_file = cache_file.replace(".parquet", ".csv.gz")
+                    full_df.to_csv(gz_file, index=False, compression='gzip')
             except Exception as e:
                 logger.warning(f"Failed to persist cache to {cache_file}: {e}")
 
