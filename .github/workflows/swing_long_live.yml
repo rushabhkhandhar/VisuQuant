@@ -2,8 +2,8 @@ name: Swing Strategy - Live Signals & Portfolio Updates
 
 on:
   schedule:
-    # 09:45 UTC is 15:15 (3:15 PM) IST (BUY Signals)
-    - cron: '45 9 * * 1-5'
+    # 09:47 UTC is 15:17 (3:17 PM) IST (BUY Signals)
+    - cron: '47 9 * * 1-5'
     # 12:00 UTC is 17:30 (5:30 PM) IST (Portfolio Updates) - DISABLED
     # - cron: '0 12 * * 1-5'
   workflow_dispatch:
@@ -21,7 +21,7 @@ on:
 jobs:
   run-swing-buy-signals:
     if: |
-      (github.event_name == 'schedule' && github.event.schedule == '45 9 * * 1-5') ||
+      github.event_name == 'schedule' ||
       (github.event_name == 'workflow_dispatch' && (github.event.inputs.job_to_run == 'all' || github.event.inputs.job_to_run == 'buy_signals_only'))
     runs-on: ubuntu-latest
     permissions:
