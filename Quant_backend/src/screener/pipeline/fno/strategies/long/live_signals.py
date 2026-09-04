@@ -155,7 +155,7 @@ def generate_live_signals():
     logger.info(f"Fetching REAL-TIME live data from TradingView for {today}...")
     
     fetcher = get_tv_fetcher()
-    cash_data = fetcher.fetch_bulk_live(symbols + ["NIFTY"], n_bars=100, max_workers=10)
+    cash_data = fetcher.fetch_bulk_live_cached(symbols + ["NIFTY"], n_bars=100)
     
     # 1. Check existing open trades
     logger.info("Evaluating existing open portfolio trades...")

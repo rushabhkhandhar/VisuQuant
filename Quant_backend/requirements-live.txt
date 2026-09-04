@@ -1,0 +1,10 @@
+pandas
+numpy
+requests
+python-dotenv
+pyarrow
+yfinance
+git+https://github.com/rongardF/tvdatafeed.git
+TA-Lib
+tabulate
+jinja2
