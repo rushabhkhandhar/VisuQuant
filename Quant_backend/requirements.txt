@@ -22,4 +22,3 @@ xhtml2pdf
 jinja2
 json_repair
 pyarrow
-yfinance

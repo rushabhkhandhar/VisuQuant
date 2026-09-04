@@ -115,9 +115,8 @@ class LiveTVFetcher:
 
     def fetch_bulk_live_cached(self, symbols: List[str], n_bars: int = 220, cache_file: str = None) -> Dict[str, pd.DataFrame]:
         """
-        Incrementally fetch daily candles using a local Parquet cache with fast parallel
-        multi-threaded bulk delta download via yfinance and TradingView fallback.
-        Reduces 500-symbol daily fetch time to ~15-20 seconds.
+        Incrementally fetch daily candles using a local Parquet cache with official NSE
+        Bhavcopy batch loading and TradingView (tvdatafeed) live intraday delta candles.
         """
         if cache_file is None:
             base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -145,6 +144,13 @@ class LiveTVFetcher:
             if 'Symbol' in cached_all.columns:
                 for sym, group in cached_all.groupby('Symbol'):
                     df_sym = group.drop(columns=['Symbol'])
+                    if 'Date' in df_sym.columns and 'datetime' in df_sym.columns:
+                        df_sym['Date'] = df_sym['Date'].fillna(df_sym['datetime'])
+                        df_sym = df_sym.drop(columns=['datetime'])
+                    elif 'datetime' in df_sym.columns and 'Date' not in df_sym.columns:
+                        df_sym = df_sym.rename(columns={'datetime': 'Date'})
+                    if 'Date' in df_sym.columns:
+                        df_sym = df_sym.dropna(subset=['Date'])
                     if not isinstance(df_sym.index, pd.DatetimeIndex):
                         if 'Date' in df_sym.columns:
                             df_sym['Date'] = pd.to_datetime(df_sym['Date'])
@@ -162,82 +168,66 @@ class LiveTVFetcher:
         for sym in symbols:
             cached_df = cached_dict.get(sym)
             if cached_df is not None and not cached_df.empty:
-                max_dt = cached_df.index.max().date()
-                if (today_date - max_dt).days == 0:
-                    results[sym] = cached_df.tail(n_bars)
-                else:
-                    symbols_to_update.append(sym)
-            else:
-                symbols_to_update.append(sym)
+                max_val = cached_df.index.max()
+                if pd.notna(max_val) and hasattr(max_val, 'date'):
+                    max_dt = max_val.date()
+                    if (today_date - max_dt).days == 0:
+                        results[sym] = cached_df.tail(n_bars)
+                        continue
+            symbols_to_update.append(sym)
 
         logger.info(f"Symbols up-to-date today: {len(results)}/{total}. Delta needed for {len(symbols_to_update)} symbols.")
 
-        # 1. Fast parallel bulk delta download via yfinance
+        # 1. Try our native NSE Bhavcopy for today if already published by exchange
         if symbols_to_update:
-            logger.info(f"Parallel fetching live delta for {len(symbols_to_update)} symbols via bulk downloader...")
-            yf_map = {}
-            for s in symbols_to_update:
-                if s == "NIFTY":
-                    yf_map["^NSEI"] = s
-                elif s == "NIFTYBEES":
-                    yf_map["NIFTYBEES.NS"] = s
-                else:
-                    yf_tick = s.replace("_", "-") + ".NS"
-                    yf_map[yf_tick] = s
-
             try:
-                import yfinance as yf
-                yf_tickers = list(yf_map.keys())
-                df_bulk = yf.download(yf_tickers, period="5d", progress=False, threads=True)
-                if df_bulk is not None and not df_bulk.empty:
-                    for yf_tick, sym in yf_map.items():
-                        try:
-                            if isinstance(df_bulk.columns, pd.MultiIndex):
-                                if 'Close' in df_bulk.columns and yf_tick in df_bulk['Close'].columns:
-                                    sub_df = pd.DataFrame({
-                                        'Open': df_bulk['Open'][yf_tick],
-                                        'High': df_bulk['High'][yf_tick],
-                                        'Low': df_bulk['Low'][yf_tick],
-                                        'Close': df_bulk['Close'][yf_tick],
-                                        'Volume': df_bulk['Volume'][yf_tick],
-                                    })
-                                else:
-                                    continue
+                from src.data.nse_fetcher import _download_bhavcopy_for_date
+                bhav_df = _download_bhavcopy_for_date(today_date)
+                if bhav_df is not None and not bhav_df.empty:
+                    logger.info(f"NSE Bhavcopy available for today ({today_date})! Updating symbols from official NSE feed...")
+                    bhav_date_ts = pd.Timestamp(today_date)
+                    still_needed = []
+                    for sym in symbols_to_update:
+                        if sym in bhav_df.index:
+                            row = bhav_df.loc[sym]
+                            candle_df = pd.DataFrame([{
+                                'Open': float(row['OPEN']),
+                                'High': float(row['HIGH']),
+                                'Low': float(row['LOW']),
+                                'Close': float(row['CLOSE']),
+                                'Volume': float(row.get('VOLUME', 0.0)),
+                            }], index=[bhav_date_ts])
+                            cached_df = cached_dict.get(sym)
+                            if cached_df is not None and not cached_df.empty:
+                                combined = pd.concat([cached_df, candle_df])
+                                combined = combined[~combined.index.duplicated(keep='last')].sort_index()
+                                results[sym] = combined.tail(n_bars)
                             else:
-                                sub_df = df_bulk[['Open', 'High', 'Low', 'Close', 'Volume']].copy()
-                            
-                            sub_df = sub_df.dropna(subset=['Close'])
-                            if not sub_df.empty:
-                                sub_df.index = pd.to_datetime(sub_df.index)
-                                if sub_df.index.tz is not None:
-                                    sub_df.index = sub_df.index.tz_localize(None)
-                                
-                                cached_df = cached_dict.get(sym)
-                                if cached_df is not None and not cached_df.empty:
-                                    if cached_df.index.tz is not None:
-                                        cached_df.index = cached_df.index.tz_localize(None)
-                                    combined = pd.concat([cached_df, sub_df])
-                                    combined = combined[~combined.index.duplicated(keep='last')].sort_index()
-                                    results[sym] = combined.tail(n_bars)
-                                else:
-                                    results[sym] = sub_df.tail(n_bars)
-                                needs_save = True
-                        except Exception:
-                            pass
-            except Exception as e:
-                logger.warning(f"Parallel bulk downloader error ({e}). Proceeding to fallback...")
+                                results[sym] = candle_df
+                            needs_save = True
+                        else:
+                            still_needed.append(sym)
+                    symbols_to_update = still_needed
+                    logger.info(f"Updated {len(results)}/{total} symbols directly from NSE Bhavcopy. {len(symbols_to_update)} remaining for live TradingView fetch.")
+            except Exception as ne:
+                logger.debug(f"NSE Bhavcopy check skipped: {ne}")
 
-        # 2. TradingView fallback for any missing symbols
-        missing = [s for s in symbols if s not in results or results[s] is None or results[s].empty]
-        if missing:
-            logger.info(f"Fetching {len(missing)} missing symbol(s) via TradingView fallback...")
-            for sym in missing:
+        # 2. Live intraday market candles via TradingView (tvdatafeed)
+        if symbols_to_update:
+            logger.info(f"Fetching live market candles for {len(symbols_to_update)} symbols using TradingView (tvdatafeed)...")
+            for i, sym in enumerate(symbols_to_update, 1):
+                if i % 50 == 0:
+                    logger.info(f"TradingView progress: {i}/{len(symbols_to_update)} symbols processed...")
+
                 cached_df = cached_dict.get(sym)
                 bars_to_fetch = n_bars
                 if cached_df is not None and not cached_df.empty:
-                    days_gap = (today_date - cached_df.index.max().date()).days
-                    if days_gap <= 7:
-                        bars_to_fetch = max(2, days_gap + 2)
+                    max_val = cached_df.index.max()
+                    if pd.notna(max_val) and hasattr(max_val, 'date'):
+                        days_gap = (today_date - max_val.date()).days
+                        if days_gap <= 7:
+                            bars_to_fetch = max(2, days_gap + 2)
+                
                 new_df = self.fetch_symbol(sym, n_bars=bars_to_fetch)
                 if new_df is not None and not new_df.empty:
                     if cached_df is not None and not cached_df.empty:
@@ -268,6 +258,14 @@ class LiveTVFetcher:
                     df_copy = df_copy.reset_index()
                     if 'index' in df_copy.columns:
                         df_copy = df_copy.rename(columns={'index': 'Date'})
+                    elif 'datetime' in df_copy.columns:
+                        if 'Date' in df_copy.columns:
+                            df_copy['Date'] = df_copy['Date'].fillna(df_copy['datetime'])
+                            df_copy = df_copy.drop(columns=['datetime'])
+                        else:
+                            df_copy = df_copy.rename(columns={'datetime': 'Date'})
+                    if 'Date' in df_copy.columns:
+                        df_copy = df_copy.dropna(subset=['Date'])
                     df_copy['Symbol'] = sym
                     records.append(df_copy)
                 if records:

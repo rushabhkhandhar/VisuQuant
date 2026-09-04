@@ -13,7 +13,7 @@ from src.workflow.state import TradingState
 from src.data.scraper import fetch_nse_data
 from src.data.nse_fetcher import fetch_bulk_history
 
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5vl:3b")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5vl:7b")
 
 def node_capture_chart(state: TradingState) -> dict:
     ticker = state["ticker"]
