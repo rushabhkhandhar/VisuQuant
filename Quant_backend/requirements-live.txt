@@ -8,3 +8,5 @@ git+https://github.com/rongardF/tvdatafeed.git
 TA-Lib
 tabulate
 jinja2
+scikit-learn
+scipy
