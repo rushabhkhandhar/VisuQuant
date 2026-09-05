@@ -376,6 +376,286 @@ def relative_strength_eval(df, nifty_hist=None, sector_hist=None):
         
     return {"passed": True, "score": 1.0, "alpha_score": alpha_score, "trigger_type": "Relative Strength Momentum"}
 
+def pocket_pivot_eval(df, nifty_hist=None, sector_hist=None):
+    """
+    Pocket Pivot Institutional Accumulation:
+    Enters inside a consolidation base before the standard resistance breakout.
+    Triggered when an up-day's volume exceeds the highest down-volume day of the prior 10 days,
+    while price bounces off or consolidates near the 10, 20, or 50 EMA.
+    """
+    if len(df) < 200:
+        return {"passed": False, "reasons": ["Not enough data for 200 SMA"]}
+    if len(df) > 300:
+        df = df.iloc[-300:]
+    
+    # 0. NIFTY REGIME FILTER (Avoid longs when overall market is correcting)
+    if nifty_hist is not None and len(nifty_hist) > 50:
+        nifty_ema50 = nifty_hist['Close'].ewm(span=50, adjust=False).mean().iloc[-1]
+        if nifty_hist['Close'].iloc[-1] < nifty_ema50:
+            return {"passed": False, "reasons": ["Nifty below 50 EMA"]}
+
+    close = df['Close'].iloc[-1]
+    open_p = df['Open'].iloc[-1]
+    high = df['High'].iloc[-1]
+    low = df['Low'].iloc[-1]
+    prev_close = df['Close'].iloc[-2]
+
+    # 1. LONG-TERM TREND: Long-term uptrend intact
+    sma200 = df['Close'].rolling(window=200).mean().iloc[-1]
+    ema50 = df['Close'].ewm(span=50, adjust=False).mean().iloc[-1]
+    ema20 = df['Close'].ewm(span=20, adjust=False).mean().iloc[-1]
+    ema10 = df['Close'].ewm(span=10, adjust=False).mean().iloc[-1]
+
+    if not (close > sma200 and ema50 > sma200):
+        return {"passed": False, "reasons": ["Not long-term bullish (Close > 200 SMA & 50 EMA > 200 SMA)"]}
+
+    # 2. PROXIMITY TO KEY MOVING AVERAGE (Inside consolidation / bounce off support)
+    dist_10 = abs(close - ema10) / ema10
+    dist_20 = abs(close - ema20) / ema20
+    dist_50 = abs(close - ema50) / ema50
+    min_dist = min(dist_10, dist_20, dist_50)
+
+    if min_dist > 0.035:
+        return {"passed": False, "reasons": ["Too far from key moving average (10, 20, or 50 EMA)"]}
+
+    # Not over-extended (>5% above 20 EMA)
+    if close > (ema20 * 1.05):
+        return {"passed": False, "reasons": ["Extended >5% above 20 EMA"]}
+
+    # 3. CONSTRUCTIVE BASE (Consolidating, not in a free fall)
+    low_10d = df['Low'].iloc[-11:-1].min()
+    if low_10d < ema50 * 0.95:
+        return {"passed": False, "reasons": ["Broken down > 5% below 50 EMA in past 10 days"]}
+
+    # 4. CANDLE PRICE ACTION: Must be a constructive up-day
+    candle_range = high - low
+    if candle_range == 0 or close <= prev_close or close < open_p:
+        return {"passed": False, "reasons": ["Not a bullish up day"]}
+    
+    close_strength = (close - low) / candle_range
+    if close_strength < 0.50:
+        return {"passed": False, "reasons": ["Weak close (below candle midpoint)"]}
+
+    # 5. POCKET PIVOT VOLUME SIGNATURE (Core Institutional Accumulation Rule)
+    # Today's volume must exceed the HIGHEST down-volume day in the prior 10 days
+    vol = df['Volume'].iloc[-1]
+    vol_sma20 = df['Volume'].rolling(20).mean().iloc[-2]
+
+    # Find down days in past 10 days (excluding today)
+    past_10_closes = df['Close'].iloc[-11:-1].values
+    past_10_prev_closes = df['Close'].iloc[-12:-2].values
+    past_10_vols = df['Volume'].iloc[-11:-1].values
+
+    down_mask = (past_10_closes < past_10_prev_closes)
+    down_vols = past_10_vols[down_mask]
+
+    highest_down_vol = down_vols.max() if len(down_vols) > 0 else 0
+
+    if vol <= highest_down_vol:
+        return {"passed": False, "reasons": [f"Volume ({vol}) did not exceed max down-volume ({highest_down_vol}) in last 10 days"]}
+
+    if pd.notna(vol_sma20) and vol < (1.1 * vol_sma20):
+        return {"passed": False, "reasons": ["Volume not > 1.1x 20d average"]}
+
+    # 6. RELATIVE STRENGTH vs NIFTY
+    if nifty_hist is not None and len(nifty_hist) >= 40 and len(df) >= 40:
+        n_20 = (nifty_hist['Close'].iloc[-1] / nifty_hist['Close'].iloc[-20]) - 1
+        s_20 = (close / df['Close'].iloc[-21]) - 1
+        if s_20 < n_20:
+            return {"passed": False, "reasons": ["20d return lagging NIFTY"]}
+
+    # 7. MOMENTUM CONFIRMATION (RSI)
+    rsi = talib.RSI(df['Close'], timeperiod=14).iloc[-1]
+    if pd.isna(rsi) or not (45 <= rsi <= 68):
+        return {"passed": False, "reasons": [f"RSI {rsi:.1f} not in (45, 68)"]}
+
+    # Alpha score for ranking: combination of volume expansion + MA proximity + RSI
+    vol_ratio = min(3.0, vol / (highest_down_vol + 1e-5)) / 3.0
+    ma_proximity_score = 1.0 - (min_dist / 0.035)
+    rsi_score = (rsi - 45) / 23.0
+    alpha_score = (vol_ratio * 0.4) + (ma_proximity_score * 0.3) + (rsi_score * 0.3)
+
+    return {"passed": True, "score": 1.0, "alpha_score": alpha_score, "trigger_type": "Pocket Pivot Accumulation"}
+
+def connors_rsi_eval(df, nifty_hist=None, sector_hist=None):
+    """
+    Connors RSI-2 Panic Mean Reversion on Structural Leaders:
+    Buys sharp, short-duration panic pullbacks in high-quality structural uptrends.
+    Triggered when a stock in a long-term uptrend (Close > 200 SMA, 50 EMA > 200 SMA)
+    experiences a 2-period RSI drop below 12 near the 50 EMA.
+    """
+    if len(df) < 200:
+        return {"passed": False, "reasons": ["Not enough data for 200 SMA"]}
+    if len(df) > 300:
+        df = df.iloc[-300:]
+
+    close = df['Close'].iloc[-1]
+    
+    # 1. STRUCTURAL UPTREND: The stock must be a legitimate long-term leader
+    sma200 = df['Close'].rolling(window=200).mean().iloc[-1]
+    ema50 = df['Close'].ewm(span=50, adjust=False).mean().iloc[-1]
+
+    if not (close > sma200 and ema50 > sma200):
+        return {"passed": False, "reasons": ["Not long-term bullish (Close > 200 SMA & 50 EMA > 200 SMA)"]}
+
+    # 2. 200 SMA MUST BE FLAT OR RISING (Avoid declining structural trends)
+    sma200_20d_ago = df['Close'].rolling(window=200).mean().iloc[-20]
+    if sma200 < sma200_20d_ago * 0.995:
+        return {"passed": False, "reasons": ["200 SMA is sloping downward"]}
+
+    # 3. PANIC PULLBACK (RSI-2 < 12)
+    rsi2 = talib.RSI(df['Close'], timeperiod=2).iloc[-1]
+    if pd.isna(rsi2) or rsi2 >= 12:
+        return {"passed": False, "reasons": [f"RSI(2) {rsi2:.1f} not oversold (<12)"]}
+
+    # 4. SUPPORT PROXIMITY: Must be within 5% of 50 EMA (not crashing into oblivion)
+    dist_50 = (close - ema50) / ema50
+    if dist_50 < -0.05:
+        return {"passed": False, "reasons": ["Broken too far below 50 EMA (<-5%)"]}
+
+    # 5. VOLATILITY CHECK: Reasonable daily ATR
+    atr = talib.ATR(df['High'], df['Low'], df['Close'], timeperiod=14).iloc[-1]
+    if pd.isna(atr) or (atr / close) > 0.06:
+        return {"passed": False, "reasons": ["Extreme volatility (ATR > 6%)"]}
+
+    # Alpha score: Lower RSI(2) + Closer to 50 EMA support = higher priority
+    rsi_score = max(0.0, (12.0 - rsi2) / 12.0)
+    support_score = max(0.0, 1.0 - (abs(dist_50) / 0.05))
+    alpha_score = (rsi_score * 0.6) + (support_score * 0.4)
+
+    return {"passed": True, "score": 1.0, "alpha_score": alpha_score, "trigger_type": "Connors RSI-2 Dip"}
+
+def ttm_squeeze_eval(df, nifty_hist=None, sector_hist=None):
+    """
+    TTM Squeeze Volatility Explosion:
+    Identifies extreme volatility coils using Bollinger Bands inside Keltner Channels.
+    Triggers when the squeeze fires out into an explosive expansion with volume confirmation.
+    """
+    if len(df) < 200:
+        return {"passed": False, "reasons": ["Not enough data for 200 SMA"]}
+    if len(df) > 300:
+        df = df.iloc[-300:]
+
+    close = df['Close'].iloc[-1]
+
+    # 1. TREND FILTER: Must be in a bull trend
+    sma200 = df['Close'].rolling(window=200).mean().iloc[-1]
+    ema50 = df['Close'].ewm(span=50, adjust=False).mean().iloc[-1]
+    ema20 = df['Close'].ewm(span=20, adjust=False).mean()
+
+    if not (close > sma200 and ema50 > sma200 and close > ema20.iloc[-1]):
+        return {"passed": False, "reasons": ["Trend conditions not met (Close > 200 & 50 > 200 & Close > 20 EMA)"]}
+
+    # 2. BOLLINGER BANDS (20, 2.0)
+    upper_bb, mid_bb, lower_bb = talib.BBANDS(df['Close'], timeperiod=20, nbdevup=2.0, nbdevdn=2.0, matype=0)
+
+    # 3. KELTNER CHANNELS (20 EMA +/- 1.5 ATR)
+    atr = talib.ATR(df['High'], df['Low'], df['Close'], timeperiod=14)
+    upper_kc = ema20 + (1.5 * atr)
+    lower_kc = ema20 - (1.5 * atr)
+
+    # 4. SQUEEZE DETECTION: In squeeze if BB is inside KC
+    # Check if a squeeze existed in the last 10 days (excluding today)
+    squeeze_condition = (lower_bb.iloc[-11:-1] > lower_kc.iloc[-11:-1]) & (upper_bb.iloc[-11:-1] < upper_kc.iloc[-11:-1])
+    recent_squeeze_count = squeeze_condition.sum()
+
+    if recent_squeeze_count < 3:
+        return {"passed": False, "reasons": ["No recent volatility squeeze (BB inside KC for >=3 days)"]}
+
+    # 5. SQUEEZE FIRING OUT TODAY: Upper BB expanding out of KC or close breaking above upper BB
+    is_firing = (upper_bb.iloc[-1] >= upper_kc.iloc[-1]) or (close >= upper_bb.iloc[-2])
+    if not is_firing:
+        return {"passed": False, "reasons": ["Squeeze has not fired out"]}
+
+    # 6. MOMENTUM HISTOGRAM CONFIRMATION
+    macd, macdsignal, macdhist = talib.MACD(df['Close'], fastperiod=12, slowperiod=26, signalperiod=9)
+    if pd.isna(macdhist.iloc[-1]) or macdhist.iloc[-1] <= 0:
+        return {"passed": False, "reasons": ["MACD histogram not positive"]}
+    if len(macdhist) >= 2 and macdhist.iloc[-1] < macdhist.iloc[-2]:
+        return {"passed": False, "reasons": ["MACD histogram not expanding"]}
+
+    # 7. VOLUME CONFIRMATION: Volume >= 1.25x 20-day average
+    vol = df['Volume'].iloc[-1]
+    vol_sma20 = df['Volume'].rolling(20).mean().iloc[-2]
+    if pd.notna(vol_sma20) and vol < (1.25 * vol_sma20):
+        return {"passed": False, "reasons": ["Volume < 1.25x average"]}
+
+    # Not over-extended (>5% above upper KC)
+    if close > (upper_kc.iloc[-1] * 1.05):
+        return {"passed": False, "reasons": ["Overextended >5% above Keltner Channel"]}
+
+    alpha_score = min(2.5, vol / (vol_sma20 + 1e-5)) / 2.5
+    return {"passed": True, "score": 1.0, "alpha_score": alpha_score, "trigger_type": "TTM Squeeze Firing"}
+
+def sector_pullback_eval(df, nifty_hist=None, sector_hist=None):
+    """
+    Dynamic Sector-Relative Pullback:
+    Filters strictly for leading sectors, then buys 20-day EMA pullbacks in top-tier stocks.
+    Eliminates false breakouts by entering at support in winning macro themes.
+    """
+    if len(df) < 200:
+        return {"passed": False, "reasons": ["Not enough data for 200 SMA"]}
+    if len(df) > 300:
+        df = df.iloc[-300:]
+
+    close = df['Close'].iloc[-1]
+    open_p = df['Open'].iloc[-1]
+    low = df['Low'].iloc[-1]
+
+    # 1. SECTOR / MACRO RELATIVE STRENGTH FILTER
+    # If synthetic sector is available, ensure sector is outperforming NIFTY
+    if sector_hist is not None and nifty_hist is not None and len(sector_hist) >= 60 and len(nifty_hist) >= 60:
+        sec_ret20 = (sector_hist['Close'].iloc[-1] / sector_hist['Close'].iloc[-21]) - 1
+        nifty_ret20 = (nifty_hist['Close'].iloc[-1] / nifty_hist['Close'].iloc[-21]) - 1
+        if sec_ret20 < nifty_ret20:
+            return {"passed": False, "reasons": ["Sector underperforming NIFTY (20d)"]}
+    elif nifty_hist is not None and len(nifty_hist) >= 40:
+        # Fallback to stock vs NIFTY if sector is not mapped
+        stock_ret20 = (close / df['Close'].iloc[-21]) - 1
+        nifty_ret20 = (nifty_hist['Close'].iloc[-1] / nifty_hist['Close'].iloc[-21]) - 1
+        if stock_ret20 < nifty_ret20:
+            return {"passed": False, "reasons": ["Stock underperforming NIFTY (20d)"]}
+
+    # 2. STRUCTURAL TREND: Clear Bullish Alignment
+    sma200 = df['Close'].rolling(window=200).mean().iloc[-1]
+    ema50 = df['Close'].ewm(span=50, adjust=False).mean().iloc[-1]
+    ema20 = df['Close'].ewm(span=20, adjust=False).mean().iloc[-1]
+
+    if not (close > sma200 and ema50 > sma200 and ema20 > ema50):
+        return {"passed": False, "reasons": ["MAs not aligned (Close > 200, 50 > 200, 20 > 50)"]}
+
+    # 3. CONTROLLED PULLBACK TO 20 EMA
+    dist_20 = abs(close - ema20) / ema20
+    if dist_20 > 0.025:
+        return {"passed": False, "reasons": ["Not near 20 EMA support (within 2.5%)"]}
+
+    # Did today or yesterday touch/test the 20 EMA?
+    low_yesterday = df['Low'].iloc[-2]
+    if low > ema20 * 1.015 and low_yesterday > ema20 * 1.015:
+        return {"passed": False, "reasons": ["Did not test 20 EMA support"]}
+
+    # 4. BULLISH CANDLE CONFIRMATION (Reversal off support)
+    prev_close = df['Close'].iloc[-2]
+    if close < open_p or close < prev_close:
+        return {"passed": False, "reasons": ["Not a green bounce candle"]}
+
+    # 5. HEALTHY RSI: Between 46 and 62 (healthy pullback zone)
+    rsi = talib.RSI(df['Close'], timeperiod=14).iloc[-1]
+    if pd.isna(rsi) or not (46 <= rsi <= 62):
+        return {"passed": False, "reasons": [f"RSI {rsi:.1f} not in healthy pullback zone (46-62)"]}
+
+    # 6. VOLUME SUPPORT
+    vol = df['Volume'].iloc[-1]
+    vol_sma20 = df['Volume'].rolling(20).mean().iloc[-2]
+    if pd.notna(vol_sma20) and vol < (0.85 * vol_sma20):
+        return {"passed": False, "reasons": ["Volume too dry on bounce (<0.85x average)"]}
+
+    proximity_score = 1.0 - (dist_20 / 0.025)
+    rsi_score = (62.0 - rsi) / 16.0  # Deeper pullback = higher score
+    alpha_score = (proximity_score * 0.5) + (rsi_score * 0.5)
+
+    return {"passed": True, "score": 1.0, "alpha_score": alpha_score, "trigger_type": "Sector Relative Pullback"}
+
 # Define strategies here.
 STRATEGIES = [
     {
@@ -481,6 +761,7 @@ def record_live_signals(trades, signals, signal_timestamp):
         if duplicate:
             continue
         entry_price = float(signal["entry_price"])
+        strat_prefix = signal["strategy_name"].split("-")[0]
         trades.append({
             "trade_id": str(uuid.uuid4()),
             "strategy_name": signal["strategy_name"],
@@ -495,7 +776,7 @@ def record_live_signals(trades, signals, signal_timestamp):
             "risk_pct": signal["risk_pct"],
             "alpha_score": signal["alpha_score"],
             "regime_state": signal["regime_state"],
-            "entry_regime": f"E12_STATE_{signal['regime_state']}",
+            "entry_regime": f"{strat_prefix}_STATE_{signal['regime_state']}",
             "bcr": signal["bcr"],
             "breadth": signal["breadth"],
             "status": "OPEN",
@@ -505,7 +786,7 @@ def record_live_signals(trades, signals, signal_timestamp):
             "pnl_pct": None,
         })
         added += 1
-    logger.info("Recorded %s exact 3:15 PM E12 signals for %s.", added, signal_date)
+    logger.info("Recorded %s exact 3:15 PM %s signals for %s.", added, strat_prefix if added > 0 else "live", signal_date)
     return trades
 
 def get_market_regime(as_of_date):
@@ -904,17 +1185,17 @@ def main():
     # 6. Continuous Portfolio Tracking & Optimization
     date_str = as_of_date.strftime("%Y-%m-%d")
     
-    e12_candidates = [
+    e13_candidates = [
         trade for trade in trades
         if trade.get("entry_date") == date_str
         and trade.get("status") == "OPEN"
-        and trade.get("strategy_name", "").startswith("E12-")
+        and (trade.get("strategy_name", "").startswith("E13-") or trade.get("strategy_name", "").startswith("E12-"))
     ]
     try:
         from src.screener.portfolio.portfolio_tracker import step_portfolio
-        step_portfolio(e12_candidates, as_of_date, strategy_name="E12_Three_State")
+        step_portfolio(e13_candidates, as_of_date, strategy_name="E13_Sector_Pullback")
     except Exception as e:
-        logger.error(f"Error during portfolio tracking/optimization for E12_Three_State: {e}")
+        logger.error(f"Error during portfolio tracking/optimization for E13_Sector_Pullback: {e}")
         
     # Format and send Telegram Message
     tg_msg = f"<b>📊 Swing Portfolio Update (5:30 PM): {date_str} 📊</b>\n\n"

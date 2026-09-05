@@ -17,7 +17,11 @@ from src.screener.pipeline.swing.run_front_test import (
     momentum_breakout_eval,
     oversold_uptrend_eval,
     volatility_compression_eval,
-    relative_strength_eval
+    relative_strength_eval,
+    pocket_pivot_eval,
+    connors_rsi_eval,
+    ttm_squeeze_eval,
+    sector_pullback_eval
 )
 from src.screener.pipeline.swing.e12_strategy import (
     BCR_THRESHOLD, BREADTH_THRESHOLD, MAX_CONFIRMED_SIGNALS, MAX_PRIMARY_SIGNALS,
@@ -27,18 +31,17 @@ from src.screener.pipeline.swing.e12_strategy import (
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-INITIAL_CAPITAL = 5_00_000.0  #   This does NOT affect architectural backtests (E4/A1/E11 etc).
+INITIAL_CAPITAL = 1_00_000.0  #   This does NOT affect architectural backtests (E4/A1/E11 etc).
                               # Architectural backtests use a hardcoded 5L in run_architectural_backtest().
 MAX_WEIGHT_PER_TRADE = 0.20  # Max 20% of total equity per trade
 FRICTION_PCT = 0.0015  # 0.15% cost per trade leg
 HOLDOUT_START = pd.Timestamp("2024-08-25")
 
 STRATEGIES = [
-    # {"name": "Trend Pullback", "func": trend_pullback_eval, "risk_atr": 1.5, "reward_atr": 3.0},
-    {"name": "Momentum Breakout", "func": momentum_breakout_eval, "risk_atr": 2.0, "reward_atr": 4.0},
-    # {"name": "Oversold Uptrend", "func": oversold_uptrend_eval, "risk_atr": 2.0, "reward_atr": 4.0},
-    {"name": "Volatility Compression", "func": volatility_compression_eval, "risk_atr": 1.0, "reward_atr": 3.0},
-    {"name": "Relative Strength", "func": relative_strength_eval, "risk_atr": 2.0, "reward_atr": 4.0},
+    # All standalone strategies paused to focus strictly on architectural candidates:
+    # {"name": "Connors RSI-2 Dip", "func": connors_rsi_eval, "risk_atr": 1.5, "reward_atr": 3.0},
+    # {"name": "TTM Squeeze", "func": ttm_squeeze_eval, "risk_atr": 1.0, "reward_atr": 3.0},
+    # {"name": "Sector Relative Pullback", "func": sector_pullback_eval, "risk_atr": 1.5, "reward_atr": 3.5},
 ]
 
 def calculate_metrics(daily_equity, trades):
@@ -284,13 +287,15 @@ def run_strategy_backtest(strategy, test_dates, bulk_data, industry_mapping=None
                                 "symbol": sym,
                                 "price": close,
                                 "stop_loss": close - (atr * strategy['risk_atr']),
-                                "target": close + (atr * strategy['reward_atr'])
+                                "target": close + (atr * strategy['reward_atr']),
+                                "alpha_score": res.get("alpha_score", 0.0)
                             })
                 except Exception as e:
                     pass # Skip if eval fails
                     
-        # 3. Allocate Cash (MOC entry at Close price)
+        # 3. Allocate Cash (MOC entry at Close price, prioritizing highest alpha)
         if new_candidates:
+            new_candidates.sort(key=lambda x: x.get("alpha_score", 0.0), reverse=True)
             total_equity = cash + sum(p['shares'] * p['current_price'] for p in open_positions.values())
             max_alloc_per_trade = total_equity * MAX_WEIGHT_PER_TRADE
             
@@ -325,6 +330,9 @@ def run_strategy_backtest(strategy, test_dates, bulk_data, industry_mapping=None
         
     metrics = calculate_metrics(daily_equity_curve, trades_log)
     metrics["Strategy"] = strategy["name"]
+    nifty_full = bulk_data.get("NIFTYBEES")
+    regime_metrics = calculate_regime_metrics(trades_log, nifty_full)
+    metrics.update(regime_metrics)
     return metrics, daily_equity_curve, trades_log
 
 
@@ -726,6 +734,7 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                     # Architecture Logic
                     sizing_logic = arch_config.get('sizing_logic', 'primary_only')
                     risk_pct = 0.0
+                    is_confirmed = False
                     
                     if sizing_logic == "primary_only":
                         if p_res and p_res.get('passed'): risk_pct = 0.02
@@ -964,14 +973,12 @@ def main():
         synthetic_price = 100 * (1 + avg_returns).cumprod()
         sector_indices[ind] = pd.DataFrame({"Close": synthetic_price})
 
-    # Find strategy definitions
-    rs_strat = next(s for s in STRATEGIES if s["name"] == "Relative Strength")
-    mom_strat = next(s for s in STRATEGIES if s["name"] == "Momentum Breakout")
-    vol_strat = next(s for s in STRATEGIES if s["name"] == "Volatility Compression")
-    
-    # Define mean-reversion strategies for E11/E12
+    # Define strategy components
+    vol_strat = {"name": "Volatility Compression", "func": volatility_compression_eval, "risk_atr": 1.0, "reward_atr": 3.0}
     oversold_strat = {"name": "Oversold Uptrend", "func": oversold_uptrend_eval, "risk_atr": 2.0, "reward_atr": 4.0}
     pullback_strat = {"name": "Trend Pullback", "func": trend_pullback_eval, "risk_atr": 2.0, "reward_atr": 4.0}
+    sector_strat = {"name": "Sector Relative Pullback", "func": sector_pullback_eval, "risk_atr": 1.5, "reward_atr": 3.5}
+    connors_strat = {"name": "Connors RSI-2 Dip", "func": connors_rsi_eval, "risk_atr": 1.5, "reward_atr": 3.0}
     
     ARCHITECTURES = [
         {
@@ -990,6 +997,23 @@ def main():
             "bcr_threshold": BCR_THRESHOLD,
             "cash_preservation": True,
             "breadth_threshold": BREADTH_THRESHOLD
+        },
+        {
+            "name": "E13_Sector_Pullback",
+            "primary": sector_strat,
+            "primary_momentum": sector_strat,
+            "confirmation_momentum": vol_strat,
+            "primary_meanrev": pullback_strat,
+            "confirmation_meanrev": connors_strat,
+            "sizing_logic": "alpha_confirmation",
+            "dynamic_risk_scaling": False,
+            "dd_penalty_factor": 5.0,
+            "friction_pct": 0.0015,
+            "rank_candidates": True,
+            "regime_adaptive": True,
+            "bcr_threshold": BCR_THRESHOLD,
+            "cash_preservation": True,
+            "breadth_threshold": BREADTH_THRESHOLD
         }
     ]
     
@@ -997,36 +1021,42 @@ def main():
     
     from concurrent.futures import ProcessPoolExecutor, as_completed
     
-    logger.info(f"Starting parallel architectural experiments using ProcessPoolExecutor...")
+    tasks = []
+    for s in STRATEGIES:
+        tasks.append({"name": s["name"], "func": run_strategy_backtest, "arg": s})
+    for a in ARCHITECTURES:
+        tasks.append({"name": a["name"], "func": run_architectural_backtest, "arg": a})
+        
+    logger.info(f"Starting parallel backtest experiments for {len(tasks)} strategies using ProcessPoolExecutor...")
     
     futures = {}
-    with ProcessPoolExecutor(max_workers=len(ARCHITECTURES)) as executor:
-        for arch in ARCHITECTURES:
+    with ProcessPoolExecutor(max_workers=min(len(tasks), 8)) as executor:
+        for t in tasks:
             future = executor.submit(
-                run_architectural_backtest, 
-                arch, 
+                t["func"], 
+                t["arg"], 
                 test_dates, 
                 bulk_data, 
                 industry_mapping, 
                 sector_indices
             )
-            futures[future] = arch
+            futures[future] = t
             
         for future in as_completed(futures):
-            arch = futures[future]
+            t = futures[future]
             try:
                 metrics, curve, trades = future.result()
                 results.append(metrics)
-                curves[arch['name']] = curve
+                curves[t['name']] = curve
                 
                 # Save trades log
                 if trades:
                     trades_df = pd.DataFrame(trades)
-                    safe_name = arch['name'].replace(" ", "_").replace(":", "")
+                    safe_name = t['name'].replace(" ", "_").replace(":", "")
                     trades_csv_path = os.path.join(os.path.dirname(tear_sheet_path), f"{safe_name}_backtest_trades.csv")
                     trades_df.to_csv(trades_csv_path, index=False)
             except Exception as e:
-                logger.error(f"Error backtesting {arch['name']}: {e}")
+                logger.error(f"Error backtesting {t['name']}: {e}")
                 import traceback
                 traceback.print_exc()
 
