@@ -38,18 +38,10 @@ FRICTION_PCT = 0.0015  # 0.15% cost per trade leg
 HOLDOUT_START = pd.Timestamp("2024-08-25")
 
 STRATEGIES = [
-    # --- Previously Tested / Paused Strategies ---
-    # {"name": "Trend Pullback", "func": trend_pullback_eval, "risk_atr": 1.5, "reward_atr": 3.0},
-    # {"name": "Momentum Breakout", "func": momentum_breakout_eval, "risk_atr": 2.0, "reward_atr": 4.0},
-    # {"name": "Oversold Uptrend", "func": oversold_uptrend_eval, "risk_atr": 2.0, "reward_atr": 4.0},
-    # {"name": "Volatility Compression", "func": volatility_compression_eval, "risk_atr": 1.0, "reward_atr": 3.0},
-    # {"name": "Relative Strength", "func": relative_strength_eval, "risk_atr": 2.0, "reward_atr": 4.0},
-    # {"name": "Pocket Pivot", "func": pocket_pivot_eval, "risk_atr": 1.5, "reward_atr": 4.5},
-
-    # --- New 2024-2026 Targeted Strategies ---
-    {"name": "Connors RSI-2 Dip", "func": connors_rsi_eval, "risk_atr": 1.5, "reward_atr": 3.0},
-    {"name": "TTM Squeeze", "func": ttm_squeeze_eval, "risk_atr": 1.0, "reward_atr": 3.0},
-    {"name": "Sector Relative Pullback", "func": sector_pullback_eval, "risk_atr": 1.5, "reward_atr": 3.5},
+    # All standalone strategies paused to focus strictly on architectural candidates:
+    # {"name": "Connors RSI-2 Dip", "func": connors_rsi_eval, "risk_atr": 1.5, "reward_atr": 3.0},
+    # {"name": "TTM Squeeze", "func": ttm_squeeze_eval, "risk_atr": 1.0, "reward_atr": 3.0},
+    # {"name": "Sector Relative Pullback", "func": sector_pullback_eval, "risk_atr": 1.5, "reward_atr": 3.5},
 ]
 
 def calculate_metrics(daily_equity, trades):
@@ -742,6 +734,7 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                     # Architecture Logic
                     sizing_logic = arch_config.get('sizing_logic', 'primary_only')
                     risk_pct = 0.0
+                    is_confirmed = False
                     
                     if sizing_logic == "primary_only":
                         if p_res and p_res.get('passed'): risk_pct = 0.02
@@ -980,10 +973,12 @@ def main():
         synthetic_price = 100 * (1 + avg_returns).cumprod()
         sector_indices[ind] = pd.DataFrame({"Close": synthetic_price})
 
-    # Define strategies for E12 benchmark baseline
+    # Define strategy components
     vol_strat = {"name": "Volatility Compression", "func": volatility_compression_eval, "risk_atr": 1.0, "reward_atr": 3.0}
     oversold_strat = {"name": "Oversold Uptrend", "func": oversold_uptrend_eval, "risk_atr": 2.0, "reward_atr": 4.0}
     pullback_strat = {"name": "Trend Pullback", "func": trend_pullback_eval, "risk_atr": 2.0, "reward_atr": 4.0}
+    sector_strat = {"name": "Sector Relative Pullback", "func": sector_pullback_eval, "risk_atr": 1.5, "reward_atr": 3.5}
+    connors_strat = {"name": "Connors RSI-2 Dip", "func": connors_rsi_eval, "risk_atr": 1.5, "reward_atr": 3.0}
     
     ARCHITECTURES = [
         {
@@ -993,6 +988,23 @@ def main():
             "confirmation_momentum": pullback_strat,
             "primary_meanrev": pullback_strat,
             "confirmation_meanrev": oversold_strat,
+            "sizing_logic": "alpha_confirmation",
+            "dynamic_risk_scaling": False,
+            "dd_penalty_factor": 5.0,
+            "friction_pct": 0.0015,
+            "rank_candidates": True,
+            "regime_adaptive": True,
+            "bcr_threshold": BCR_THRESHOLD,
+            "cash_preservation": True,
+            "breadth_threshold": BREADTH_THRESHOLD
+        },
+        {
+            "name": "E13_Sector_Pullback",
+            "primary": sector_strat,
+            "primary_momentum": sector_strat,
+            "confirmation_momentum": vol_strat,
+            "primary_meanrev": pullback_strat,
+            "confirmation_meanrev": connors_strat,
             "sizing_logic": "alpha_confirmation",
             "dynamic_risk_scaling": False,
             "dd_penalty_factor": 5.0,
