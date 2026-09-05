@@ -31,7 +31,7 @@ from src.screener.pipeline.swing.e12_strategy import (
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-INITIAL_CAPITAL = 5_00_000.0  #   This does NOT affect architectural backtests (E4/A1/E11 etc).
+INITIAL_CAPITAL = 1_00_000.0  #   This does NOT affect architectural backtests (E4/A1/E11 etc).
                               # Architectural backtests use a hardcoded 5L in run_architectural_backtest().
 MAX_WEIGHT_PER_TRADE = 0.20  # Max 20% of total equity per trade
 FRICTION_PCT = 0.0015  # 0.15% cost per trade leg

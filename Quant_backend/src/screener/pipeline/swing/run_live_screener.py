@@ -13,22 +13,20 @@ load_dotenv(env_path)
 # Add the project root to sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))))
 
-from src.data.nse_fetcher import load_nifty500_symbols
+from src.data.nse_fetcher import load_nifty500_symbols, load_nifty500_industry_mapping
 from src.data.live_tv_fetcher import get_tv_fetcher
-from src.screener.pipeline.swing.compare_strategies import STRATEGIES
 from src.screener.pipeline.swing.run_front_test import (
     load_state, STATE_FILE, record_live_signals, save_state,
-    relative_strength_eval, momentum_breakout_eval, oversold_uptrend_eval, trend_pullback_eval,
+    sector_pullback_eval, volatility_compression_eval,
+    trend_pullback_eval, connors_rsi_eval,
 )
-from src.screener.pipeline.swing.e12_strategy import generate_e12_signals
+from src.screener.pipeline.swing.e13_strategy import generate_e13_signals, MAX_HOLDING_SESSIONS
 import json
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Filter down to the 3 proven strategies we want to run live
-LIVE_STRATEGY_NAMES = ["Momentum Breakout", "Relative Strength", "Volatility Compression"]
-LIVE_STRATEGIES = [s for s in STRATEGIES if s["name"] in LIVE_STRATEGY_NAMES]
+ACTIVE_STRATEGY_NAME = "E13_Sector_Pullback"
 
 def send_telegram_message(message: str):
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN_SWING")
@@ -127,7 +125,7 @@ def check_open_trades_live(trades, bulk_data):
             else:
                 # Fix 3: Time-stop check for live trades
                 if t.get("status") == "OPEN":
-                    from src.screener.pipeline.swing.e12_strategy import MAX_HOLDING_SESSIONS
+                    from src.screener.pipeline.swing.e13_strategy import MAX_HOLDING_SESSIONS
                     from datetime import datetime
                     import numpy as np
                     
@@ -199,27 +197,29 @@ def compute_live_breadth(bulk_data):
 
 def run_live_strategies(bulk_data, nifty_hist):
     """
-    E11_Three_State regime-adaptive architecture (mirrors compare_strategies.py E11).
+    E13_Sector_Pullback regime-adaptive architecture (mirrors compare_strategies.py E13).
     
-    STATE 1 — TREND (BCR > 52%):         RS Alpha + Momentum Confirmation
-    STATE 2 — MEAN-REVERT (BCR ≤ 52%, breadth ≥ 30%): Oversold Uptrend + Trend Pullback
-    STATE 3 — CASH (BCR ≤ 52%, breadth < 30%):  No new signals
+    STATE 1 — TREND (BCR > 52%):
+        Primary:      Sector Relative Pullback (20 EMA pullback in leading sectors)
+        Confirmation: Volatility Compression (TTM squeeze / Bollinger compression)
+    STATE 2 — MEAN-REVERT (BCR <= 52%, Breadth >= 30%):
+        Primary:      Trend Pullback
+        Confirmation: Connors RSI-2 Dip
+    STATE 3 — CASH PRESERVATION (Breadth < 30%):
+        No new signals.
     
     All regime inputs are backward-looking only. No forward bias.
     """
-    # The canonical generator is also used by the forward-test ledger and the
-    # historical comparator.  Do not add live-only filters here.
-    from src.data.nse_fetcher import load_nifty500_industry_mapping
-    return generate_e12_signals(
+    return generate_e13_signals(
         bulk_data=bulk_data,
         nifty_hist=nifty_hist,
         as_of_date=pd.Timestamp.now(),
         industry_mapping=load_nifty500_industry_mapping(),
         evaluators={
-            "relative_strength": relative_strength_eval,
-            "momentum_breakout": momentum_breakout_eval,
-            "oversold_uptrend": oversold_uptrend_eval,
+            "sector_pullback": sector_pullback_eval,
+            "volatility_compression": volatility_compression_eval,
             "trend_pullback": trend_pullback_eval,
+            "connors_rsi": connors_rsi_eval,
         },
     )
 
@@ -292,12 +292,12 @@ def main():
     # This script is purely for generating live execution signals for the user.
     
     print_terminal_table("SELL SIGNALS (STOP / TARGET HIT)", closed_signals)
-    print_terminal_table("BUY SIGNALS (NEW BREAKOUTS)", buy_signals)
+    print_terminal_table("BUY SIGNALS (E13 SECTOR PULLBACK MOC)", buy_signals)
     
     today = date.today().strftime('%Y-%m-%d')
     
     # Format and send Telegram Message immediately
-    tg_msg = f"<b>📈 Swing Strategy (3:15 PM Update): {today} 📈</b>\n\n"
+    tg_msg = f"<b>📈 E13 Sector Pullback Strategy (3:15 PM Update): {today} 📈</b>\n\n"
     
     tg_msg += "<b>🔴 SELL SIGNALS (STOP / TARGET HIT):</b>\n"
     if not closed_signals:

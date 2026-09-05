@@ -761,6 +761,7 @@ def record_live_signals(trades, signals, signal_timestamp):
         if duplicate:
             continue
         entry_price = float(signal["entry_price"])
+        strat_prefix = signal["strategy_name"].split("-")[0]
         trades.append({
             "trade_id": str(uuid.uuid4()),
             "strategy_name": signal["strategy_name"],
@@ -775,7 +776,7 @@ def record_live_signals(trades, signals, signal_timestamp):
             "risk_pct": signal["risk_pct"],
             "alpha_score": signal["alpha_score"],
             "regime_state": signal["regime_state"],
-            "entry_regime": f"E12_STATE_{signal['regime_state']}",
+            "entry_regime": f"{strat_prefix}_STATE_{signal['regime_state']}",
             "bcr": signal["bcr"],
             "breadth": signal["breadth"],
             "status": "OPEN",
@@ -785,7 +786,7 @@ def record_live_signals(trades, signals, signal_timestamp):
             "pnl_pct": None,
         })
         added += 1
-    logger.info("Recorded %s exact 3:15 PM E12 signals for %s.", added, signal_date)
+    logger.info("Recorded %s exact 3:15 PM %s signals for %s.", added, strat_prefix if added > 0 else "live", signal_date)
     return trades
 
 def get_market_regime(as_of_date):
@@ -1184,17 +1185,17 @@ def main():
     # 6. Continuous Portfolio Tracking & Optimization
     date_str = as_of_date.strftime("%Y-%m-%d")
     
-    e12_candidates = [
+    e13_candidates = [
         trade for trade in trades
         if trade.get("entry_date") == date_str
         and trade.get("status") == "OPEN"
-        and trade.get("strategy_name", "").startswith("E12-")
+        and (trade.get("strategy_name", "").startswith("E13-") or trade.get("strategy_name", "").startswith("E12-"))
     ]
     try:
         from src.screener.portfolio.portfolio_tracker import step_portfolio
-        step_portfolio(e12_candidates, as_of_date, strategy_name="E12_Three_State")
+        step_portfolio(e13_candidates, as_of_date, strategy_name="E13_Sector_Pullback")
     except Exception as e:
-        logger.error(f"Error during portfolio tracking/optimization for E12_Three_State: {e}")
+        logger.error(f"Error during portfolio tracking/optimization for E13_Sector_Pullback: {e}")
         
     # Format and send Telegram Message
     tg_msg = f"<b>📊 Swing Portfolio Update (5:30 PM): {date_str} 📊</b>\n\n"
