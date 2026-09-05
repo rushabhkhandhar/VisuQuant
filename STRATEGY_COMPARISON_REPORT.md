@@ -261,18 +261,56 @@ Depending on whether the mandate prioritizes **Maximum Absolute Wealth** or **Su
 
 ---
 
-## 9. Verification Files in the Project Directory
+---
 
-All raw backtest results, trade logs, and monthly matrices are saved directly in `Quant_backend/front_testing/`:
+## 10. Position Slot Expansion Benchmark (5 vs 6 vs 7 vs 8 Slots)
 
-1. **Overall Tear Sheet**: [`Quant_backend/front_testing/strategy_tear_sheet.csv`](file:///Users/rushabhkhandhar/Desktop/Trading/finvison_tech_analysis/Quant_backend/front_testing/strategy_tear_sheet.csv)
-2. **Monthly Returns Breakdown Matrix**: [`Quant_backend/front_testing/monthly_returns_breakdown.csv`](file:///Users/rushabhkhandhar/Desktop/Trading/finvison_tech_analysis/Quant_backend/front_testing/monthly_returns_breakdown.csv)
-3. **Out-of-Sample Validation Report**: [`Quant_backend/front_testing/validation_report.csv`](file:///Users/rushabhkhandhar/Desktop/Trading/finvison_tech_analysis/Quant_backend/front_testing/validation_report.csv)
-4. **Equity Curves (Daily)**: [`Quant_backend/front_testing/strategy_equity_curves.csv`](file:///Users/rushabhkhandhar/Desktop/Trading/finvison_tech_analysis/Quant_backend/front_testing/strategy_equity_curves.csv)
-5. **E19 Baseline Trades**: [`Quant_backend/front_testing/E19_Baseline_backtest_trades.csv`](file:///Users/rushabhkhandhar/Desktop/Trading/finvison_tech_analysis/Quant_backend/front_testing/E19_Baseline_backtest_trades.csv)
-6. **E19_H1 Trades**: [`Quant_backend/front_testing/E19_H1_Cash_Preservation_Strict_backtest_trades.csv`](file:///Users/rushabhkhandhar/Desktop/Trading/finvison_tech_analysis/Quant_backend/front_testing/E19_H1_Cash_Preservation_Strict_backtest_trades.csv)
-7. **E19_H2 Trades**: [`Quant_backend/front_testing/E19_H2_Nifty_Inverse_Hedge_backtest_trades.csv`](file:///Users/rushabhkhandhar/Desktop/Trading/finvison_tech_analysis/Quant_backend/front_testing/E19_H2_Nifty_Inverse_Hedge_backtest_trades.csv)
-8. **Run Configuration JSON**: [`Quant_backend/front_testing/backtest_run_config.json`](file:///Users/rushabhkhandhar/Desktop/Trading/finvison_tech_analysis/Quant_backend/front_testing/backtest_run_config.json)
+We benchmarked portfolio slot count and position weighting configurations against **`E19_Baseline_5Slots_20Pct`** over the 6-year history (1,551 trading sessions, 2020–2026) with zero look-ahead bias, strict stop-before-target intraday evaluation, and 0.30% round-trip friction:
+
+### 10.1 Full 6-Year Performance Comparison (2020–2026)
+
+| Architecture | Slots | Max Weight / Trade | Overall Profit (₹) | CAGR (%) | Net Monthly Ret (%) | Compounded Monthly Ret (%) | Monthly Win Rate (%) | Monthly Volatility (Std Dev) | Worst Month (%) | Max Drawdown (%) | Sharpe | Calmar Ratio | Trades | Win Rate (%) | Months < -5% |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| 🏆 **`E19_Baseline_5Slots`** | **5** | **20.00%** | **₹6,96,626.35** | **40.10%** | **3.13%** | **2.92%** | 65.28% | 6.06% | **-7.49%** | -15.74% | **2.280** | 2.548 | 383 | **54.57%** | 4 |
+| 🥈 **`E19_S6_Slots_16Pct`** | **6** | **16.67%** | ₹5,51,342.22 | 35.59% | 2.79% | 2.64% | **68.06%** | 5.49% | -8.02% | **-13.64%** | 2.145 | **2.609** | 463 | 52.27% | **2** |
+| 🥉 **`E19_S7_Slots_14Pct`** | **7** | **14.28%** | ₹5,07,164.02 | 34.05% | 2.69% | 2.54% | 65.28% | 5.47% | -8.47% | -13.97% | 2.146 | 2.438 | 550 | 52.00% | 3 |
+| **`E19_S7_H1_Cash_Preserve`** | **7** | **14.28%** | ₹4,60,895.88 | 32.34% | 2.56% | 2.42% | 65.28% | 5.18% | **-7.09%** | -13.88% | 2.091 | 2.330 | 545 | 51.56% | 3 |
+| **`E19_S8_Slots_12Pct`** | **8** | **12.50%** | ₹4,55,291.13 | 32.12% | 2.56% | 2.41% | **68.06%** | **5.03%** | -8.49% | -14.68% | 2.103 | 2.188 | 613 | 52.04% | 3 |
+
+---
+
+### 10.2 Out-of-Sample Holdout Comparison (2024-08-26 to 2026-09-04)
+
+*Frozen parameters across 518 trading days without retuning:*
+
+| Architecture | Slots | Holdout Total Ret (%) | Holdout CAGR (%) | Holdout Net Monthly Ret (%) | Holdout Monthly Win Rate (%) | Holdout Max DD (%) |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| 🏆 **`E19_Baseline_5Slots`** | 5 | **+70.17%** | **30.05%** | **2.28% / mo** | 56.0% | -11.87% |
+| 🥈 **`E19_S6_Slots_16Pct`** | 6 | +53.13% | 23.44% | 1.85% / mo | **64.0%** | **-10.49%** |
+| 🥉 **`E19_S7_Slots_14Pct`** | 7 | +47.06% | 21.00% | 1.65% / mo | **64.0%** | -11.78% |
+| **`E19_S8_Slots_12Pct`** | 8 | +45.73% | 20.46% | 1.55% / mo | **64.0%** | **-11.02%** |
+| **`E19_S7_H1_Cash_Preserve`** | 7 | +36.10% | 16.46% | 1.29% / mo | 60.0% | -13.88% |
+
+---
+
+### 10.3 Empirical Conclusions: Does Expanding to 7–8 Slots Work?
+
+1. **Monthly Return Volatility is Successfully Smoothed**:
+   - Monthly standard deviation dropped from **6.06% (5 slots) down to 5.03% (8 slots)**—a **17.0% reduction in month-to-month variance**.
+   - Out-of-sample monthly win rate increased from **56.0% up to 64.0%** across 6, 7, and 8 slots.
+   - Deep loss months ($< -5\%$) were halved in `E19_S6` from 4 months down to **only 2 months in 6 years**.
+
+2. **The "Candidate Dilution Penalty" at 7 and 8 Slots**:
+   - While 8 slots smooths the curve, CAGR drops from **40.10% down to 32.12%** (-7.98% per year), and total profit drops from ₹6.96L down to ₹4.55L (-₹2.41 Lakhs lower).
+   - **Why?** In the NIFTY 500 universe on any given day, there are rarely 7 or 8 pristine, institutional A+ setups testing their 60-day AVWAP simultaneously. Forcing the strategy to take 7–8 positions forces it into lower-conviction candidates (Rank 6, 7, 8), which drops overall trade win rate from **54.57% down to 52.04%** and increases trade turnover / friction (613 trades vs 383 trades).
+
+3. **`E19_S6_Slots_16Pct` (6 Slots, ~16.67% per trade) is the Optimal Balanced Sweet Spot**:
+   - If a smoother monthly ride is desired:
+     - **Calmar Ratio**: **2.609** (Highest among all slot variations, beating the 5-slot baseline's 2.548!).
+     - **Max Drawdown**: Compressed from **-15.74% down to -13.64%** (and **-10.49% in holdout**).
+     - **CAGR**: Retains an exceptional **35.59% CAGR** (₹5.51 Lakh profit).
+     - **Monthly Win Rate**: **68.06%** with only 2 months worse than -5% over 6 years.
+
 
 
 

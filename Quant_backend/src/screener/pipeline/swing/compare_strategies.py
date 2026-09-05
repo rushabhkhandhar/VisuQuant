@@ -554,7 +554,7 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
     ARCH_STARTING_CAPITAL = arch_config.get("starting_capital", INITIAL_CAPITAL)
     cash = ARCH_STARTING_CAPITAL
     FRICTION_PCT = arch_config.get("friction_pct", 0.0015)
-    MAX_WEIGHT_PER_TRADE = 0.20
+    MAX_WEIGHT_PER_TRADE = arch_config.get("max_weight_per_trade", 0.20)
     open_positions = {}
     daily_equity_curve = []
     trades_log = []
@@ -1187,15 +1187,17 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                             
         # Allocate cash
         if new_candidates:
+            max_conf = arch_config.get("max_confirmed_signals", MAX_CONFIRMED_SIGNALS)
+            max_prim = arch_config.get("max_primary_signals", MAX_PRIMARY_SIGNALS)
             # Rank candidates by RS score or alpha score (best first)
             if arch_config.get("rank_by_rs"):
                 confirmed = sorted((c for c in new_candidates if c["confirmed"]), key=lambda c: (c.get("rs_score", 0.0), c["alpha_score"]), reverse=True)
                 primary = sorted((c for c in new_candidates if not c["confirmed"]), key=lambda c: (c.get("rs_score", 0.0), c["alpha_score"]), reverse=True)
-                new_candidates = confirmed[:MAX_CONFIRMED_SIGNALS] + primary[:MAX_PRIMARY_SIGNALS]
+                new_candidates = confirmed[:max_conf] + primary[:max_prim]
             elif arch_config.get("rank_candidates"):
                 confirmed = sorted((c for c in new_candidates if c["confirmed"]), key=lambda c: c["alpha_score"], reverse=True)
                 primary = sorted((c for c in new_candidates if not c["confirmed"]), key=lambda c: c["alpha_score"], reverse=True)
-                new_candidates = confirmed[:MAX_CONFIRMED_SIGNALS] + primary[:MAX_PRIMARY_SIGNALS]
+                new_candidates = confirmed[:max_conf] + primary[:max_prim]
             
             hedge_equity = 0.0
             if hedge_position is not None and n_curr is not None:
@@ -1433,13 +1435,16 @@ def main():
     
     ARCHITECTURES = [
         {
-            "name": "E19_Baseline",
+            "name": "E19_Baseline_5Slots_20Pct",
             "primary": dual_avwap_strat,
             "primary_momentum": dual_avwap_strat,
             "confirmation_momentum": vol_strat,
             "primary_meanrev": pullback_strat,
             "confirmation_meanrev": connors_strat,
             "sizing_logic": "alpha_confirmation",
+            "max_weight_per_trade": 0.20,
+            "max_confirmed_signals": 5,
+            "max_primary_signals": 3,
             "dynamic_risk_scaling": False,
             "dd_penalty_factor": 5.0,
             "friction_pct": 0.0015,
@@ -1452,13 +1457,82 @@ def main():
             "reward_atr": 4.0
         },
         {
-            "name": "E19_H1_Cash_Preservation_Strict",
+            "name": "E19_S6_Slots_16Pct",
             "primary": dual_avwap_strat,
             "primary_momentum": dual_avwap_strat,
             "confirmation_momentum": vol_strat,
             "primary_meanrev": pullback_strat,
             "confirmation_meanrev": connors_strat,
             "sizing_logic": "alpha_confirmation",
+            "max_weight_per_trade": 1.0 / 6.0,  # ~16.67%
+            "max_confirmed_signals": 6,
+            "max_primary_signals": 4,
+            "dynamic_risk_scaling": False,
+            "dd_penalty_factor": 5.0,
+            "friction_pct": 0.0015,
+            "rank_candidates": True,
+            "regime_adaptive": True,
+            "bcr_threshold": BCR_THRESHOLD,
+            "cash_preservation": True,
+            "breadth_threshold": BREADTH_THRESHOLD,
+            "risk_atr": 2.0,
+            "reward_atr": 4.0
+        },
+        {
+            "name": "E19_S7_Slots_14Pct",
+            "primary": dual_avwap_strat,
+            "primary_momentum": dual_avwap_strat,
+            "confirmation_momentum": vol_strat,
+            "primary_meanrev": pullback_strat,
+            "confirmation_meanrev": connors_strat,
+            "sizing_logic": "alpha_confirmation",
+            "max_weight_per_trade": 1.0 / 7.0,  # ~14.28%
+            "max_confirmed_signals": 7,
+            "max_primary_signals": 4,
+            "dynamic_risk_scaling": False,
+            "dd_penalty_factor": 5.0,
+            "friction_pct": 0.0015,
+            "rank_candidates": True,
+            "regime_adaptive": True,
+            "bcr_threshold": BCR_THRESHOLD,
+            "cash_preservation": True,
+            "breadth_threshold": BREADTH_THRESHOLD,
+            "risk_atr": 2.0,
+            "reward_atr": 4.0
+        },
+        {
+            "name": "E19_S8_Slots_12Pct",
+            "primary": dual_avwap_strat,
+            "primary_momentum": dual_avwap_strat,
+            "confirmation_momentum": vol_strat,
+            "primary_meanrev": pullback_strat,
+            "confirmation_meanrev": connors_strat,
+            "sizing_logic": "alpha_confirmation",
+            "max_weight_per_trade": 1.0 / 8.0,  # 12.50%
+            "max_confirmed_signals": 8,
+            "max_primary_signals": 5,
+            "dynamic_risk_scaling": False,
+            "dd_penalty_factor": 5.0,
+            "friction_pct": 0.0015,
+            "rank_candidates": True,
+            "regime_adaptive": True,
+            "bcr_threshold": BCR_THRESHOLD,
+            "cash_preservation": True,
+            "breadth_threshold": BREADTH_THRESHOLD,
+            "risk_atr": 2.0,
+            "reward_atr": 4.0
+        },
+        {
+            "name": "E19_S7_H1_Cash_Preserve",
+            "primary": dual_avwap_strat,
+            "primary_momentum": dual_avwap_strat,
+            "confirmation_momentum": vol_strat,
+            "primary_meanrev": pullback_strat,
+            "confirmation_meanrev": connors_strat,
+            "sizing_logic": "alpha_confirmation",
+            "max_weight_per_trade": 1.0 / 7.0,  # ~14.28%
+            "max_confirmed_signals": 7,
+            "max_primary_signals": 4,
             "dynamic_risk_scaling": False,
             "dd_penalty_factor": 5.0,
             "friction_pct": 0.0015,
@@ -1471,106 +1545,6 @@ def main():
             "defensive_cash_preservation": True,
             "bear_bcr_threshold": 0.45,
             "bear_breadth_threshold": 0.35,
-            "risk_atr": 2.0,
-            "reward_atr": 4.0
-        },
-        {
-            "name": "E19_H2_Nifty_Inverse_Hedge",
-            "primary": dual_avwap_strat,
-            "primary_momentum": dual_avwap_strat,
-            "confirmation_momentum": vol_strat,
-            "primary_meanrev": pullback_strat,
-            "confirmation_meanrev": connors_strat,
-            "sizing_logic": "alpha_confirmation",
-            "dynamic_risk_scaling": False,
-            "dd_penalty_factor": 5.0,
-            "friction_pct": 0.0015,
-            "rank_candidates": True,
-            "regime_adaptive": True,
-            "bcr_threshold": BCR_THRESHOLD,
-            "cash_preservation": True,
-            "breadth_threshold": BREADTH_THRESHOLD,
-            "block_on_bear_regime": True,
-            "enable_nifty_hedge": True,
-            "hedge_ratio": 0.50,
-            "bear_bcr_threshold": 0.45,
-            "bear_breadth_threshold": 0.35,
-            "unhedge_breadth_threshold": 0.40,
-            "unhedge_bcr_threshold": 0.50,
-            "risk_atr": 2.0,
-            "reward_atr": 4.0
-        },
-        {
-            "name": "E19_H3_Dynamic_Risk_Throttling",
-            "primary": dual_avwap_strat,
-            "primary_momentum": dual_avwap_strat,
-            "confirmation_momentum": vol_strat,
-            "primary_meanrev": pullback_strat,
-            "confirmation_meanrev": connors_strat,
-            "sizing_logic": "alpha_confirmation",
-            "dynamic_risk_scaling": False,
-            "dd_penalty_factor": 5.0,
-            "friction_pct": 0.0015,
-            "rank_candidates": True,
-            "regime_adaptive": True,
-            "bcr_threshold": BCR_THRESHOLD,
-            "cash_preservation": True,
-            "breadth_threshold": BREADTH_THRESHOLD,
-            "block_on_bear_regime": True,
-            "dynamic_bear_risk_throttling": True,
-            "bear_bcr_threshold": 0.45,
-            "bear_breadth_threshold": 0.35,
-            "risk_atr": 2.0,
-            "reward_atr": 4.0
-        },
-        {
-            "name": "E19_H4_Tightened_Stops_Bear",
-            "primary": dual_avwap_strat,
-            "primary_momentum": dual_avwap_strat,
-            "confirmation_momentum": vol_strat,
-            "primary_meanrev": pullback_strat,
-            "confirmation_meanrev": connors_strat,
-            "sizing_logic": "alpha_confirmation",
-            "dynamic_risk_scaling": False,
-            "dd_penalty_factor": 5.0,
-            "friction_pct": 0.0015,
-            "rank_candidates": True,
-            "regime_adaptive": True,
-            "bcr_threshold": BCR_THRESHOLD,
-            "cash_preservation": True,
-            "breadth_threshold": BREADTH_THRESHOLD,
-            "block_on_bear_regime": True,
-            "tighten_stops_on_bear": True,
-            "bear_bcr_threshold": 0.45,
-            "bear_breadth_threshold": 0.35,
-            "risk_atr": 2.0,
-            "reward_atr": 4.0
-        },
-        {
-            "name": "E19_H5_Full_Regime_Shield",
-            "primary": dual_avwap_strat,
-            "primary_momentum": dual_avwap_strat,
-            "confirmation_momentum": vol_strat,
-            "primary_meanrev": pullback_strat,
-            "confirmation_meanrev": connors_strat,
-            "sizing_logic": "alpha_confirmation",
-            "dynamic_risk_scaling": False,
-            "dd_penalty_factor": 5.0,
-            "friction_pct": 0.0015,
-            "rank_candidates": True,
-            "regime_adaptive": True,
-            "bcr_threshold": BCR_THRESHOLD,
-            "cash_preservation": True,
-            "breadth_threshold": BREADTH_THRESHOLD,
-            "block_on_bear_regime": True,
-            "defensive_cash_preservation": True,
-            "enable_nifty_hedge": True,
-            "hedge_ratio": 0.50,
-            "tighten_stops_on_bear": True,
-            "bear_bcr_threshold": 0.45,
-            "bear_breadth_threshold": 0.35,
-            "unhedge_breadth_threshold": 0.40,
-            "unhedge_bcr_threshold": 0.50,
             "risk_atr": 2.0,
             "reward_atr": 4.0
         }
