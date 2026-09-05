@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useTheme } from "./ThemeContext";
 import {
   IconActivity,
@@ -37,6 +37,17 @@ interface CandleData {
   high: number;
   low: number;
   close: number;
+}
+
+interface ChartPayload {
+  status: string;
+  symbol: string;
+  candles: CandleData[];
+  volume: { time: string; value: number; color?: string }[];
+  avwap: { time: string; value: number }[];
+  ema20: { time: string; value: number }[];
+  ema50: { time: string; value: number }[];
+  message?: string;
 }
 
 export default function InteractiveChart({
@@ -100,8 +111,12 @@ export default function InteractiveChart({
     avwap?: number;
   } | null>(null);
 
+  // Chart References & Lifecycle Guards
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
+  const isDisposedRef = useRef<boolean>(false);
+  const currentPayloadRef = useRef<ChartPayload | null>(null);
+
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const areaSeriesRef = useRef<ISeriesApi<"Area"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
@@ -120,6 +135,79 @@ export default function InteractiveChart({
     { label: "MTARTECH", sym: "MTARTECH" },
     { label: "HDFCBANK", sym: "HDFCBANK" },
   ];
+
+  // Helper to populate series data safely
+  const applyPayloadToChart = useCallback((payload: ChartPayload) => {
+    if (isDisposedRef.current || !chartRef.current) return;
+    const cSeries = candleSeriesRef.current;
+    const aSeries = areaSeriesRef.current;
+    const vSeries = volumeSeriesRef.current;
+    const avSeries = avwapSeriesRef.current;
+    const e20Series = ema20SeriesRef.current;
+    const e50Series = ema50SeriesRef.current;
+
+    if (!cSeries) return;
+
+    try {
+      if (payload.status === "success" && payload.candles && payload.candles.length > 0) {
+        setChartError(null);
+        cSeries.setData(payload.candles);
+
+        if (aSeries) {
+          const areaData = payload.candles.map((c: CandleData) => ({ time: c.time, value: c.close }));
+          aSeries.setData(areaData);
+        }
+
+        if (vSeries && payload.volume) vSeries.setData(payload.volume);
+        if (avSeries && payload.avwap) avSeries.setData(payload.avwap);
+        if (e20Series && payload.ema20) e20Series.setData(payload.ema20);
+        if (e50Series && payload.ema50) e50Series.setData(payload.ema50);
+
+        chartRef.current.timeScale().fitContent();
+
+        const lastCandle = payload.candles[payload.candles.length - 1];
+        const prevCandle = payload.candles[payload.candles.length - 2] || lastCandle;
+        const ltp = lastCandle.close;
+        const open = lastCandle.open;
+        const high = lastCandle.high;
+        const low = lastCandle.low;
+        const change = ltp - prevCandle.close;
+        const pct = prevCandle.close > 0 ? (change / prevCandle.close) * 100 : 0;
+        const lastVol = payload.volume && payload.volume.length > 0 ? payload.volume[payload.volume.length - 1].value : 0;
+
+        setLatestMetrics({
+          ltp,
+          open,
+          high,
+          low,
+          change,
+          pct,
+          volume: lastVol,
+        });
+      } else {
+        handleError(payload.message || `No market candle data found for "${symbol}".`);
+      }
+    } catch {
+      // Prevent crash if instance was concurrently closed
+    }
+  }, [symbol]);
+
+  const handleError = (msg: string) => {
+    setChartError(msg);
+    if (isDisposedRef.current) return;
+    try {
+      candleSeriesRef.current?.setData([]);
+      areaSeriesRef.current?.setData([]);
+      volumeSeriesRef.current?.setData([]);
+      avwapSeriesRef.current?.setData([]);
+      ema20SeriesRef.current?.setData([]);
+      ema50SeriesRef.current?.setData([]);
+    } catch {
+      // Ignore cleanup on disposed series
+    }
+    setLatestMetrics({ ltp: 0, open: 0, high: 0, low: 0, change: 0, pct: 0, volume: 0 });
+    setHoveredData(null);
+  };
 
   // Sync initialSymbol if parent updates it
   useEffect(() => {
@@ -160,16 +248,17 @@ export default function InteractiveChart({
     return () => clearTimeout(timer);
   }, [customInput]);
 
-  // Initialize & configure lightweight-charts canvas instance
+  // 1. Chart Initialization (MOUNT ONCE ONLY)
   useEffect(() => {
     if (!containerRef.current) return;
 
+    isDisposedRef.current = false;
     const isDark = theme === "dark";
     const container = containerRef.current;
     container.innerHTML = "";
 
     const chart = createChart(container, {
-      width: container.clientWidth,
+      width: container.clientWidth || 800,
       height: isFullscreen ? window.innerHeight - 150 : height,
       layout: {
         background: {
@@ -201,7 +290,7 @@ export default function InteractiveChart({
 
     chartRef.current = chart;
 
-    // 1. Candlestick Series
+    // Series Setup
     const candleSeries = chart.addSeries(CandlestickSeries, {
       upColor: isDark ? "#00ff88" : "#16a34a",
       downColor: isDark ? "#ff3366" : "#dc2626",
@@ -212,7 +301,6 @@ export default function InteractiveChart({
     });
     candleSeriesRef.current = candleSeries;
 
-    // 2. Area Series (Alternate view)
     const areaSeries = chart.addSeries(AreaSeries, {
       topColor: isDark ? "rgba(0, 240, 255, 0.4)" : "rgba(6, 182, 212, 0.3)",
       bottomColor: isDark ? "rgba(0, 240, 255, 0.0)" : "rgba(6, 182, 212, 0.0)",
@@ -222,7 +310,6 @@ export default function InteractiveChart({
     });
     areaSeriesRef.current = areaSeries;
 
-    // 3. Volume Histogram Series
     const volumeSeries = chart.addSeries(HistogramSeries, {
       priceFormat: { type: "volume" },
       priceScaleId: "",
@@ -233,7 +320,6 @@ export default function InteractiveChart({
     });
     volumeSeriesRef.current = volumeSeries;
 
-    // 4. Dual Anchored VWAP Overlay Line
     const avwapSeries = chart.addSeries(LineSeries, {
       color: "#00f0ff",
       lineWidth: 2,
@@ -242,7 +328,6 @@ export default function InteractiveChart({
     });
     avwapSeriesRef.current = avwapSeries;
 
-    // 5. 20 EMA
     const ema20Series = chart.addSeries(LineSeries, {
       color: "#c084fc",
       lineWidth: 1,
@@ -251,7 +336,6 @@ export default function InteractiveChart({
     });
     ema20SeriesRef.current = ema20Series;
 
-    // 6. 50 EMA
     const ema50Series = chart.addSeries(LineSeries, {
       color: "#f59e0b",
       lineWidth: 1,
@@ -260,8 +344,9 @@ export default function InteractiveChart({
     });
     ema50SeriesRef.current = ema50Series;
 
-    // Crosshair hover subscriber for Heads-Up Display (HUD)
+    // Crosshair hover subscriber
     chart.subscribeCrosshairMove((param) => {
+      if (isDisposedRef.current) return;
       if (
         !param.point ||
         !param.time ||
@@ -272,37 +357,47 @@ export default function InteractiveChart({
       ) {
         setHoveredData(null);
       } else {
-        const cData = param.seriesData.get(candleSeries) as any;
-        const vData = param.seriesData.get(volumeSeries) as any;
-        const avData = param.seriesData.get(avwapSeries) as any;
+        try {
+          const cData = param.seriesData.get(candleSeries) as any;
+          const vData = param.seriesData.get(volumeSeries) as any;
+          const avData = param.seriesData.get(avwapSeries) as any;
 
-        if (cData) {
-          setHoveredData({
-            time: String(param.time),
-            open: cData.open ?? cData.value ?? 0,
-            high: cData.high ?? cData.value ?? 0,
-            low: cData.low ?? cData.value ?? 0,
-            close: cData.close ?? cData.value ?? 0,
-            volume: vData ? vData.value : undefined,
-            avwap: avData ? avData.value : undefined,
-          });
+          if (cData) {
+            setHoveredData({
+              time: String(param.time),
+              open: cData.open ?? cData.value ?? 0,
+              high: cData.high ?? cData.value ?? 0,
+              low: cData.low ?? cData.value ?? 0,
+              close: cData.close ?? cData.value ?? 0,
+              volume: vData ? vData.value : undefined,
+              avwap: avData ? avData.value : undefined,
+            });
+          }
+        } catch {
+          // Ignore
         }
       }
     });
 
-    const handleResize = () => {
-      if (container && chart) {
-        chart.applyOptions({
-          width: container.clientWidth,
+    // If data arrived before canvas mounted, render it now!
+    if (currentPayloadRef.current) {
+      applyPayloadToChart(currentPayloadRef.current);
+    }
+
+    // ResizeObserver for continuous responsive layout
+    const ro = new ResizeObserver(() => {
+      if (!isDisposedRef.current && chartRef.current && containerRef.current) {
+        chartRef.current.applyOptions({
+          width: containerRef.current.clientWidth,
           height: isFullscreen ? window.innerHeight - 150 : height,
         });
       }
-    };
-
-    window.addEventListener("resize", handleResize);
+    });
+    ro.observe(container);
 
     return () => {
-      window.removeEventListener("resize", handleResize);
+      isDisposedRef.current = true;
+      ro.disconnect();
       chart.remove();
       chartRef.current = null;
       candleSeriesRef.current = null;
@@ -312,108 +407,106 @@ export default function InteractiveChart({
       ema20SeriesRef.current = null;
       ema50SeriesRef.current = null;
     };
-  }, [theme, isFullscreen, height]);
+  }, []); // Run ONCE on mount
 
-  // Dynamic Series Visibility Updates
+  // 2. Dynamic Theme Updates (Never Recreates Chart)
   useEffect(() => {
-    if (candleSeriesRef.current) candleSeriesRef.current.applyOptions({ visible: chartType === "candles" });
-    if (areaSeriesRef.current) areaSeriesRef.current.applyOptions({ visible: chartType === "area" });
+    if (isDisposedRef.current || !chartRef.current) return;
+    const isDark = theme === "dark";
+    try {
+      chartRef.current.applyOptions({
+        layout: {
+          background: { type: ColorType.Solid, color: isDark ? "#090d16" : "#ffffff" },
+          textColor: isDark ? "#94a3b8" : "#475569",
+        },
+        grid: {
+          vertLines: { color: isDark ? "rgba(255, 255, 255, 0.04)" : "rgba(0, 0, 0, 0.05)" },
+          horzLines: { color: isDark ? "rgba(255, 255, 255, 0.04)" : "rgba(0, 0, 0, 0.05)" },
+        },
+      });
+      candleSeriesRef.current?.applyOptions({
+        upColor: isDark ? "#00ff88" : "#16a34a",
+        downColor: isDark ? "#ff3366" : "#dc2626",
+        wickUpColor: isDark ? "#00ff88" : "#16a34a",
+        wickDownColor: isDark ? "#ff3366" : "#dc2626",
+      });
+      areaSeriesRef.current?.applyOptions({
+        topColor: isDark ? "rgba(0, 240, 255, 0.4)" : "rgba(6, 182, 212, 0.3)",
+        bottomColor: isDark ? "rgba(0, 240, 255, 0.0)" : "rgba(6, 182, 212, 0.0)",
+        lineColor: isDark ? "#00f0ff" : "#0284c7",
+      });
+    } catch {
+      // Ignore
+    }
+  }, [theme]);
+
+  // 3. Smooth Fullscreen / Height Expansion (Never Disposes Chart)
+  useEffect(() => {
+    if (isDisposedRef.current || !chartRef.current || !containerRef.current) return;
+    const targetHeight = isFullscreen ? window.innerHeight - 160 : height;
+
+    const timer = setTimeout(() => {
+      if (!isDisposedRef.current && chartRef.current && containerRef.current) {
+        chartRef.current.applyOptions({
+          width: containerRef.current.clientWidth,
+          height: targetHeight,
+        });
+        chartRef.current.timeScale().fitContent();
+      }
+    }, 50);
+
+    return () => clearTimeout(timer);
+  }, [isFullscreen, height]);
+
+  // 4. Dynamic Visibility Toggles
+  useEffect(() => {
+    if (!isDisposedRef.current) {
+      candleSeriesRef.current?.applyOptions({ visible: chartType === "candles" });
+      areaSeriesRef.current?.applyOptions({ visible: chartType === "area" });
+    }
   }, [chartType]);
 
   useEffect(() => {
-    if (volumeSeriesRef.current) volumeSeriesRef.current.applyOptions({ visible: showVolume });
+    if (!isDisposedRef.current) volumeSeriesRef.current?.applyOptions({ visible: showVolume });
   }, [showVolume]);
 
   useEffect(() => {
-    if (avwapSeriesRef.current) avwapSeriesRef.current.applyOptions({ visible: showAvwap });
+    if (!isDisposedRef.current) avwapSeriesRef.current?.applyOptions({ visible: showAvwap });
   }, [showAvwap]);
 
   useEffect(() => {
-    if (ema20SeriesRef.current) ema20SeriesRef.current.applyOptions({ visible: showEma20 });
+    if (!isDisposedRef.current) ema20SeriesRef.current?.applyOptions({ visible: showEma20 });
   }, [showEma20]);
 
   useEffect(() => {
-    if (ema50SeriesRef.current) ema50SeriesRef.current.applyOptions({ visible: showEma50 });
+    if (!isDisposedRef.current) ema50SeriesRef.current?.applyOptions({ visible: showEma50 });
   }, [showEma50]);
 
-  // Fetch real candle data from backend
+  // 5. Guaranteed Real Candle Data Fetch (Always Runs on Mount & Symbol/Period Change)
   useEffect(() => {
-    const chart = chartRef.current;
-    const cSeries = candleSeriesRef.current;
-    const aSeries = areaSeriesRef.current;
-    const vSeries = volumeSeriesRef.current;
-    const avSeries = avwapSeriesRef.current;
-    const e20Series = ema20SeriesRef.current;
-    const e50Series = ema50SeriesRef.current;
-
-    if (!chart || !cSeries) return;
-
+    let active = true;
     setChartLoading(true);
     setChartError(null);
 
     fetch(`http://localhost:5000/api/chart_data?symbol=${encodeURIComponent(symbol)}&period=${period}`)
       .then((res) => res.json())
-      .then((data) => {
-        if (data.status === "success" && data.candles && data.candles.length > 0) {
-          setChartError(null);
-          cSeries.setData(data.candles);
-
-          if (aSeries) {
-            const areaData = data.candles.map((c: CandleData) => ({ time: c.time, value: c.close }));
-            aSeries.setData(areaData);
-          }
-
-          if (vSeries && data.volume) vSeries.setData(data.volume);
-          if (avSeries && data.avwap) avSeries.setData(data.avwap);
-          if (e20Series && data.ema20) e20Series.setData(data.ema20);
-          if (e50Series && data.ema50) e50Series.setData(data.ema50);
-
-          chart.timeScale().fitContent();
-
-          const lastCandle = data.candles[data.candles.length - 1];
-          const prevCandle = data.candles[data.candles.length - 2] || lastCandle;
-          const ltp = lastCandle.close;
-          const open = lastCandle.open;
-          const high = lastCandle.high;
-          const low = lastCandle.low;
-          const change = ltp - prevCandle.close;
-          const pct = prevCandle.close > 0 ? (change / prevCandle.close) * 100 : 0;
-          const lastVol = data.volume && data.volume.length > 0 ? data.volume[data.volume.length - 1].value : 0;
-
-          setLatestMetrics({
-            ltp,
-            open,
-            high,
-            low,
-            change,
-            pct,
-            volume: lastVol,
-          });
-        } else {
-          // Explicit error: do NOT render synthetic mock data!
-          handleError(data.message || `No market candle data found for "${symbol}".`);
-        }
+      .then((data: ChartPayload) => {
+        if (!active) return;
+        currentPayloadRef.current = data;
+        applyPayloadToChart(data);
       })
-      .catch((err) => {
+      .catch(() => {
+        if (!active) return;
         handleError(`Failed to connect to market data engine for "${symbol}".`);
       })
       .finally(() => {
-        setChartLoading(false);
+        if (active) setChartLoading(false);
       });
-  }, [symbol, period]);
 
-  const handleError = (msg: string) => {
-    setChartError(msg);
-    // Clear series completely
-    candleSeriesRef.current?.setData([]);
-    areaSeriesRef.current?.setData([]);
-    volumeSeriesRef.current?.setData([]);
-    avwapSeriesRef.current?.setData([]);
-    ema20SeriesRef.current?.setData([]);
-    ema50SeriesRef.current?.setData([]);
-    setLatestMetrics({ ltp: 0, open: 0, high: 0, low: 0, change: 0, pct: 0, volume: 0 });
-    setHoveredData(null);
-  };
+    return () => {
+      active = false;
+    };
+  }, [symbol, period, applyPayloadToChart]);
 
   const handleCustomSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -459,7 +552,7 @@ export default function InteractiveChart({
         padding: isFullscreen ? "20px" : "24px 28px",
         borderRadius: isFullscreen ? 0 : "var(--radius-lg)",
         boxShadow: isFullscreen ? "none" : "var(--card-shadow)",
-        transition: "all 0.2s ease",
+        transition: "background 0.2s ease",
       }}
     >
       {/* 1. Terminal Header & Live Pricing HUD */}
@@ -616,7 +709,7 @@ export default function InteractiveChart({
               <IconExternalLink size={12} />
             </a>
 
-            {/* Fullscreen Button */}
+            {/* Fullscreen Expansion Toggle (Smooth Resize, Zero Disposed Error) */}
             <button
               onClick={() => setIsFullscreen(!isFullscreen)}
               className="btn-glass"
@@ -821,7 +914,7 @@ export default function InteractiveChart({
           </div>
         )}
 
-        {/* Error / Invalid Symbol Empty State (NO FAKE DATA) */}
+        {/* Error / Invalid Symbol Empty State */}
         {chartError && (
           <div
             style={{
