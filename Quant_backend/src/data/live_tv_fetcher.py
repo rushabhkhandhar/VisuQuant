@@ -204,7 +204,20 @@ class LiveTVFetcher:
 
         results = {}
         total = len(symbols)
-        today_date = pd.Timestamp.now().date()
+        now_dt = pd.Timestamp.now()
+        cur_date = now_dt.date()
+        weekday = cur_date.weekday()
+
+        # Determine latest expected trading date (handles weekends and pre-market hours)
+        if weekday == 5:  # Saturday -> Friday
+            latest_trading_date = cur_date - pd.Timedelta(days=1)
+        elif weekday == 6:  # Sunday -> Friday
+            latest_trading_date = cur_date - pd.Timedelta(days=2)
+        elif now_dt.hour < 9 or (now_dt.hour == 9 and now_dt.minute < 15):
+            latest_trading_date = cur_date - pd.Timedelta(days=3 if weekday == 0 else 1)
+        else:
+            latest_trading_date = cur_date
+
         symbols_to_update = []
         needs_save = False
         start_time = time.time()
@@ -215,12 +228,12 @@ class LiveTVFetcher:
                 max_val = cached_df.index.max()
                 if pd.notna(max_val) and hasattr(max_val, 'date'):
                     max_dt = max_val.date()
-                    if (today_date - max_dt).days == 0:
+                    if max_dt >= latest_trading_date:
                         results[sym] = cached_df.tail(n_bars)
                         continue
             symbols_to_update.append(sym)
 
-        logger.info(f"Symbols up-to-date today: {len(results)}/{total}. Delta needed for {len(symbols_to_update)} symbols.")
+        logger.info(f"Symbols up-to-date ({latest_trading_date}): {len(results)}/{total}. Delta needed for {len(symbols_to_update)} symbols.")
 
         # 1. Try our native NSE Bhavcopy for today if already published by exchange
         if symbols_to_update:

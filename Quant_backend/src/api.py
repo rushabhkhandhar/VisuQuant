@@ -14,7 +14,7 @@ from datetime import datetime
 # Add the project root (Quant_backend) to sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.screener.pipeline.archive.run_daily_screen import run_screener
+from src.services.screener_service import run_e19_screener
 
 app = FastAPI(title="VisuQuant Engine API")
 
@@ -54,20 +54,11 @@ class BacktestRequest(BaseModel):
 
 @app.post("/api/screener")
 def trigger_screener(req: ScreenerRequest):
-    as_of_date = None
-    if req.date:
-        as_of_date = datetime.strptime(req.date, "%Y-%m-%d").date()
-        
-    # We use dry_run=True so it doesn't trigger side effects, just returns the data
-    results = run_screener(as_of_date=as_of_date, dry_run=True, top_n=req.top_n, check_regime=True)
+    results = run_e19_screener(as_of_date=req.date, top_n=req.top_n, check_regime=True)
     return results
 
 @app.post("/api/screener_stream")
 def trigger_screener_stream(req: ScreenerRequest):
-    as_of_date = None
-    if req.date:
-        as_of_date = datetime.strptime(req.date, "%Y-%m-%d").date()
-
     q = queue.Queue()
 
     def progress_callback(msg, level="INFO"):
@@ -75,7 +66,12 @@ def trigger_screener_stream(req: ScreenerRequest):
 
     def run_engine():
         try:
-            results = run_screener(as_of_date=as_of_date, dry_run=True, top_n=req.top_n, check_regime=True, progress_callback=progress_callback)
+            results = run_e19_screener(
+                as_of_date=req.date,
+                top_n=req.top_n,
+                check_regime=True,
+                progress_callback=progress_callback,
+            )
             q.put({"type": "result", "data": results})
         except Exception as e:
             q.put({"type": "error", "message": str(e)})
