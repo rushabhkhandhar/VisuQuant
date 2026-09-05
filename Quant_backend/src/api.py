@@ -264,6 +264,15 @@ def get_chart_data(symbol: str, period: str = "6mo"):
             df = t.history(period=period)
 
         if df.empty:
+            # Fallback to local NSE Bhavcopy history cache (2,600+ symbols)
+            from datetime import date as dt_date
+            from src.data.nse_fetcher import fetch_bulk_history
+            lookback = 30 if period == "1mo" else 90 if period == "3mo" else 365 if period == "1y" else 180
+            bulk = fetch_bulk_history([clean_sym], dt_date.today(), lookback)
+            if clean_sym in bulk and not bulk[clean_sym].empty:
+                df = bulk[clean_sym].copy()
+
+        if df.empty:
             return {"status": "error", "message": f"No market candle data found for {symbol}"}
 
         df["EMA20"] = df["Close"].ewm(span=20, adjust=False).mean()
