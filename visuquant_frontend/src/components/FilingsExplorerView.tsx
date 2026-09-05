@@ -9,6 +9,7 @@ import {
   IconDownload,
   IconBuilding,
 } from "./Icons";
+import TickerAutocomplete from "./TickerAutocomplete";
 
 export default function FilingsExplorerView() {
   const [symbol, setSymbol] = useState("TCS");
@@ -51,15 +52,15 @@ export default function FilingsExplorerView() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "28px" }}>
-      {/* 1. Header & Lookup Bar */}
-      <div className="glass-panel" style={{ padding: "28px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "16px", marginBottom: "20px" }}>
+      {/* 1. Direct Search Header */}
+      <div className="glass-panel" style={{ padding: "28px", overflow: "visible" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px", flexWrap: "wrap", gap: "12px" }}>
           <div>
             <h2 style={{ fontSize: "20px", fontWeight: 800, margin: 0 }}>
-              Screener.in Filings & Annual Reports Hub
+              Screener.in Corporate Intelligence Explorer
             </h2>
             <div style={{ fontSize: "13px", color: "var(--text-secondary)", marginTop: "4px" }}>
-              Direct access to BSE India official statutory annual reports, concall transcripts, and corporate disclosures.
+              Automated scraping pipeline extracting corporate filings, AGM transcripts, and exchange announcements.
             </div>
           </div>
           <div className="badge badge-cyan" style={{ padding: "6px 12px" }}>
@@ -67,18 +68,15 @@ export default function FilingsExplorerView() {
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: "16px", alignItems: "flex-end", flexWrap: "wrap" }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: "6px", flex: 1, minWidth: "200px" }}>
+        <div style={{ display: "flex", gap: "16px", alignItems: "flex-end", flexWrap: "wrap", overflow: "visible" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: "6px", flex: 1, minWidth: "200px", position: "relative" }}>
             <label style={{ fontSize: "12px", color: "var(--text-muted)", fontWeight: 600 }}>
               Search Any NSE / BSE Symbol
             </label>
-            <input
-              type="text"
+            <TickerAutocomplete
               value={symbol}
-              onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+              onChange={setSymbol}
               placeholder="e.g. TCS"
-              className="quant-input font-mono"
-              style={{ fontWeight: 700 }}
             />
           </div>
 

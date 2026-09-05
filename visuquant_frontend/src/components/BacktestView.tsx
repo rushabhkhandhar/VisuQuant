@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { IconPlay, IconBarChart, IconShield } from "./Icons";
+import TickerAutocomplete from "./TickerAutocomplete";
 
 export default function BacktestView() {
   const [symbol, setSymbol] = useState("TCS");
@@ -164,20 +165,18 @@ export default function BacktestView() {
       </div>
 
       {/* 3. Single Stock Historical Backtest Runner */}
-      <div className="glass-panel" style={{ padding: "28px" }}>
+      <div className="glass-panel" style={{ padding: "28px", overflow: "visible" }}>
         <h3 style={{ fontSize: "17px", fontWeight: 800, marginBottom: "16px" }}>
           Single Ticker Historical Simulation (E19 Ruleset)
         </h3>
 
-        <div style={{ display: "flex", gap: "16px", alignItems: "flex-end", flexWrap: "wrap", marginBottom: "20px" }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: "6px", flex: 1, minWidth: "200px" }}>
+        <div style={{ display: "flex", gap: "16px", alignItems: "flex-end", flexWrap: "wrap", marginBottom: "20px", overflow: "visible" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: "6px", flex: 1, minWidth: "200px", position: "relative" }}>
             <label style={{ fontSize: "12px", color: "var(--text-muted)", fontWeight: 600 }}>Symbol</label>
-            <input
-              type="text"
+            <TickerAutocomplete
               value={symbol}
-              onChange={(e) => setSymbol(e.target.value.toUpperCase())}
-              className="quant-input font-mono"
-              style={{ fontWeight: 700 }}
+              onChange={setSymbol}
+              placeholder="e.g. TCS"
             />
           </div>
 

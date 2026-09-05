@@ -10,6 +10,7 @@ import {
   IconShield,
 } from "./Icons";
 import InteractiveChart from "./InteractiveChart";
+import TickerAutocomplete from "./TickerAutocomplete";
 
 interface VisionAnalysisViewProps {
   initialSymbol?: string;
@@ -43,8 +44,8 @@ export default function VisionAnalysisView({ initialSymbol = "TCS" }: VisionAnal
     setCurrentStep(1);
 
     const stepInterval = setInterval(() => {
-      setCurrentStep((prev) => (prev < 5 ? prev + 1 : prev));
-    }, 4500);
+      setCurrentStep((prev) => (prev < 6 ? prev + 1 : prev));
+    }, 2800);
 
     try {
       const payload: any = { symbol: symbol.trim().toUpperCase() };
@@ -59,15 +60,16 @@ export default function VisionAnalysisView({ initialSymbol = "TCS" }: VisionAnal
       const data = await res.json();
       clearInterval(stepInterval);
 
-      if (data.status === "success" && data.pdf_url) {
+      if (data.status === "success" && data.pdf_path) {
         setCurrentStep(6);
-        setPdfUrl(data.pdf_url);
+        const filename = data.pdf_path.split("/").pop();
+        setPdfUrl(`http://localhost:5000/api/reports/${filename}`);
       } else {
-        setError(data.message || "Failed to generate analysis report.");
+        setError(data.message || "Analysis synthesis failed. Please verify ticker.");
       }
     } catch (err: any) {
       clearInterval(stepInterval);
-      setError(err.message || "Network error while connecting to VisuQuant engine.");
+      setError(err.message || "Failed to communicate with the analysis engine.");
     } finally {
       setLoading(false);
     }
@@ -78,7 +80,7 @@ export default function VisionAnalysisView({ initialSymbol = "TCS" }: VisionAnal
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "28px" }}>
       {/* 1. Direct Analysis Form */}
-      <div className="glass-panel" style={{ padding: "28px" }}>
+      <div className="glass-panel" style={{ padding: "28px", overflow: "visible" }}>
         <div style={{ marginBottom: "20px" }}>
           <h2 style={{ fontSize: "20px", fontWeight: 800, margin: 0 }}>
             Deep Vision & Institutional Analysis Engine
@@ -88,18 +90,16 @@ export default function VisionAnalysisView({ initialSymbol = "TCS" }: VisionAnal
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: "16px", alignItems: "flex-end", flexWrap: "wrap" }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: "6px", flex: 1, minWidth: "220px" }}>
+        <div style={{ display: "flex", gap: "16px", alignItems: "flex-end", flexWrap: "wrap", overflow: "visible" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: "6px", flex: 1, minWidth: "220px", position: "relative" }}>
             <label style={{ fontSize: "12px", color: "var(--text-muted)", fontWeight: 600 }}>
               NSE Ticker Symbol
             </label>
-            <input
-              type="text"
+            <TickerAutocomplete
               value={symbol}
-              onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+              onChange={setSymbol}
               placeholder="e.g. TCS"
-              className="quant-input font-mono"
-              style={{ textTransform: "uppercase", fontWeight: 700, fontSize: "15px" }}
+              style={{ fontSize: "15px" }}
             />
           </div>
 
