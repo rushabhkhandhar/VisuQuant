@@ -376,6 +376,107 @@ def relative_strength_eval(df, nifty_hist=None, sector_hist=None):
         
     return {"passed": True, "score": 1.0, "alpha_score": alpha_score, "trigger_type": "Relative Strength Momentum"}
 
+def pocket_pivot_eval(df, nifty_hist=None, sector_hist=None):
+    """
+    Pocket Pivot Institutional Accumulation:
+    Enters inside a consolidation base before the standard resistance breakout.
+    Triggered when an up-day's volume exceeds the highest down-volume day of the prior 10 days,
+    while price bounces off or consolidates near the 10, 20, or 50 EMA.
+    """
+    if len(df) < 200:
+        return {"passed": False, "reasons": ["Not enough data for 200 SMA"]}
+    if len(df) > 300:
+        df = df.iloc[-300:]
+    
+    # 0. NIFTY REGIME FILTER (Avoid longs when overall market is correcting)
+    if nifty_hist is not None and len(nifty_hist) > 50:
+        nifty_ema50 = nifty_hist['Close'].ewm(span=50, adjust=False).mean().iloc[-1]
+        if nifty_hist['Close'].iloc[-1] < nifty_ema50:
+            return {"passed": False, "reasons": ["Nifty below 50 EMA"]}
+
+    close = df['Close'].iloc[-1]
+    open_p = df['Open'].iloc[-1]
+    high = df['High'].iloc[-1]
+    low = df['Low'].iloc[-1]
+    prev_close = df['Close'].iloc[-2]
+
+    # 1. LONG-TERM TREND: Long-term uptrend intact
+    sma200 = df['Close'].rolling(window=200).mean().iloc[-1]
+    ema50 = df['Close'].ewm(span=50, adjust=False).mean().iloc[-1]
+    ema20 = df['Close'].ewm(span=20, adjust=False).mean().iloc[-1]
+    ema10 = df['Close'].ewm(span=10, adjust=False).mean().iloc[-1]
+
+    if not (close > sma200 and ema50 > sma200):
+        return {"passed": False, "reasons": ["Not long-term bullish (Close > 200 SMA & 50 EMA > 200 SMA)"]}
+
+    # 2. PROXIMITY TO KEY MOVING AVERAGE (Inside consolidation / bounce off support)
+    dist_10 = abs(close - ema10) / ema10
+    dist_20 = abs(close - ema20) / ema20
+    dist_50 = abs(close - ema50) / ema50
+    min_dist = min(dist_10, dist_20, dist_50)
+
+    if min_dist > 0.035:
+        return {"passed": False, "reasons": ["Too far from key moving average (10, 20, or 50 EMA)"]}
+
+    # Not over-extended (>5% above 20 EMA)
+    if close > (ema20 * 1.05):
+        return {"passed": False, "reasons": ["Extended >5% above 20 EMA"]}
+
+    # 3. CONSTRUCTIVE BASE (Consolidating, not in a free fall)
+    low_10d = df['Low'].iloc[-11:-1].min()
+    if low_10d < ema50 * 0.95:
+        return {"passed": False, "reasons": ["Broken down > 5% below 50 EMA in past 10 days"]}
+
+    # 4. CANDLE PRICE ACTION: Must be a constructive up-day
+    candle_range = high - low
+    if candle_range == 0 or close <= prev_close or close < open_p:
+        return {"passed": False, "reasons": ["Not a bullish up day"]}
+    
+    close_strength = (close - low) / candle_range
+    if close_strength < 0.50:
+        return {"passed": False, "reasons": ["Weak close (below candle midpoint)"]}
+
+    # 5. POCKET PIVOT VOLUME SIGNATURE (Core Institutional Accumulation Rule)
+    # Today's volume must exceed the HIGHEST down-volume day in the prior 10 days
+    vol = df['Volume'].iloc[-1]
+    vol_sma20 = df['Volume'].rolling(20).mean().iloc[-2]
+
+    # Find down days in past 10 days (excluding today)
+    past_10_closes = df['Close'].iloc[-11:-1].values
+    past_10_prev_closes = df['Close'].iloc[-12:-2].values
+    past_10_vols = df['Volume'].iloc[-11:-1].values
+
+    down_mask = (past_10_closes < past_10_prev_closes)
+    down_vols = past_10_vols[down_mask]
+
+    highest_down_vol = down_vols.max() if len(down_vols) > 0 else 0
+
+    if vol <= highest_down_vol:
+        return {"passed": False, "reasons": [f"Volume ({vol}) did not exceed max down-volume ({highest_down_vol}) in last 10 days"]}
+
+    if pd.notna(vol_sma20) and vol < (1.1 * vol_sma20):
+        return {"passed": False, "reasons": ["Volume not > 1.1x 20d average"]}
+
+    # 6. RELATIVE STRENGTH vs NIFTY
+    if nifty_hist is not None and len(nifty_hist) >= 40 and len(df) >= 40:
+        n_20 = (nifty_hist['Close'].iloc[-1] / nifty_hist['Close'].iloc[-20]) - 1
+        s_20 = (close / df['Close'].iloc[-21]) - 1
+        if s_20 < n_20:
+            return {"passed": False, "reasons": ["20d return lagging NIFTY"]}
+
+    # 7. MOMENTUM CONFIRMATION (RSI)
+    rsi = talib.RSI(df['Close'], timeperiod=14).iloc[-1]
+    if pd.isna(rsi) or not (45 <= rsi <= 68):
+        return {"passed": False, "reasons": [f"RSI {rsi:.1f} not in (45, 68)"]}
+
+    # Alpha score for ranking: combination of volume expansion + MA proximity + RSI
+    vol_ratio = min(3.0, vol / (highest_down_vol + 1e-5)) / 3.0
+    ma_proximity_score = 1.0 - (min_dist / 0.035)
+    rsi_score = (rsi - 45) / 23.0
+    alpha_score = (vol_ratio * 0.4) + (ma_proximity_score * 0.3) + (rsi_score * 0.3)
+
+    return {"passed": True, "score": 1.0, "alpha_score": alpha_score, "trigger_type": "Pocket Pivot Accumulation"}
+
 # Define strategies here.
 STRATEGIES = [
     {

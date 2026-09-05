@@ -17,7 +17,8 @@ from src.screener.pipeline.swing.run_front_test import (
     momentum_breakout_eval,
     oversold_uptrend_eval,
     volatility_compression_eval,
-    relative_strength_eval
+    relative_strength_eval,
+    pocket_pivot_eval
 )
 from src.screener.pipeline.swing.e12_strategy import (
     BCR_THRESHOLD, BREADTH_THRESHOLD, MAX_CONFIRMED_SIGNALS, MAX_PRIMARY_SIGNALS,
@@ -39,6 +40,7 @@ STRATEGIES = [
     # {"name": "Oversold Uptrend", "func": oversold_uptrend_eval, "risk_atr": 2.0, "reward_atr": 4.0},
     {"name": "Volatility Compression", "func": volatility_compression_eval, "risk_atr": 1.0, "reward_atr": 3.0},
     {"name": "Relative Strength", "func": relative_strength_eval, "risk_atr": 2.0, "reward_atr": 4.0},
+    {"name": "Pocket Pivot", "func": pocket_pivot_eval, "risk_atr": 1.5, "reward_atr": 4.5},
 ]
 
 def calculate_metrics(daily_equity, trades):
@@ -284,13 +286,15 @@ def run_strategy_backtest(strategy, test_dates, bulk_data, industry_mapping=None
                                 "symbol": sym,
                                 "price": close,
                                 "stop_loss": close - (atr * strategy['risk_atr']),
-                                "target": close + (atr * strategy['reward_atr'])
+                                "target": close + (atr * strategy['reward_atr']),
+                                "alpha_score": res.get("alpha_score", 0.0)
                             })
                 except Exception as e:
                     pass # Skip if eval fails
                     
-        # 3. Allocate Cash (MOC entry at Close price)
+        # 3. Allocate Cash (MOC entry at Close price, prioritizing highest alpha)
         if new_candidates:
+            new_candidates.sort(key=lambda x: x.get("alpha_score", 0.0), reverse=True)
             total_equity = cash + sum(p['shares'] * p['current_price'] for p in open_positions.values())
             max_alloc_per_trade = total_equity * MAX_WEIGHT_PER_TRADE
             
@@ -325,6 +329,9 @@ def run_strategy_backtest(strategy, test_dates, bulk_data, industry_mapping=None
         
     metrics = calculate_metrics(daily_equity_curve, trades_log)
     metrics["Strategy"] = strategy["name"]
+    nifty_full = bulk_data.get("NIFTYBEES")
+    regime_metrics = calculate_regime_metrics(trades_log, nifty_full)
+    metrics.update(regime_metrics)
     return metrics, daily_equity_curve, trades_log
 
 
@@ -997,36 +1004,42 @@ def main():
     
     from concurrent.futures import ProcessPoolExecutor, as_completed
     
-    logger.info(f"Starting parallel architectural experiments using ProcessPoolExecutor...")
+    tasks = []
+    for s in STRATEGIES:
+        tasks.append({"name": s["name"], "func": run_strategy_backtest, "arg": s})
+    for a in ARCHITECTURES:
+        tasks.append({"name": a["name"], "func": run_architectural_backtest, "arg": a})
+        
+    logger.info(f"Starting parallel backtest experiments for {len(tasks)} strategies using ProcessPoolExecutor...")
     
     futures = {}
-    with ProcessPoolExecutor(max_workers=len(ARCHITECTURES)) as executor:
-        for arch in ARCHITECTURES:
+    with ProcessPoolExecutor(max_workers=min(len(tasks), 8)) as executor:
+        for t in tasks:
             future = executor.submit(
-                run_architectural_backtest, 
-                arch, 
+                t["func"], 
+                t["arg"], 
                 test_dates, 
                 bulk_data, 
                 industry_mapping, 
                 sector_indices
             )
-            futures[future] = arch
+            futures[future] = t
             
         for future in as_completed(futures):
-            arch = futures[future]
+            t = futures[future]
             try:
                 metrics, curve, trades = future.result()
                 results.append(metrics)
-                curves[arch['name']] = curve
+                curves[t['name']] = curve
                 
                 # Save trades log
                 if trades:
                     trades_df = pd.DataFrame(trades)
-                    safe_name = arch['name'].replace(" ", "_").replace(":", "")
+                    safe_name = t['name'].replace(" ", "_").replace(":", "")
                     trades_csv_path = os.path.join(os.path.dirname(tear_sheet_path), f"{safe_name}_backtest_trades.csv")
                     trades_df.to_csv(trades_csv_path, index=False)
             except Exception as e:
-                logger.error(f"Error backtesting {arch['name']}: {e}")
+                logger.error(f"Error backtesting {t['name']}: {e}")
                 import traceback
                 traceback.print_exc()
 
