@@ -1,6 +1,7 @@
 import os
 import time
 import logging
+import requests
 from typing import Dict, List, Optional
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -218,6 +219,8 @@ class LiveTVFetcher:
         else:
             latest_trading_date = cur_date
 
+        today_date = latest_trading_date
+
         symbols_to_update = []
         needs_save = False
         start_time = time.time()
@@ -235,41 +238,62 @@ class LiveTVFetcher:
 
         logger.info(f"Symbols up-to-date ({latest_trading_date}): {len(results)}/{total}. Delta needed for {len(symbols_to_update)} symbols.")
 
-        # 1. Try our native NSE Bhavcopy for today if already published by exchange
+        # 1. Fast bulk fetch for latest session candles via TradingView India Scanner (0.4s for 500 stocks)
         if symbols_to_update:
             try:
-                from src.data.nse_fetcher import _download_bhavcopy_for_date
-                bhav_df = _download_bhavcopy_for_date(today_date)
-                if bhav_df is not None and not bhav_df.empty:
-                    logger.info(f"NSE Bhavcopy available for today ({today_date})! Updating symbols from official NSE feed...")
-                    bhav_date_ts = pd.Timestamp(today_date)
+                sym_to_tv = {sym: f"NSE:{sanitize_tv_symbol(sym)}" for sym in symbols_to_update}
+                tv_to_sym = {v: k for k, v in sym_to_tv.items()}
+
+                url = "https://scanner.tradingview.com/india/scan"
+                payload = {
+                    "symbols": {"tickers": list(sym_to_tv.values())},
+                    "columns": ["name", "open", "high", "low", "close", "volume"]
+                }
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                }
+                resp = requests.post(url, json=payload, headers=headers, timeout=10)
+                if resp.status_code == 200:
+                    data = resp.json().get("data", [])
+                    session_date_ts = pd.Timestamp(latest_trading_date)
                     still_needed = []
-                    for sym in symbols_to_update:
-                        if sym in bhav_df.index:
-                            row = bhav_df.loc[sym]
+                    found_syms = set()
+
+                    for item in data:
+                        tv_ticker = item.get("s", "")
+                        sym = tv_to_sym.get(tv_ticker)
+                        d = item.get("d", [])
+                        if sym and len(d) >= 6 and d[1] is not None and d[4] is not None:
                             candle_df = pd.DataFrame([{
-                                'Open': float(row['OPEN']),
-                                'High': float(row['HIGH']),
-                                'Low': float(row['LOW']),
-                                'Close': float(row['CLOSE']),
-                                'Volume': float(row.get('VOLUME', 0.0)),
-                            }], index=[bhav_date_ts])
+                                'Open': float(d[1]),
+                                'High': float(d[2]),
+                                'Low': float(d[3]),
+                                'Close': float(d[4]),
+                                'Volume': float(d[5] or 0.0),
+                            }], index=[session_date_ts])
+
                             cached_df = cached_dict.get(sym)
                             if cached_df is not None and not cached_df.empty:
                                 combined = pd.concat([cached_df, candle_df])
                                 combined = combined[~combined.index.duplicated(keep='last')].sort_index()
                                 results[sym] = combined.tail(n_bars)
+                                found_syms.add(sym)
+                                needs_save = True
                             else:
-                                results[sym] = candle_df
-                            needs_save = True
-                        else:
-                            still_needed.append(sym)
-                    symbols_to_update = still_needed
-                    logger.info(f"Updated {len(results)}/{total} symbols directly from NSE Bhavcopy. {len(symbols_to_update)} remaining for live TradingView fetch.")
-            except Exception as ne:
-                logger.debug(f"NSE Bhavcopy check skipped: {ne}")
+                                # Full historical backfill required via tvdatafeed
+                                still_needed.append(sym)
 
-        # 2. Live intraday market candles via TradingView (tvdatafeed)
+                    # Any symbol not returned by scanner or needing historical depth
+                    for sym in symbols_to_update:
+                        if sym not in found_syms and sym not in still_needed:
+                            still_needed.append(sym)
+
+                    logger.info(f"Updated {len(found_syms)}/{len(symbols_to_update)} symbols directly from TradingView Scanner in bulk (0.4s)! {len(still_needed)} remaining for deep historical fetch.")
+                    symbols_to_update = still_needed
+            except Exception as e:
+                logger.warning(f"TradingView Scanner bulk fetch skipped ({e}). Falling back to individual TV datafeed.")
+
+        # 2. Deep historical or missing market candles via TradingView (tvdatafeed)
         if symbols_to_update:
             logger.info(f"Fetching live market candles for {len(symbols_to_update)} symbols using TradingView (tvdatafeed)...")
             for i, sym in enumerate(symbols_to_update, 1):

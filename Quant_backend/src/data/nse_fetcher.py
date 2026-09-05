@@ -353,12 +353,20 @@ def _load_symbols_from_csv_urls(
     raise RuntimeError(f"Unable to load symbols from all sources. Last error: {last_error}")
 
 def load_nifty500_symbols() -> List[str]:
-    """Fetch NIFTY 500 constituent symbols."""
+    """Fetch NIFTY 500 constituent symbols with local static fallback."""
     urls = [
         "https://niftyindices.com/IndexConstituent/ind_nifty500list.csv",
         "https://www.niftyindices.com/IndexConstituent/ind_nifty500list.csv",
     ]
-    return _load_symbols_from_csv_urls(urls, column_name="Symbol")
+    try:
+        return _load_symbols_from_csv_urls(urls, column_name="Symbol")
+    except Exception as e:
+        logger.warning(f"Could not load Nifty 500 symbols from web ({e}). Trying local fallback...")
+        file_path = os.path.join(os.path.dirname(__file__), "nifty500_symbols.json")
+        if os.path.exists(file_path):
+            with open(file_path, "r") as f:
+                return sorted(json.load(f))
+        raise
 
 def load_nifty100_symbols() -> List[str]:
     """Fetch NIFTY 100 constituent symbols."""
@@ -380,7 +388,7 @@ def load_fno_symbols() -> List[str]:
         return []
 
 def load_nifty500_industry_mapping() -> Dict[str, str]:
-    """Fetch NIFTY 500 constituents and return a mapping of Symbol -> Industry."""
+    """Fetch NIFTY 500 constituents and return a mapping of Symbol -> Industry with local fallback."""
     urls = [
         "https://niftyindices.com/IndexConstituent/ind_nifty500list.csv",
         "https://www.niftyindices.com/IndexConstituent/ind_nifty500list.csv",
@@ -425,6 +433,13 @@ def load_nifty500_industry_mapping() -> Dict[str, str]:
         except Exception as exc:
             last_error = exc
             continue
+
+    # Fall back to local bundled JSON if web request fails
+    logger.warning(f"Could not load Nifty 500 industry mapping from web ({last_error}). Trying local fallback...")
+    fallback_file = os.path.join(os.path.dirname(__file__), "nifty500_industry_mapping.json")
+    if os.path.exists(fallback_file):
+        with open(fallback_file, "r") as f:
+            return json.load(f)
 
     raise RuntimeError(f"Unable to load industry mapping. Last error: {last_error}")
 
