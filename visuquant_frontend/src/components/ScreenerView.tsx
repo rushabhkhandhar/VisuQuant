@@ -8,6 +8,7 @@ import {
   IconBarChart,
   IconShield,
 } from "./Icons";
+import InteractiveChart from "./InteractiveChart";
 
 interface ScreenerViewProps {
   onAnalyzeTicker: (symbol: string) => void;
@@ -326,6 +327,17 @@ export default function ScreenerView({ onAnalyzeTicker }: ScreenerViewProps) {
                                   {stock.market_cap ? `₹${Number(stock.market_cap).toFixed(0)} Cr` : "Large Cap"}
                                 </div>
                               </div>
+                            </div>
+
+                            {/* Candidate Interactive Chart */}
+                            <div style={{ marginTop: "14px" }}>
+                              <InteractiveChart
+                                initialSymbol={sym}
+                                height={380}
+                                showQuickSwitcher={false}
+                                title={`Interactive Candlestick Chart: ${sym}`}
+                                subtitle="Pan, zoom, and inspect technical structure directly for this setup."
+                              />
                             </div>
                           </div>
                         </td>

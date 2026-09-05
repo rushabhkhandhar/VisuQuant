@@ -235,6 +235,85 @@ def get_company_filings(symbol: str):
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
+@app.get("/api/chart_data")
+def get_chart_data(symbol: str, period: str = "6mo"):
+    import yfinance as yf
+    import numpy as np
+    try:
+        raw_sym = symbol.strip().upper()
+        clean_sym = raw_sym.replace("NSE:", "").replace("BSE:", "").replace(".NS", "").replace(".BO", "").strip()
+
+        if clean_sym in ["NIFTY", "NIFTY 50", "^NSEI", "NIFTY50"]:
+            ticker_str = "^NSEI"
+            display_sym = "NIFTY 50"
+        elif clean_sym in ["BANKNIFTY", "BANK NIFTY", "^NSEBANK"]:
+            ticker_str = "^NSEBANK"
+            display_sym = "BANK NIFTY"
+        elif clean_sym in ["SENSEX", "^BSESN"]:
+            ticker_str = "^BSESN"
+            display_sym = "SENSEX"
+        else:
+            ticker_str = f"{clean_sym}.NS"
+            display_sym = clean_sym
+
+        t = yf.Ticker(ticker_str)
+        df = t.history(period=period)
+        if df.empty and not ticker_str.endswith(".BO") and not ticker_str.startswith("^"):
+            ticker_str = f"{clean_sym}.BO"
+            t = yf.Ticker(ticker_str)
+            df = t.history(period=period)
+
+        if df.empty:
+            return {"status": "error", "message": f"No market candle data found for {symbol}"}
+
+        df["EMA20"] = df["Close"].ewm(span=20, adjust=False).mean()
+        df["EMA50"] = df["Close"].ewm(span=50, adjust=False).mean()
+
+        # Cumulative Anchored VWAP
+        v = df["Volume"].values
+        tp = ((df["High"] + df["Low"] + df["Close"]) / 3.0).values
+        cum_v = np.cumsum(v)
+        cum_vp = np.cumsum(tp * v)
+        avwap = np.where(cum_v > 0, cum_vp / cum_v, df["Close"].values)
+        df["AVWAP"] = avwap
+
+        candles = []
+        volume = []
+        avwap_data = []
+        ema20_data = []
+        ema50_data = []
+
+        for idx, row in df.iterrows():
+            time_str = idx.strftime("%Y-%m-%d")
+            o = round(float(row["Open"]), 2)
+            h = round(float(row["High"]), 2)
+            l = round(float(row["Low"]), 2)
+            c = round(float(row["Close"]), 2)
+            vol = int(row["Volume"])
+
+            candles.append({"time": time_str, "open": o, "high": h, "low": l, "close": c})
+            volume.append({
+                "time": time_str,
+                "value": vol,
+                "color": "rgba(0, 255, 136, 0.5)" if c >= o else "rgba(255, 51, 102, 0.5)"
+            })
+            avwap_data.append({"time": time_str, "value": round(float(row["AVWAP"]), 2)})
+            ema20_data.append({"time": time_str, "value": round(float(row["EMA20"]), 2)})
+            ema50_data.append({"time": time_str, "value": round(float(row["EMA50"]), 2)})
+
+        return {
+            "status": "success",
+            "symbol": clean_sym,
+            "candles": candles,
+            "volume": volume,
+            "avwap": avwap_data,
+            "ema20": ema20_data,
+            "ema50": ema50_data,
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("src.api:app", host="0.0.0.0", port=5000, reload=True)
+

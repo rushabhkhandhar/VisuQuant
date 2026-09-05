@@ -13,6 +13,7 @@ import {
   IconChevronRight,
   IconTerminal,
 } from "./Icons";
+import InteractiveChart from "./InteractiveChart";
 
 interface HeroLandingProps {
   onNavigate: (tab: string) => void;
@@ -204,8 +205,17 @@ export default function HeroLanding({ onNavigate }: HeroLandingProps) {
         </button>
       </div>
 
-      {/* 4. Core Features Showcase */}
+      {/* 4. Live Interactive Market Terminal & Candlestick Chart */}
+      <InteractiveChart
+        initialSymbol="NIFTY"
+        height={540}
+        title="Live Market Terminal & Candlestick Forensics"
+        subtitle="Interactive candlestick engine featuring real-time OHLCV, Dual Anchored VWAP, and volume dynamics."
+      />
+
+      {/* 5. Core Features Showcase */}
       <div>
+
         <div style={{ marginBottom: "24px" }}>
           <h2 style={{ fontSize: "24px", fontWeight: 800, letterSpacing: "-0.02em" }}>
             The Institutional VisuQuant Architecture

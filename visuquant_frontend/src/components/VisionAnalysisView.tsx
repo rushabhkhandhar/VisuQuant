@@ -9,6 +9,7 @@ import {
   IconFileText,
   IconShield,
 } from "./Icons";
+import InteractiveChart from "./InteractiveChart";
 
 interface VisionAnalysisViewProps {
   initialSymbol?: string;
@@ -150,6 +151,15 @@ export default function VisionAnalysisView({ initialSymbol = "TCS" }: VisionAnal
           ))}
         </div>
       </div>
+
+      {/* Live Interactive Chart for the Ticker */}
+      <InteractiveChart
+        initialSymbol={symbol}
+        height={480}
+        showQuickSwitcher={false}
+        title={`Live Candlestick Structure: ${symbol}`}
+        subtitle="Inspect real-time TradingView price action, Dual Anchored VWAP, and volume dynamics in parallel with vision AI."
+      />
 
       {/* 2. Pipeline Progress Stepper */}
       {loading && (

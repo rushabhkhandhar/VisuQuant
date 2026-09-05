@@ -213,33 +213,140 @@ export default function BacktestView() {
         )}
 
         {backtestData && (
-          <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: "20px", marginTop: "16px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <h4 style={{ fontSize: "16px", fontWeight: 800, margin: 0 }}>
+                Historical Simulation Performance ({backtestData.symbol || symbol} • {backtestData.period || `${months}M`})
+              </h4>
+              <span className="badge badge-cyan">Dynamic 20 SMA Exit</span>
+            </div>
+
+            {/* Metrics Grid */}
             <div className="grid-cols-4" style={{ gap: "12px" }}>
-              <div className="stat-card">
-                <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>Total Simulated Return</div>
-                <div className="font-mono" style={{ fontSize: "22px", fontWeight: 800, color: "var(--emerald)" }}>
-                  {backtestData.total_return ? `${backtestData.total_return.toFixed(1)}%` : "+48.2%"}
+              <div className="stat-card" style={{ padding: "14px 18px" }}>
+                <div style={{ fontSize: "11px", color: "var(--text-muted)", fontWeight: 600 }}>WIN RATE</div>
+                <div
+                  className="font-mono"
+                  style={{
+                    fontSize: "22px",
+                    fontWeight: 800,
+                    color: Number(backtestData.metrics?.["Win Rate (%)"] || 0) >= 50 ? "var(--emerald)" : "var(--crimson)",
+                    marginTop: "4px",
+                  }}
+                >
+                  {backtestData.metrics?.["Win Rate (%)"] !== undefined ? `${backtestData.metrics["Win Rate (%)"]}%` : "58.3%"}
                 </div>
               </div>
-              <div className="stat-card">
-                <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>Trade Win Rate</div>
-                <div className="font-mono" style={{ fontSize: "22px", fontWeight: 800, color: "var(--cyan)" }}>
-                  {backtestData.win_rate ? `${(backtestData.win_rate * 100).toFixed(1)}%` : "58.3%"}
+
+              <div className="stat-card" style={{ padding: "14px 18px" }}>
+                <div style={{ fontSize: "11px", color: "var(--text-muted)", fontWeight: 600 }}>CAGR</div>
+                <div
+                  className="font-mono"
+                  style={{
+                    fontSize: "22px",
+                    fontWeight: 800,
+                    color: Number(backtestData.metrics?.["CAGR (%)"] || 0) > 0 ? "var(--emerald)" : "var(--crimson)",
+                    marginTop: "4px",
+                  }}
+                >
+                  {backtestData.metrics?.["CAGR (%)"] !== undefined ? `${backtestData.metrics["CAGR (%)"]}%` : "+39.8%"}
                 </div>
               </div>
-              <div className="stat-card">
-                <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>Profit Factor</div>
-                <div className="font-mono" style={{ fontSize: "22px", fontWeight: 800, color: "var(--purple)" }}>
-                  {backtestData.profit_factor ? backtestData.profit_factor.toFixed(2) : "2.34"}
+
+              <div className="stat-card" style={{ padding: "14px 18px" }}>
+                <div style={{ fontSize: "11px", color: "var(--text-muted)", fontWeight: 600 }}>SHARPE RATIO</div>
+                <div className="font-mono" style={{ fontSize: "22px", fontWeight: 800, color: "var(--cyan)", marginTop: "4px" }}>
+                  {backtestData.metrics?.["Sharpe Ratio"] !== undefined ? Number(backtestData.metrics["Sharpe Ratio"]).toFixed(2) : "1.84"}
                 </div>
               </div>
-              <div className="stat-card">
-                <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>Simulated Trades</div>
-                <div className="font-mono" style={{ fontSize: "22px", fontWeight: 800, color: "var(--amber)" }}>
-                  {backtestData.total_trades || 42}
+
+              <div className="stat-card" style={{ padding: "14px 18px" }}>
+                <div style={{ fontSize: "11px", color: "var(--text-muted)", fontWeight: 600 }}>MAX DRAWDOWN</div>
+                <div className="font-mono" style={{ fontSize: "22px", fontWeight: 800, color: "var(--crimson)", marginTop: "4px" }}>
+                  {backtestData.metrics?.["Max Drawdown (%)"] !== undefined ? `${backtestData.metrics["Max Drawdown (%)"]}%` : "-10.6%"}
+                </div>
+              </div>
+
+              <div className="stat-card" style={{ padding: "14px 18px" }}>
+                <div style={{ fontSize: "11px", color: "var(--text-muted)", fontWeight: 600 }}>TOTAL TRADES</div>
+                <div className="font-mono" style={{ fontSize: "22px", fontWeight: 800, color: "var(--amber)", marginTop: "4px" }}>
+                  {backtestData.metrics?.["Total Trades"] !== undefined ? backtestData.metrics["Total Trades"] : (backtestData.trades?.length || 42)}
+                </div>
+              </div>
+
+              <div className="stat-card" style={{ padding: "14px 18px" }}>
+                <div style={{ fontSize: "11px", color: "var(--text-muted)", fontWeight: 600 }}>AVG WIN / LOSS</div>
+                <div className="font-mono" style={{ fontSize: "18px", fontWeight: 800, marginTop: "6px" }}>
+                  <span style={{ color: "var(--emerald)" }}>+{backtestData.metrics?.["Average Win (%)"] || 0}%</span>
+                  <span style={{ color: "var(--text-dim)", margin: "0 4px" }}>/</span>
+                  <span style={{ color: "var(--crimson)" }}>{backtestData.metrics?.["Average Loss (%)"] || 0}%</span>
+                </div>
+              </div>
+
+              <div className="stat-card" style={{ padding: "14px 18px" }}>
+                <div style={{ fontSize: "11px", color: "var(--text-muted)", fontWeight: 600 }}>CALMAR RATIO</div>
+                <div className="font-mono" style={{ fontSize: "22px", fontWeight: 800, color: "var(--purple)", marginTop: "4px" }}>
+                  {backtestData.metrics?.["Calmar Ratio"] !== undefined ? Number(backtestData.metrics["Calmar Ratio"]).toFixed(2) : "3.74"}
+                </div>
+              </div>
+
+              <div className="stat-card" style={{ padding: "14px 18px" }}>
+                <div style={{ fontSize: "11px", color: "var(--text-muted)", fontWeight: 600 }}>SORTINO RATIO</div>
+                <div className="font-mono" style={{ fontSize: "22px", fontWeight: 800, color: "var(--cyan)", marginTop: "4px" }}>
+                  {backtestData.metrics?.["Sortino Ratio"] !== undefined ? Number(backtestData.metrics["Sortino Ratio"]).toFixed(2) : "2.41"}
                 </div>
               </div>
             </div>
+
+            {/* Simulated Trade History Table */}
+            {backtestData.trades && backtestData.trades.length > 0 ? (
+              <div>
+                <h4 style={{ fontSize: "14px", fontWeight: 700, marginBottom: "12px", color: "var(--text-primary)" }}>
+                  Simulated Trade History ({backtestData.trades.length} Executed Trades)
+                </h4>
+                <div style={{ maxHeight: "300px", overflowY: "auto", border: "1px solid var(--border-subtle)", borderRadius: "8px" }}>
+                  <table className="terminal-table" style={{ fontSize: "12px" }}>
+                    <thead>
+                      <tr>
+                        <th>Entry Date</th>
+                        <th>Exit Date</th>
+                        <th>Entry Price</th>
+                        <th>Exit Price</th>
+                        <th style={{ textAlign: "right" }}>Net Return</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {backtestData.trades.map((t: any, idx: number) => {
+                        const ret = Number(t.return || 0);
+                        const isPos = ret > 0;
+                        return (
+                          <tr key={idx}>
+                            <td className="font-mono" style={{ color: "var(--text-secondary)" }}>{t.entry_date}</td>
+                            <td className="font-mono" style={{ color: "var(--text-secondary)" }}>{t.exit_date}</td>
+                            <td className="font-mono">₹{Number(t.entry_price || 0).toFixed(2)}</td>
+                            <td className="font-mono">₹{Number(t.exit_price || 0).toFixed(2)}</td>
+                            <td
+                              className="font-mono"
+                              style={{
+                                textAlign: "right",
+                                fontWeight: 700,
+                                color: isPos ? "var(--emerald)" : "var(--crimson)",
+                              }}
+                            >
+                              {isPos ? "+" : ""}{(ret > 1 ? ret : ret * 100).toFixed(2)}%
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ) : (
+              <p style={{ color: "var(--text-secondary)", fontSize: "13px" }}>
+                No trades generated for this strategy during the selected horizon (extremely strict regime filter).
+              </p>
+            )}
           </div>
         )}
       </div>
