@@ -18,7 +18,10 @@ from src.screener.pipeline.swing.run_front_test import (
     oversold_uptrend_eval,
     volatility_compression_eval,
     relative_strength_eval,
-    pocket_pivot_eval
+    pocket_pivot_eval,
+    connors_rsi_eval,
+    ttm_squeeze_eval,
+    sector_pullback_eval
 )
 from src.screener.pipeline.swing.e12_strategy import (
     BCR_THRESHOLD, BREADTH_THRESHOLD, MAX_CONFIRMED_SIGNALS, MAX_PRIMARY_SIGNALS,
@@ -35,12 +38,18 @@ FRICTION_PCT = 0.0015  # 0.15% cost per trade leg
 HOLDOUT_START = pd.Timestamp("2024-08-25")
 
 STRATEGIES = [
+    # --- Previously Tested / Paused Strategies ---
     # {"name": "Trend Pullback", "func": trend_pullback_eval, "risk_atr": 1.5, "reward_atr": 3.0},
-    {"name": "Momentum Breakout", "func": momentum_breakout_eval, "risk_atr": 2.0, "reward_atr": 4.0},
+    # {"name": "Momentum Breakout", "func": momentum_breakout_eval, "risk_atr": 2.0, "reward_atr": 4.0},
     # {"name": "Oversold Uptrend", "func": oversold_uptrend_eval, "risk_atr": 2.0, "reward_atr": 4.0},
-    {"name": "Volatility Compression", "func": volatility_compression_eval, "risk_atr": 1.0, "reward_atr": 3.0},
-    {"name": "Relative Strength", "func": relative_strength_eval, "risk_atr": 2.0, "reward_atr": 4.0},
-    {"name": "Pocket Pivot", "func": pocket_pivot_eval, "risk_atr": 1.5, "reward_atr": 4.5},
+    # {"name": "Volatility Compression", "func": volatility_compression_eval, "risk_atr": 1.0, "reward_atr": 3.0},
+    # {"name": "Relative Strength", "func": relative_strength_eval, "risk_atr": 2.0, "reward_atr": 4.0},
+    # {"name": "Pocket Pivot", "func": pocket_pivot_eval, "risk_atr": 1.5, "reward_atr": 4.5},
+
+    # --- New 2024-2026 Targeted Strategies ---
+    {"name": "Connors RSI-2 Dip", "func": connors_rsi_eval, "risk_atr": 1.5, "reward_atr": 3.0},
+    {"name": "TTM Squeeze", "func": ttm_squeeze_eval, "risk_atr": 1.0, "reward_atr": 3.0},
+    {"name": "Sector Relative Pullback", "func": sector_pullback_eval, "risk_atr": 1.5, "reward_atr": 3.5},
 ]
 
 def calculate_metrics(daily_equity, trades):
@@ -971,12 +980,8 @@ def main():
         synthetic_price = 100 * (1 + avg_returns).cumprod()
         sector_indices[ind] = pd.DataFrame({"Close": synthetic_price})
 
-    # Find strategy definitions
-    rs_strat = next(s for s in STRATEGIES if s["name"] == "Relative Strength")
-    mom_strat = next(s for s in STRATEGIES if s["name"] == "Momentum Breakout")
-    vol_strat = next(s for s in STRATEGIES if s["name"] == "Volatility Compression")
-    
-    # Define mean-reversion strategies for E11/E12
+    # Define strategies for E12 benchmark baseline
+    vol_strat = {"name": "Volatility Compression", "func": volatility_compression_eval, "risk_atr": 1.0, "reward_atr": 3.0}
     oversold_strat = {"name": "Oversold Uptrend", "func": oversold_uptrend_eval, "risk_atr": 2.0, "reward_atr": 4.0}
     pullback_strat = {"name": "Trend Pullback", "func": trend_pullback_eval, "risk_atr": 2.0, "reward_atr": 4.0}
     
