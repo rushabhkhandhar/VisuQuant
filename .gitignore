@@ -21,6 +21,7 @@ __pycache__/
 *_chart.png
 bhavcopy_cache/
 data_cache/
+Quant_backend/src/screener/pipeline/fno/strategies/long/output/
 *.parquet
 *.csv.gz
 

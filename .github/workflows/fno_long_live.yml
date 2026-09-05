@@ -53,6 +53,19 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r Quant_backend/requirements-live.txt
 
+      - name: Cache Market Data & F&O State
+        uses: actions/cache@v4
+        with:
+          path: |
+            Quant_backend/src/screener/pipeline/swing/data_cache
+            Quant_backend/src/screener/pipeline/fno/strategies/long/output
+          key: fno-market-data-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            fno-market-data-${{ runner.os }}-
+            swing-market-data-${{ runner.os }}-
+            fno-market-data-
+            swing-market-data-
+
       - name: Run F&O Long Live Signals
         env:
           # Expose GitHub Secrets as environment variables for the Python script
@@ -62,15 +75,10 @@ jobs:
           cd Quant_backend
           python src/screener/pipeline/fno/strategies/long/live_signals.py
 
-      - name: Commit and Push Updated Ledger
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          
-          # Only commit files in the F&O output directory if they changed
-          git add Quant_backend/src/screener/pipeline/fno/strategies/long/output/
-          if ! git diff --staged --quiet; then
-            git commit -m "chore: update F&O long ledger and daily signals [skip ci]"
-            git pull --rebase origin main
-            git push origin main
-          fi
+      - name: Upload Signals Artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fno-signals-${{ github.run_id }}
+          path: Quant_backend/src/screener/pipeline/fno/strategies/long/output/
+          retention-days: 14
