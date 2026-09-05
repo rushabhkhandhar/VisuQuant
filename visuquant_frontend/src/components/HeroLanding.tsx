@@ -14,12 +14,14 @@ import {
   IconTerminal,
 } from "./Icons";
 import InteractiveChart from "./InteractiveChart";
+import MarketHeatmap from "./MarketHeatmap";
 
 interface HeroLandingProps {
   onNavigate: (tab: string) => void;
+  onAnalyzeTicker?: (symbol: string) => void;
 }
 
-export default function HeroLanding({ onNavigate }: HeroLandingProps) {
+export default function HeroLanding({ onNavigate, onAnalyzeTicker }: HeroLandingProps) {
   const metrics = [
     {
       title: "Strategy CAGR",
@@ -205,7 +207,12 @@ export default function HeroLanding({ onNavigate }: HeroLandingProps) {
         </button>
       </div>
 
-      {/* 4. Live Interactive Market Terminal & Candlestick Chart */}
+      {/* 4. Real-time Market Pulse, Movers & Sector Heatmap */}
+      <MarketHeatmap
+        onAnalyzeTicker={onAnalyzeTicker || ((sym) => onNavigate("vision"))}
+      />
+
+      {/* 5. Live Interactive Market Terminal & Candlestick Chart */}
       <InteractiveChart
         initialSymbol="NIFTY"
         height={540}

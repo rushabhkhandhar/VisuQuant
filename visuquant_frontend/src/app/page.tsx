@@ -111,10 +111,13 @@ export default function Home() {
       {/* 2. Main Body Container */}
       <main style={{ maxWidth: "1280px", margin: "0 auto", padding: "24px 20px", width: "100%", flex: 1 }}>
         {activeTab === "landing" && (
-          <HeroLanding onNavigate={(tab) => {
-            handleTabChange(tab);
-            window.scrollTo({ top: 0, behavior: "smooth" });
-          }} />
+          <HeroLanding
+            onNavigate={(tab) => {
+              handleTabChange(tab);
+              window.scrollTo({ top: 0, behavior: "smooth" });
+            }}
+            onAnalyzeTicker={handleDeepAnalyze}
+          />
         )}
 
         {activeTab === "screener" && (

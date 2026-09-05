@@ -279,6 +279,22 @@ def search_symbols(q: str = ""):
     results = (prefix_matches + contains_matches)[:12]
     return {"query": query, "symbols": results}
 
+@app.get("/api/market_overview")
+def get_market_overview_endpoint(refresh: bool = False):
+    from src.services.market_service import fetch_market_overview
+    return fetch_market_overview(force_refresh=refresh)
+
+@app.get("/api/market_stream")
+def stream_market_overview(interval: int = 10):
+    from src.services.market_service import fetch_market_overview
+    import time
+    def event_generator():
+        while True:
+            data = fetch_market_overview(force_refresh=False)
+            yield f"data: {json.dumps(data)}\n\n"
+            time.sleep(max(5, min(interval, 60)))
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("src.api:app", host="0.0.0.0", port=5000, reload=True)

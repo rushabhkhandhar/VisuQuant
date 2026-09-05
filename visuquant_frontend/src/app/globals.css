@@ -561,6 +561,10 @@ html, body {
   100% { transform: rotate(360deg); }
 }
 
+.spin-animation {
+  animation: spin 0.8s linear infinite;
+}
+
 /* Gradients & Utilities */
 .text-gradient-cyan {
   background: linear-gradient(135deg, #00f0ff 0%, #0099ff 100%);
