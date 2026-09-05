@@ -221,7 +221,7 @@ class LiveTVFetcher:
 
                 cached_df = cached_dict.get(sym)
                 bars_to_fetch = n_bars
-                if cached_df is not None and not cached_df.empty:
+                if cached_df is not None and not cached_df.empty and len(cached_df) >= n_bars:
                     max_val = cached_df.index.max()
                     if pd.notna(max_val) and hasattr(max_val, 'date'):
                         days_gap = (today_date - max_val.date()).days
