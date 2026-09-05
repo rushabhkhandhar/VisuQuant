@@ -53,12 +53,18 @@ export default function BacktestView() {
       const cached = sessionStorage.getItem("visuquant_backtest_cache");
       if (cached) {
         const parsed = JSON.parse(cached);
+        // Clear obsolete dummy BASKET cache
+        if (parsed.backtestData && parsed.backtestData.symbol === "BASKET") {
+          sessionStorage.removeItem("visuquant_backtest_cache");
+          return;
+        }
         if (parsed.backtestData) setBacktestData(parsed.backtestData);
         if (parsed.symbol) setSymbol(parsed.symbol);
         if (parsed.months) setMonths(parsed.months);
       }
     } catch {}
   }, []);
+
 
   const runBacktest = async () => {
     if (!symbol.trim()) return;
@@ -252,7 +258,7 @@ export default function BacktestView() {
                     marginTop: "4px",
                   }}
                 >
-                  {backtestData.metrics?.["Win Rate (%)"] !== undefined ? `${backtestData.metrics["Win Rate (%)"]}%` : "58.3%"}
+                  {backtestData.metrics?.["Win Rate (%)"] !== undefined ? `${backtestData.metrics["Win Rate (%)"]}%` : "—"}
                 </div>
               </div>
 
@@ -267,28 +273,28 @@ export default function BacktestView() {
                     marginTop: "4px",
                   }}
                 >
-                  {backtestData.metrics?.["CAGR (%)"] !== undefined ? `${backtestData.metrics["CAGR (%)"]}%` : "+39.8%"}
+                  {backtestData.metrics?.["CAGR (%)"] !== undefined ? `${backtestData.metrics["CAGR (%)"] > 0 ? "+" : ""}${backtestData.metrics["CAGR (%)"]}%` : "—"}
                 </div>
               </div>
 
               <div className="stat-card" style={{ padding: "14px 18px" }}>
                 <div style={{ fontSize: "11px", color: "var(--text-muted)", fontWeight: 600 }}>SHARPE RATIO</div>
                 <div className="font-mono" style={{ fontSize: "22px", fontWeight: 800, color: "var(--cyan)", marginTop: "4px" }}>
-                  {backtestData.metrics?.["Sharpe Ratio"] !== undefined ? Number(backtestData.metrics["Sharpe Ratio"]).toFixed(2) : "1.84"}
+                  {backtestData.metrics?.["Sharpe Ratio"] !== undefined ? Number(backtestData.metrics["Sharpe Ratio"]).toFixed(2) : "—"}
                 </div>
               </div>
 
               <div className="stat-card" style={{ padding: "14px 18px" }}>
                 <div style={{ fontSize: "11px", color: "var(--text-muted)", fontWeight: 600 }}>MAX DRAWDOWN</div>
                 <div className="font-mono" style={{ fontSize: "22px", fontWeight: 800, color: "var(--crimson)", marginTop: "4px" }}>
-                  {backtestData.metrics?.["Max Drawdown (%)"] !== undefined ? `${backtestData.metrics["Max Drawdown (%)"]}%` : "-10.6%"}
+                  {backtestData.metrics?.["Max Drawdown (%)"] !== undefined ? `${backtestData.metrics["Max Drawdown (%)"]}%` : "—"}
                 </div>
               </div>
 
               <div className="stat-card" style={{ padding: "14px 18px" }}>
                 <div style={{ fontSize: "11px", color: "var(--text-muted)", fontWeight: 600 }}>TOTAL TRADES</div>
                 <div className="font-mono" style={{ fontSize: "22px", fontWeight: 800, color: "var(--amber)", marginTop: "4px" }}>
-                  {backtestData.metrics?.["Total Trades"] !== undefined ? backtestData.metrics["Total Trades"] : (backtestData.trades?.length || 42)}
+                  {backtestData.metrics?.["Total Trades"] !== undefined ? backtestData.metrics["Total Trades"] : (backtestData.trades?.length || 0)}
                 </div>
               </div>
 
@@ -304,14 +310,14 @@ export default function BacktestView() {
               <div className="stat-card" style={{ padding: "14px 18px" }}>
                 <div style={{ fontSize: "11px", color: "var(--text-muted)", fontWeight: 600 }}>CALMAR RATIO</div>
                 <div className="font-mono" style={{ fontSize: "22px", fontWeight: 800, color: "var(--purple)", marginTop: "4px" }}>
-                  {backtestData.metrics?.["Calmar Ratio"] !== undefined ? Number(backtestData.metrics["Calmar Ratio"]).toFixed(2) : "3.74"}
+                  {backtestData.metrics?.["Calmar Ratio"] !== undefined ? Number(backtestData.metrics["Calmar Ratio"]).toFixed(2) : "—"}
                 </div>
               </div>
 
               <div className="stat-card" style={{ padding: "14px 18px" }}>
-                <div style={{ fontSize: "11px", color: "var(--text-muted)", fontWeight: 600 }}>SORTINO RATIO</div>
+                <div style={{ fontSize: "11px", color: "var(--text-muted)", fontWeight: 600 }}>PROFIT FACTOR</div>
                 <div className="font-mono" style={{ fontSize: "22px", fontWeight: 800, color: "var(--cyan)", marginTop: "4px" }}>
-                  {backtestData.metrics?.["Sortino Ratio"] !== undefined ? Number(backtestData.metrics["Sortino Ratio"]).toFixed(2) : "2.41"}
+                  {backtestData.metrics?.["Profit Factor"] !== undefined ? Number(backtestData.metrics["Profit Factor"]).toFixed(2) : (backtestData.metrics?.["Sortino Ratio"] !== undefined ? Number(backtestData.metrics["Sortino Ratio"]).toFixed(2) : "—")}
                 </div>
               </div>
             </div>
@@ -320,16 +326,18 @@ export default function BacktestView() {
             {backtestData.trades && backtestData.trades.length > 0 ? (
               <div>
                 <h4 style={{ fontSize: "14px", fontWeight: 700, marginBottom: "12px", color: "var(--text-primary)" }}>
-                  Simulated Trade History ({backtestData.trades.length} Executed Trades)
+                  Simulated Trade History ({backtestData.trades.length} Executed Trades for {backtestData.symbol || symbol})
                 </h4>
-                <div style={{ maxHeight: "300px", overflowY: "auto", border: "1px solid var(--border-subtle)", borderRadius: "8px" }}>
+                <div style={{ maxHeight: "360px", overflowY: "auto", border: "1px solid var(--border-subtle)", borderRadius: "8px" }}>
                   <table className="terminal-table" style={{ fontSize: "12px" }}>
                     <thead>
                       <tr>
                         <th>Entry Date</th>
                         <th>Exit Date</th>
+                        <th>Holding</th>
                         <th>Entry Price</th>
                         <th>Exit Price</th>
+                        <th>Exit Catalyst</th>
                         <th style={{ textAlign: "right" }}>Net Return</th>
                       </tr>
                     </thead>
@@ -337,12 +345,30 @@ export default function BacktestView() {
                       {backtestData.trades.map((t: any, idx: number) => {
                         const ret = Number(t.return || 0);
                         const isPos = ret > 0;
+                        const reason = t.exit_reason || "Trailing SMA";
+                        const reasonClass =
+                          reason === "Target Hit"
+                            ? "badge-bullish"
+                            : reason === "Stop Loss"
+                            ? "badge-bearish"
+                            : reason === "Dead Money Cut"
+                            ? "badge-amber"
+                            : "badge-cyan";
+
                         return (
                           <tr key={idx}>
                             <td className="font-mono" style={{ color: "var(--text-secondary)" }}>{t.entry_date}</td>
                             <td className="font-mono" style={{ color: "var(--text-secondary)" }}>{t.exit_date}</td>
+                            <td className="font-mono" style={{ color: "var(--text-muted)", fontSize: "11px" }}>
+                              {t.holding_days ? `${t.holding_days} sessions` : "—"}
+                            </td>
                             <td className="font-mono">₹{Number(t.entry_price || 0).toFixed(2)}</td>
                             <td className="font-mono">₹{Number(t.exit_price || 0).toFixed(2)}</td>
+                            <td>
+                              <span className={`badge ${reasonClass}`} style={{ fontSize: "10px", padding: "2px 8px" }}>
+                                {reason}
+                              </span>
+                            </td>
                             <td
                               className="font-mono"
                               style={{
@@ -362,9 +388,10 @@ export default function BacktestView() {
               </div>
             ) : (
               <p style={{ color: "var(--text-secondary)", fontSize: "13px" }}>
-                No trades generated for this strategy during the selected horizon (extremely strict regime filter).
+                No trades generated for {backtestData.symbol || symbol} during the selected {months}-month horizon.
               </p>
             )}
+
           </div>
         )}
       </div>

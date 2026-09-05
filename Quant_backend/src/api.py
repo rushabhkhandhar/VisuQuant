@@ -202,12 +202,15 @@ def download_report(path: str, background_tasks: BackgroundTasks):
 
 @app.post("/api/backtest")
 def run_strategy_backtest(req: BacktestRequest):
-    from src.screener.pipeline.swing.backtest import run_backtest
+    from src.services.backtest_service import run_single_stock_backtest
     try:
-        results = run_backtest(months=req.months, symbols=[req.symbol.strip()], return_json=True)
-        return {"status": "success", "data": results}
+        res = run_single_stock_backtest(symbol=req.symbol, months=req.months)
+        if res.get("status") == "error":
+            return res
+        return {"status": "success", "data": res}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
 
 @app.post("/api/backtest_custom_strategy")
 def backtest_custom_strategy_endpoint(req: CustomScreenerRequest):
