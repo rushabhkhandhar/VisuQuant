@@ -649,6 +649,7 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
     for i, current_date in enumerate(test_dates):
         # 1. Update prices and check exits
         symbols_to_remove = []
+        tm = arch_config.get("trade_management")
         for sym, pos in open_positions.items():
             if sym in bulk_data:
                 df = bulk_data[sym]
@@ -659,7 +660,9 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                         
                     high, low, close = row['High'], row['Low'], row['Close']
                     pos['current_price'] = close
+                    pos_atr = pos.get('atr', 0.0)
                     
+                    # 1A. Stop Loss Hit (Evaluated BEFORE target to ensure conservative bias on intraday conflict)
                     if low <= pos['stop_loss']:
                         exit_price = pos['stop_loss']
                         net_entry_cost = pos['entry_price'] * (1 + FRICTION_PCT)
@@ -668,6 +671,7 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                         cash += pos['shares'] * exit_price * (1 - FRICTION_PCT)
                         symbols_to_remove.append(sym)
                         
+                        status = "RunnerTrailStop" if pos.get("partial_scaled", False) else ("Win" if pnl > 0 else "Loss")
                         trades_log.append({
                             "symbol": sym, 
                             "signal_date": pos.get("signal_date", pos.get("entry_date", "")),
@@ -677,33 +681,72 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                             "exit_price": exit_price,
                             "stop_loss": pos["stop_loss"],
                             "target": pos["target"],
+                            "shares": pos["shares"],
                             "pnl_pct": pnl, 
-                            "status": "Win" if pnl > 0 else "Loss"
+                            "status": status
                         })
+                    # 1B. Target Hit
                     elif high >= pos['target']:
                         exit_price = pos['target']
-                        net_entry_cost = pos['entry_price'] * (1 + FRICTION_PCT)
-                        net_exit_revenue = exit_price * (1 - FRICTION_PCT)
-                        pnl = (net_exit_revenue - net_entry_cost) / net_entry_cost
-                        cash += pos['shares'] * exit_price * (1 - FRICTION_PCT)
-                        symbols_to_remove.append(sym)
-                        trades_log.append({
-                            "symbol": sym, 
-                            "signal_date": pos.get("signal_date", pos.get("entry_date", "")),
-                            "entry_date": pos.get("entry_date", ""),
-                            "exit_date": current_date.strftime("%Y-%m-%d"),
-                            "entry_price": pos["entry_price"],
-                            "exit_price": exit_price,
-                            "stop_loss": pos["stop_loss"],
-                            "target": pos["target"],
-                            "pnl_pct": pnl, 
-                            "status": "Win"
-                        })
+                        
+                        # Partial Scale Out: Sell 50% shares, let remainder trail with unconstrained target
+                        if tm == "partial_scale_out" and not pos.get("partial_scaled", False) and pos["shares"] >= 2:
+                            scaled_shares = pos["shares"] // 2
+                            remaining_shares = pos["shares"] - scaled_shares
+                            net_entry_cost = pos['entry_price'] * (1 + FRICTION_PCT)
+                            net_exit_revenue = exit_price * (1 - FRICTION_PCT)
+                            pnl = (net_exit_revenue - net_entry_cost) / net_entry_cost
+                            cash += scaled_shares * exit_price * (1 - FRICTION_PCT)
+                            
+                            trades_log.append({
+                                "symbol": sym, 
+                                "signal_date": pos.get("signal_date", pos.get("entry_date", "")),
+                                "entry_date": pos.get("entry_date", ""),
+                                "exit_date": current_date.strftime("%Y-%m-%d"),
+                                "entry_price": pos["entry_price"],
+                                "exit_price": exit_price,
+                                "stop_loss": pos["stop_loss"],
+                                "target": pos["target"],
+                                "shares": scaled_shares,
+                                "pnl_pct": pnl, 
+                                "status": "PartialWin"
+                            })
+                            
+                            pos["shares"] = remaining_shares
+                            pos["partial_scaled"] = True
+                            pos["target"] = pos["entry_price"] + (pos_atr * 10.0) # Uncap target for runner
+                            be_stop = pos['entry_price'] * (1 + (FRICTION_PCT * 2))
+                            pos['stop_loss'] = max(pos['stop_loss'], be_stop)     # Breakeven stop on runner
+                            pos['max_sessions'] = 30                              # Extend time stop for runner
+                            pos['highest_price'] = max(pos.get('highest_price', pos['entry_price']), high)
+                            # sym is NOT added to symbols_to_remove so remaining shares ride
+                        else:
+                            net_entry_cost = pos['entry_price'] * (1 + FRICTION_PCT)
+                            net_exit_revenue = exit_price * (1 - FRICTION_PCT)
+                            pnl = (net_exit_revenue - net_entry_cost) / net_entry_cost
+                            cash += pos['shares'] * exit_price * (1 - FRICTION_PCT)
+                            symbols_to_remove.append(sym)
+                            status = "RunnerTarget" if pos.get("partial_scaled", False) else "Win"
+                            trades_log.append({
+                                "symbol": sym, 
+                                "signal_date": pos.get("signal_date", pos.get("entry_date", "")),
+                                "entry_date": pos.get("entry_date", ""),
+                                "exit_date": current_date.strftime("%Y-%m-%d"),
+                                "entry_price": pos["entry_price"],
+                                "exit_price": exit_price,
+                                "stop_loss": pos["stop_loss"],
+                                "target": pos["target"],
+                                "shares": pos["shares"],
+                                "pnl_pct": pnl, 
+                                "status": status
+                            })
+                    # 1C. Position Survives Session: Check Time Stop, EMA20 Trail, Trailing Ratchet
                     else:
-                        # Fix 3: Time-based exit after MAX_HOLDING_SESSIONS
                         entry_dt = pd.Timestamp(pos.get("entry_date", current_date))
                         sessions_held = len([d for d in test_dates[:i+1] if d >= entry_dt]) - 1
-                        if sessions_held >= MAX_HOLDING_SESSIONS:
+                        max_sess = pos.get("max_sessions", MAX_HOLDING_SESSIONS)
+                        
+                        if sessions_held >= max_sess:
                             exit_price = close
                             net_entry_cost = pos['entry_price'] * (1 + FRICTION_PCT)
                             net_exit_revenue = exit_price * (1 - FRICTION_PCT)
@@ -719,20 +762,64 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                                 "exit_price": exit_price,
                                 "stop_loss": pos["stop_loss"],
                                 "target": pos["target"],
+                                "shares": pos["shares"],
                                 "pnl_pct": pnl, 
                                 "status": "TimeStop"
                             })
                         else:
-                            # Position survives session: track highest price & check trailing stop
                             pos['highest_price'] = max(pos.get('highest_price', pos['entry_price']), high)
-                            if arch_config.get("trailing_stop") == "breakeven_then_trail":
-                                pos_atr = pos.get('atr', 0.0)
-                                if pos_atr > 0:
-                                    # Breakeven condition: high reached +2.0 ATR
+                            
+                            ema20_triggered = False
+                            if tm == "ema20_dynamic_trail" and pos_atr > 0:
+                                if pos['highest_price'] >= pos['entry_price'] + (2.5 * pos_atr):
+                                    stock_hist = df[df.index <= current_date]
+                                    if len(stock_hist) >= 20:
+                                        ema20_val = talib.EMA(stock_hist['Close'], timeperiod=20).iloc[-1]
+                                        if pd.notna(ema20_val) and close < ema20_val:
+                                            exit_price = close
+                                            net_entry_cost = pos['entry_price'] * (1 + FRICTION_PCT)
+                                            net_exit_revenue = exit_price * (1 - FRICTION_PCT)
+                                            pnl = (net_exit_revenue - net_entry_cost) / net_entry_cost
+                                            cash += pos['shares'] * exit_price * (1 - FRICTION_PCT)
+                                            symbols_to_remove.append(sym)
+                                            trades_log.append({
+                                                "symbol": sym, 
+                                                "signal_date": pos.get("signal_date", pos.get("entry_date", "")),
+                                                "entry_date": pos.get("entry_date", ""),
+                                                "exit_date": current_date.strftime("%Y-%m-%d"),
+                                                "entry_price": pos["entry_price"],
+                                                "exit_price": exit_price,
+                                                "stop_loss": pos["stop_loss"],
+                                                "target": pos["target"],
+                                                "shares": pos["shares"],
+                                                "pnl_pct": pnl, 
+                                                "status": "EMA20Trail"
+                                            })
+                                            ema20_triggered = True
+                            
+                            if not ema20_triggered:
+                                if tm == "breakeven_lock" and pos_atr > 0:
+                                    if pos['highest_price'] >= pos['entry_price'] + (2.5 * pos_atr):
+                                        be_stop = pos['entry_price'] * (1 + (FRICTION_PCT * 2))
+                                        pos['stop_loss'] = max(pos['stop_loss'], be_stop)
+                                elif tm == "partial_scale_out" and pos.get("partial_scaled", False) and pos_atr > 0:
+                                    trail_stop = pos['highest_price'] - (2.5 * pos_atr)
+                                    be_stop = pos['entry_price'] * (1 + (FRICTION_PCT * 2))
+                                    pos['stop_loss'] = max(pos['stop_loss'], be_stop, trail_stop)
+                                elif tm == "chandelier_runner" and pos_atr > 0:
+                                    if pos['highest_price'] >= pos['entry_price'] + (2.0 * pos_atr):
+                                        trail_stop = pos['highest_price'] - (2.5 * pos_atr)
+                                        pos['stop_loss'] = max(pos['stop_loss'], trail_stop)
+                                elif tm == "regime_adaptive_targets" and pos_atr > 0:
+                                    if pos.get("tm_mode") == "regime_bull":
+                                        if pos['highest_price'] >= pos['entry_price'] + (3.0 * pos_atr):
+                                            be_stop = pos['entry_price'] * (1 + (FRICTION_PCT * 2))
+                                            trail_stop = pos['highest_price'] - (2.0 * pos_atr)
+                                            pos['stop_loss'] = max(pos['stop_loss'], be_stop, trail_stop)
+                                elif arch_config.get("trailing_stop") == "breakeven_then_trail" and pos_atr > 0:
                                     if pos['highest_price'] >= pos['entry_price'] + (2.0 * pos_atr):
                                         be_stop = pos['entry_price'] * (1 + (FRICTION_PCT * 2))
                                         pos['stop_loss'] = max(pos['stop_loss'], be_stop)
-                                    # Trailing condition: high reached +3.0 ATR -> trail 1.5 ATR below peak
                                     if pos['highest_price'] >= pos['entry_price'] + (3.0 * pos_atr):
                                         trail_stop = pos['highest_price'] - (1.5 * pos_atr)
                                         pos['stop_loss'] = max(pos['stop_loss'], trail_stop)
@@ -888,6 +975,29 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                         if pd.notna(atr) and atr > 0:
                             risk_atr = arch_config.get("risk_atr", RISK_ATR)
                             reward_atr = arch_config.get("reward_atr", REWARD_ATR)
+                            max_sessions = MAX_HOLDING_SESSIONS
+                            tm_mode = ""
+                            
+                            tm = arch_config.get("trade_management")
+                            if tm == "chandelier_runner":
+                                reward_atr = arch_config.get("reward_atr", 10.0)
+                                max_sessions = 25
+                            elif tm == "regime_adaptive_targets":
+                                bcr_val = bcr_series.get(pd.Timestamp(current_date), 0.5)
+                                if bcr_val > 0.65:
+                                    reward_atr = 6.0
+                                    risk_atr = 2.0
+                                    max_sessions = 20
+                                    tm_mode = "regime_bull"
+                                else:
+                                    reward_atr = 3.5
+                                    risk_atr = 2.0
+                                    max_sessions = 12
+                                    tm_mode = "regime_chop"
+                            elif tm == "ema20_dynamic_trail":
+                                reward_atr = arch_config.get("reward_atr", 6.0)
+                                risk_atr = arch_config.get("risk_atr", 2.0)
+                                max_sessions = 25
                             
                             # A2+A3: Adaptive Risk/Reward based on confirmation
                             if arch_config.get("adaptive_rr") and sizing_logic == "alpha_confirmation":
@@ -917,6 +1027,8 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                                 "risk_pct": risk_pct,
                                 "alpha_score": alpha_score,
                                 "confirmed": is_confirmed,
+                                "max_sessions": max_sessions,
+                                "tm_mode": tm_mode,
                             })
                             
         # Allocate cash
@@ -974,7 +1086,10 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                             "highest_price": cand['price'],
                             "stop_loss": cand['stop_loss'],
                             "target": cand['target'],
-                            "atr": cand.get('atr', 0.0)
+                            "atr": cand.get('atr', 0.0),
+                            "max_sessions": cand.get('max_sessions', MAX_HOLDING_SESSIONS),
+                            "tm_mode": cand.get('tm_mode', ''),
+                            "partial_scaled": False,
                         }
             else:
                 for cand in new_candidates:
@@ -997,7 +1112,10 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                             "highest_price": cand['price'],
                             "stop_loss": cand['stop_loss'],
                             "target": cand['target'],
-                            "atr": cand.get('atr', 0.0)
+                            "atr": cand.get('atr', 0.0),
+                            "max_sessions": cand.get('max_sessions', MAX_HOLDING_SESSIONS),
+                            "tm_mode": cand.get('tm_mode', ''),
+                            "partial_scaled": False,
                         }
                     
         total_equity = cash + sum(p['shares'] * p['current_price'] for p in open_positions.values())
@@ -1100,42 +1218,7 @@ def main():
     
     ARCHITECTURES = [
         {
-            "name": "E14_Strict_AVWAP",
-            "primary": avwap_strat,
-            "primary_momentum": avwap_strat,
-            "confirmation_momentum": vol_strat,
-            "primary_meanrev": pullback_strat,
-            "confirmation_meanrev": connors_strat,
-            "sizing_logic": "alpha_confirmation",
-            "dynamic_risk_scaling": False,
-            "dd_penalty_factor": 5.0,
-            "friction_pct": 0.0015,
-            "rank_candidates": True,
-            "regime_adaptive": True,
-            "bcr_threshold": BCR_THRESHOLD,
-            "cash_preservation": True,
-            "breadth_threshold": BREADTH_THRESHOLD
-        },
-        {
-            "name": "E18_Top_Sector_AVWAP",
-            "primary": avwap_strat,
-            "primary_momentum": avwap_strat,
-            "confirmation_momentum": vol_strat,
-            "primary_meanrev": pullback_strat,
-            "confirmation_meanrev": connors_strat,
-            "sizing_logic": "alpha_confirmation",
-            "dynamic_risk_scaling": False,
-            "dd_penalty_factor": 5.0,
-            "friction_pct": 0.0015,
-            "rank_candidates": True,
-            "regime_adaptive": True,
-            "bcr_threshold": BCR_THRESHOLD,
-            "cash_preservation": True,
-            "breadth_threshold": BREADTH_THRESHOLD,
-            "require_top_sectors": 3
-        },
-        {
-            "name": "E19_Dual_AVWAP_Confluence",
+            "name": "E19_Baseline",
             "primary": dual_avwap_strat,
             "primary_momentum": dual_avwap_strat,
             "confirmation_momentum": vol_strat,
@@ -1149,12 +1232,15 @@ def main():
             "regime_adaptive": True,
             "bcr_threshold": BCR_THRESHOLD,
             "cash_preservation": True,
-            "breadth_threshold": BREADTH_THRESHOLD
+            "breadth_threshold": BREADTH_THRESHOLD,
+            "trade_management": None,
+            "risk_atr": 2.0,
+            "reward_atr": 4.0
         },
         {
-            "name": "E20_Adaptive_Expansion_AVWAP",
-            "primary": avwap_strat,
-            "primary_momentum": avwap_strat,
+            "name": "E19_T1_Breakeven_Lock",
+            "primary": dual_avwap_strat,
+            "primary_momentum": dual_avwap_strat,
             "confirmation_momentum": vol_strat,
             "primary_meanrev": pullback_strat,
             "confirmation_meanrev": connors_strat,
@@ -1167,33 +1253,14 @@ def main():
             "bcr_threshold": BCR_THRESHOLD,
             "cash_preservation": True,
             "breadth_threshold": BREADTH_THRESHOLD,
-            "adaptive_target_expansion": True,
-            "confirmed_reward_atr": 5.0,
-            "confirmed_risk_atr": 2.0,
-            "primary_reward_atr": 4.0,
-            "primary_risk_atr": 2.0
+            "trade_management": "breakeven_lock",
+            "risk_atr": 2.0,
+            "reward_atr": 4.0
         },
         {
-            "name": "E21_Volume_Surge_AVWAP",
-            "primary": vol_surge_strat,
-            "primary_momentum": vol_surge_strat,
-            "confirmation_momentum": vol_strat,
-            "primary_meanrev": pullback_strat,
-            "confirmation_meanrev": connors_strat,
-            "sizing_logic": "alpha_confirmation",
-            "dynamic_risk_scaling": False,
-            "dd_penalty_factor": 5.0,
-            "friction_pct": 0.0015,
-            "rank_candidates": True,
-            "regime_adaptive": True,
-            "bcr_threshold": BCR_THRESHOLD,
-            "cash_preservation": True,
-            "breadth_threshold": BREADTH_THRESHOLD
-        },
-        {
-            "name": "E22_Alpha_Max_Ensemble",
-            "primary": dual_avwap_vol_strat,
-            "primary_momentum": dual_avwap_vol_strat,
+            "name": "E19_T2_Partial_Scale_Out",
+            "primary": dual_avwap_strat,
+            "primary_momentum": dual_avwap_strat,
             "confirmation_momentum": vol_strat,
             "primary_meanrev": pullback_strat,
             "confirmation_meanrev": connors_strat,
@@ -1206,12 +1273,69 @@ def main():
             "bcr_threshold": BCR_THRESHOLD,
             "cash_preservation": True,
             "breadth_threshold": BREADTH_THRESHOLD,
-            "require_top_sectors": 4,
-            "adaptive_target_expansion": True,
-            "confirmed_reward_atr": 5.0,
-            "confirmed_risk_atr": 2.0,
-            "primary_reward_atr": 4.0,
-            "primary_risk_atr": 2.0
+            "trade_management": "partial_scale_out",
+            "risk_atr": 2.0,
+            "reward_atr": 4.0
+        },
+        {
+            "name": "E19_T3_Chandelier_Runner",
+            "primary": dual_avwap_strat,
+            "primary_momentum": dual_avwap_strat,
+            "confirmation_momentum": vol_strat,
+            "primary_meanrev": pullback_strat,
+            "confirmation_meanrev": connors_strat,
+            "sizing_logic": "alpha_confirmation",
+            "dynamic_risk_scaling": False,
+            "dd_penalty_factor": 5.0,
+            "friction_pct": 0.0015,
+            "rank_candidates": True,
+            "regime_adaptive": True,
+            "bcr_threshold": BCR_THRESHOLD,
+            "cash_preservation": True,
+            "breadth_threshold": BREADTH_THRESHOLD,
+            "trade_management": "chandelier_runner",
+            "risk_atr": 2.0,
+            "reward_atr": 10.0
+        },
+        {
+            "name": "E19_T4_Regime_Adaptive_Targets",
+            "primary": dual_avwap_strat,
+            "primary_momentum": dual_avwap_strat,
+            "confirmation_momentum": vol_strat,
+            "primary_meanrev": pullback_strat,
+            "confirmation_meanrev": connors_strat,
+            "sizing_logic": "alpha_confirmation",
+            "dynamic_risk_scaling": False,
+            "dd_penalty_factor": 5.0,
+            "friction_pct": 0.0015,
+            "rank_candidates": True,
+            "regime_adaptive": True,
+            "bcr_threshold": BCR_THRESHOLD,
+            "cash_preservation": True,
+            "breadth_threshold": BREADTH_THRESHOLD,
+            "trade_management": "regime_adaptive_targets",
+            "risk_atr": 2.0,
+            "reward_atr": 4.0
+        },
+        {
+            "name": "E19_T5_EMA20_Dynamic_Trail",
+            "primary": dual_avwap_strat,
+            "primary_momentum": dual_avwap_strat,
+            "confirmation_momentum": vol_strat,
+            "primary_meanrev": pullback_strat,
+            "confirmation_meanrev": connors_strat,
+            "sizing_logic": "alpha_confirmation",
+            "dynamic_risk_scaling": False,
+            "dd_penalty_factor": 5.0,
+            "friction_pct": 0.0015,
+            "rank_candidates": True,
+            "regime_adaptive": True,
+            "bcr_threshold": BCR_THRESHOLD,
+            "cash_preservation": True,
+            "breadth_threshold": BREADTH_THRESHOLD,
+            "trade_management": "ema20_dynamic_trail",
+            "risk_atr": 2.0,
+            "reward_atr": 6.0
         }
     ]
     

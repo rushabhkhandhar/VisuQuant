@@ -81,7 +81,63 @@ In the recent 2-year out-of-sample period (August 2024 to September 2026), **`E1
 
 ---
 
-## 5. Verification Files in the Project Directory
+---
+
+## 5. Dynamic Trade Management & Runner Trailing Benchmark (Option 1)
+
+We formulated, executed, and benchmarked 5 distinct trade management and trailing exit models directly against the baseline champion **`E19_Baseline`** on the exact same ₹1,00,000 capital, 6-year universe (2020–2026), and 0.30% round-trip friction.
+
+### 5.1 Comprehensive Trade Management Tear Sheet (6.0 Years)
+
+| Architecture | Net Profit (₹) on 1L | CAGR (%) | Net Avg Monthly Ret (%) | Compounded Monthly Ret (%) | Monthly Win Rate (%) | Best Month (%) | Worst Month (%) | Max DD (%) | Sharpe | Calmar | Trades | Win Rate (%) | Profit Factor | Turnover |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| 🏆 **E19_Baseline** | **₹6,72,090.63** | **39.39%** | **3.09%** | **2.88%** | **69.44%** | **+24.11%** | -8.50% | **-16.28%** | **2.228** | **2.420** | 389 | 53.98% | 2.126 | **238.44** |
+| 🥈 **E19_T1_Breakeven_Lock** | ₹3,82,413.24 | 29.14% | 2.37% | 2.21% | 66.67% | +20.58% | -9.51% | -18.52% | 1.812 | 1.574 | 410 | 44.15% | 1.865 | 182.28 |
+| 🥉 **E19_T2_Partial_Scale_Out** | ₹3,68,171.50 | 28.51% | 2.32% | 2.17% | 63.89% | +13.34% | -8.26% | -22.54% | 1.614 | 1.265 | 472 | **62.71%** | **3.470** | 162.91 |
+| **E19_T5_EMA20_Dynamic_Trail** | ₹2,72,212.55 | 23.81% | 2.03% | 1.84% | 55.56% | +16.98% | -9.83% | -22.95% | 1.451 | 1.038 | 370 | 50.00% | 1.714 | 163.57 |
+| **E19_T4_Regime_Adaptive_Targets** | ₹2,49,421.65 | 22.55% | 1.88% | 1.75% | 58.33% | +15.95% | -8.47% | -17.15% | 1.457 | 1.314 | 533 | 53.10% | 1.600 | 232.48 |
+| **E19_T3_Chandelier_Runner** | ₹2,30,164.05 | 21.42% | 1.87% | 1.67% | 61.11% | +17.47% | -8.06% | -21.28% | 1.327 | 1.007 | 398 | 46.98% | 1.620 | 166.49 |
+
+---
+
+### 5.2 Out-of-Sample Holdout Comparison (2024-08-26 to 2026-09-04)
+
+*Frozen parameters across 518 trading days without retuning:*
+
+| Architecture | Holdout Start Equity | Holdout End Equity | Holdout Total Ret (%) | Holdout CAGR (%) | Holdout Net Avg Monthly Ret (%) | Holdout Monthly Win Rate (%) | Holdout Max DD (%) |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| 🏆 **E19_Baseline** | ₹4,35,378.37 | **₹7,72,061.34** | **+77.33%** | **32.73%** | **2.42% / month** | **68.0%** | **-11.95%** |
+| 🥈 **E19_T1_Breakeven_Lock** | ₹3,27,479.72 | ₹4,82,383.94 | +47.30% | 21.10% | 1.67% / month | 56.0% | -11.19% |
+| 🥉 **E19_T2_Partial_Scale_Out** | ₹3,44,357.73 | ₹4,68,142.21 | +35.95% | 16.39% | 1.26% / month | 60.0% | -12.16% |
+| **E19_T4_Regime_Adaptive_Targets** | ₹2,91,581.57 | ₹3,49,392.35 | +19.83% | 9.35% | 0.79% / month | 44.0% | **-10.50%** |
+| **E19_T5_EMA20_Dynamic_Trail** | ₹3,13,959.98 | ₹3,72,183.25 | +18.54% | 8.77% | 0.81% / month | 44.0% | -19.33% |
+| **E19_T3_Chandelier_Runner** | ₹2,85,610.62 | ₹3,30,134.75 | +15.59% | 7.42% | 0.64% / month | 60.0% | -13.16% |
+
+---
+
+### 5.3 Quantitative Analysis: Why Fixed 1:2 R:R Outperforms Trailing Stops
+
+This backtest reveals a profound mathematical reality in quantitative swing trading on Indian equities:
+
+1. **The "Giveback" Penalty of Trailing Stops**:
+   - For any trailing stop (Chandelier, EMA20) to exit, the stock must pull back by $2.0\times$ to $2.5\times$ ATR from its peak.
+   - When a stock surges to $+4.0\times$ ATR, `E19_Baseline` sells at the exact crest of momentum (+10% gain).
+   - A trailing stop forces the system to hold through the consolidation, giving back $2.5\times$ ATR (over 60% of open profits) before exiting.
+   
+2. **Capital Velocity & Turnover Efficiency**:
+   - `E19_Baseline` achieved a Turnover of **238.44**, booking gains cleanly in 5–10 sessions and immediately freeing up 100% of the capital into cash to enter the next top-ranked breakout.
+   - Trailing stops reduced turnover to **162–166** by tying up capital in consolidating positions, starving the portfolio of fresh momentum entries.
+
+3. **The Premature Breakeven Shakeout**:
+   - Moving stop loss to Breakeven once price reaches $+2.5\times$ ATR (`E19_T1`) dropped the trade win rate from **53.98% down to 44.15%**.
+   - Normal, healthy breakout stocks routinely retest their breakout level before surging to target. Breakeven stops caused premature scratch-outs right before target hits.
+
+4. **Verdict**:
+   - The original **`E19_Baseline` (Fixed 2.0× ATR Stop, Fixed 4.0× ATR Target, 15-day Time Stop)** remains the unassailable champion with **39.39% CAGR**, **₹6,72,090 Net Profit**, **3.09% Net Monthly Return**, **69.44% Monthly Win Rate**, and **2.228 Sharpe Ratio**.
+
+---
+
+## 6. Verification Files in the Project Directory
 
 All raw backtest results, trade logs, and monthly matrices are saved directly in `Quant_backend/front_testing/`:
 
@@ -89,7 +145,7 @@ All raw backtest results, trade logs, and monthly matrices are saved directly in
 2. **Monthly Returns Breakdown Matrix**: [`Quant_backend/front_testing/monthly_returns_breakdown.csv`](file:///Users/rushabhkhandhar/Desktop/Trading/finvison_tech_analysis/Quant_backend/front_testing/monthly_returns_breakdown.csv)
 3. **Out-of-Sample Validation Report**: [`Quant_backend/front_testing/validation_report.csv`](file:///Users/rushabhkhandhar/Desktop/Trading/finvison_tech_analysis/Quant_backend/front_testing/validation_report.csv)
 4. **Equity Curves (Daily)**: [`Quant_backend/front_testing/strategy_equity_curves.csv`](file:///Users/rushabhkhandhar/Desktop/Trading/finvison_tech_analysis/Quant_backend/front_testing/strategy_equity_curves.csv)
-5. **E19 Trade-by-Trade Log**: [`Quant_backend/front_testing/E19_Dual_AVWAP_Confluence_backtest_trades.csv`](file:///Users/rushabhkhandhar/Desktop/Trading/finvison_tech_analysis/Quant_backend/front_testing/E19_Dual_AVWAP_Confluence_backtest_trades.csv)
-6. **E14 Trade-by-Trade Log**: [`Quant_backend/front_testing/E14_Strict_AVWAP_backtest_trades.csv`](file:///Users/rushabhkhandhar/Desktop/Trading/finvison_tech_analysis/Quant_backend/front_testing/E14_Strict_AVWAP_backtest_trades.csv)
-7. **E19 Daily Exposure & Sizing**: [`Quant_backend/front_testing/E19_Dual_AVWAP_Confluence_exposure.csv`](file:///Users/rushabhkhandhar/Desktop/Trading/finvison_tech_analysis/Quant_backend/front_testing/E19_Dual_AVWAP_Confluence_exposure.csv)
-8. **Run Configuration JSON**: [`Quant_backend/front_testing/backtest_run_config.json`](file:///Users/rushabhkhandhar/Desktop/Trading/finvison_tech_analysis/Quant_backend/front_testing/backtest_run_config.json)
+5. **E19 Baseline Trades**: [`Quant_backend/front_testing/E19_Baseline_backtest_trades.csv`](file:///Users/rushabhkhandhar/Desktop/Trading/finvison_tech_analysis/Quant_backend/front_testing/E19_Baseline_backtest_trades.csv)
+6. **E19 Exposure Log**: [`Quant_backend/front_testing/E19_Baseline_exposure.csv`](file:///Users/rushabhkhandhar/Desktop/Trading/finvison_tech_analysis/Quant_backend/front_testing/E19_Baseline_exposure.csv)
+7. **Run Configuration JSON**: [`Quant_backend/front_testing/backtest_run_config.json`](file:///Users/rushabhkhandhar/Desktop/Trading/finvison_tech_analysis/Quant_backend/front_testing/backtest_run_config.json)
+
