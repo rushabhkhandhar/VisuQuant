@@ -226,6 +226,15 @@ def backtest_custom_strategy_endpoint(req: CustomScreenerRequest):
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
+@app.get("/api/company_filings")
+def get_company_filings(symbol: str):
+    from src.data.screener_in_client import get_screener_data_sync
+    try:
+        data = get_screener_data_sync(symbol.strip().upper())
+        return {"status": "success", "data": data}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("src.api:app", host="0.0.0.0", port=5000, reload=True)
