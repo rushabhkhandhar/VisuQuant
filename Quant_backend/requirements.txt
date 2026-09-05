@@ -1,6 +1,3 @@
-langgraph
-ollama
-playwright
 pandas
 numpy
 requests
@@ -9,16 +6,10 @@ scikit-learn
 scipy
 TA-Lib
 git+https://github.com/rongardF/tvdatafeed.git
-langchain-core
-# pandas-ta removed - abandoned on PyPI (requires Python >=3.12), use talib instead
-PyMuPDF
 pytest
-fastapi
-uvicorn
 mplfinance
 matplotlib
 PyPortfolioOpt==1.5.5
-xhtml2pdf
 jinja2
-json_repair
 pyarrow
+tabulate
