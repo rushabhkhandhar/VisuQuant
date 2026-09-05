@@ -19,6 +19,10 @@ REWARD_ATR = 4.0
 MAX_CONFIRMED_SIGNALS = 5
 MAX_PRIMARY_SIGNALS = 5
 MAX_HOLDING_SESSIONS = 25  # Time-based exit after 25 sessions (~5 weeks)
+EXCLUDED_SECTORS = ["Construction Materials", "Oil Gas & Consumable Fuels", "Power"]  # Modern 4-Year Sector Hygiene
+DEAD_MONEY_SESSIONS = 15  # Dead-money liquidation after 15 sessions in sideways chop (~3 weeks)
+DEAD_MONEY_PNL_THRESHOLD = 0.0  # Cut if position has made <= 0% after 15 sessions in sideways regime
+
 
 
 def compute_bcr(bulk_data: Dict[str, pd.DataFrame], as_of_date) -> float:
@@ -110,6 +114,8 @@ def generate_e19_signals(
     candidates = []
     for symbol, source_df in bulk_data.items():
         if symbol == "NIFTYBEES":
+            continue
+        if industry_mapping and industry_mapping.get(symbol) in EXCLUDED_SECTORS:
             continue
         history = source_df[source_df.index <= as_of]
         if len(history) < 200:

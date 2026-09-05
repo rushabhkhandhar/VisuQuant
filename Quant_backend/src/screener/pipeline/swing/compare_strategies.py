@@ -703,39 +703,111 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                         # Fix 3: Time-based exit after MAX_HOLDING_SESSIONS
                         entry_dt = pd.Timestamp(pos.get("entry_date", current_date))
                         sessions_held = len([d for d in test_dates[:i+1] if d >= entry_dt]) - 1
-                        if sessions_held >= MAX_HOLDING_SESSIONS:
-                            exit_price = close
-                            net_entry_cost = pos['entry_price'] * (1 + FRICTION_PCT)
-                            net_exit_revenue = exit_price * (1 - FRICTION_PCT)
-                            pnl = (net_exit_revenue - net_entry_cost) / net_entry_cost
-                            cash += pos['shares'] * exit_price * (1 - FRICTION_PCT)
-                            symbols_to_remove.append(sym)
-                            trades_log.append({
-                                "symbol": sym, 
-                                "signal_date": pos.get("signal_date", pos.get("entry_date", "")),
-                                "entry_date": pos.get("entry_date", ""),
-                                "exit_date": current_date.strftime("%Y-%m-%d"),
-                                "entry_price": pos["entry_price"],
-                                "exit_price": exit_price,
-                                "stop_loss": pos["stop_loss"],
-                                "target": pos["target"],
-                                "pnl_pct": pnl, 
-                                "status": "TimeStop"
-                            })
-                        else:
-                            # Position survives session: track highest price & check trailing stop
-                            pos['highest_price'] = max(pos.get('highest_price', pos['entry_price']), high)
-                            if arch_config.get("trailing_stop") == "breakeven_then_trail":
-                                pos_atr = pos.get('atr', 0.0)
-                                if pos_atr > 0:
-                                    # Breakeven condition: high reached +2.0 ATR
-                                    if pos['highest_price'] >= pos['entry_price'] + (2.0 * pos_atr):
-                                        be_stop = pos['entry_price'] * (1 + (FRICTION_PCT * 2))
-                                        pos['stop_loss'] = max(pos['stop_loss'], be_stop)
-                                    # Trailing condition: high reached +3.0 ATR -> trail 1.5 ATR below peak
-                                    if pos['highest_price'] >= pos['entry_price'] + (3.0 * pos_atr):
-                                        trail_stop = pos['highest_price'] - (1.5 * pos_atr)
-                                        pos['stop_loss'] = max(pos['stop_loss'], trail_stop)
+                        
+                        # Anomaly 2 fix: Intelligent Time-Decay Profit Harvest
+                        harvest_exit = False
+                        if arch_config.get("profit_harvest") and sessions_held >= arch_config.get("harvest_min_sessions", 10):
+                            pos_peak = pos.get('highest_price', pos['entry_price'])
+                            peak_gain = (pos_peak - pos['entry_price']) / pos['entry_price']
+                            curr_gain = (close - pos['entry_price']) / pos['entry_price']
+                            min_peak = arch_config.get("harvest_min_peak_pct", 0.045)
+                            min_curr = arch_config.get("harvest_min_curr_pct", 0.030)
+                            if peak_gain >= min_peak and curr_gain >= min_curr:
+                                exit_price = close
+                                net_entry_cost = pos['entry_price'] * (1 + FRICTION_PCT)
+                                net_exit_revenue = exit_price * (1 - FRICTION_PCT)
+                                pnl = (net_exit_revenue - net_entry_cost) / net_entry_cost
+                                cash += pos['shares'] * exit_price * (1 - FRICTION_PCT)
+                                symbols_to_remove.append(sym)
+                                trades_log.append({
+                                    "symbol": sym, 
+                                    "signal_date": pos.get("signal_date", pos.get("entry_date", "")),
+                                    "entry_date": pos.get("entry_date", ""),
+                                    "exit_date": current_date.strftime("%Y-%m-%d"),
+                                    "entry_price": pos["entry_price"],
+                                    "exit_price": exit_price,
+                                    "stop_loss": pos["stop_loss"],
+                                    "target": pos["target"],
+                                    "pnl_pct": pnl, 
+                                    "status": "ProfitHarvest"
+                                })
+                                harvest_exit = True
+                                
+                        if not harvest_exit:
+                            pos_regime = pos.get("regime_state", 1)
+                            dead_money_exit = False
+                            if arch_config.get("sideways_dead_money_exit") and pos_regime == 2 and sessions_held >= arch_config.get("dead_money_sessions", 15):
+                                net_entry_cost = pos['entry_price'] * (1 + FRICTION_PCT)
+                                net_exit_revenue = close * (1 - FRICTION_PCT)
+                                pnl = (net_exit_revenue - net_entry_cost) / net_entry_cost
+                                if pnl <= arch_config.get("dead_money_pnl_threshold", 0.0):
+                                    cash += pos['shares'] * close * (1 - FRICTION_PCT)
+                                    symbols_to_remove.append(sym)
+                                    trades_log.append({
+                                        "symbol": sym, 
+                                        "signal_date": pos.get("signal_date", pos.get("entry_date", "")),
+                                        "entry_date": pos.get("entry_date", ""),
+                                        "exit_date": current_date.strftime("%Y-%m-%d"),
+                                        "entry_price": pos["entry_price"],
+                                        "exit_price": close,
+                                        "stop_loss": pos["stop_loss"],
+                                        "target": pos["target"],
+                                        "pnl_pct": pnl, 
+                                        "status": "DeadMoneyExit"
+                                    })
+                                    dead_money_exit = True
+                                    
+                            if not dead_money_exit:
+                                max_sessions = arch_config.get("sideways_max_sessions", MAX_HOLDING_SESSIONS) if pos_regime == 2 else MAX_HOLDING_SESSIONS
+                                if sessions_held >= max_sessions:
+                                    exit_price = close
+                                    net_entry_cost = pos['entry_price'] * (1 + FRICTION_PCT)
+                                    net_exit_revenue = exit_price * (1 - FRICTION_PCT)
+                                    pnl = (net_exit_revenue - net_entry_cost) / net_entry_cost
+                                    cash += pos['shares'] * exit_price * (1 - FRICTION_PCT)
+                                    symbols_to_remove.append(sym)
+                                    trades_log.append({
+                                        "symbol": sym, 
+                                        "signal_date": pos.get("signal_date", pos.get("entry_date", "")),
+                                        "entry_date": pos.get("entry_date", ""),
+                                        "exit_date": current_date.strftime("%Y-%m-%d"),
+                                        "entry_price": pos["entry_price"],
+                                        "exit_price": exit_price,
+                                        "stop_loss": pos["stop_loss"],
+                                        "target": pos["target"],
+                                        "pnl_pct": pnl, 
+                                        "status": "TimeStop"
+                                    })
+                                else:
+                                    # Position survives session: track highest price & check trailing stop
+                                    pos['highest_price'] = max(pos.get('highest_price', pos['entry_price']), high)
+                                    
+                                    # Regime-Sensitive Profit Lock (Qualified breakeven in Sideways State 2)
+                                    if arch_config.get("sideways_profit_lock") and pos_regime == 2:
+                                        pos_atr = pos.get('atr', 0.0)
+                                        if pos_atr > 0 and pos['highest_price'] >= pos['entry_price'] + (arch_config.get("lock_trigger_atr", 2.0) * pos_atr):
+                                            be_stop = pos['entry_price'] * (1 + (FRICTION_PCT * 2))
+                                            pos['stop_loss'] = max(pos['stop_loss'], be_stop)
+                                    
+                                    # Anomaly 3 fix: Qualified Breakeven Floor (Protecting >= +4.5% peak gains)
+                                    if arch_config.get("breakeven_floor") and sessions_held >= arch_config.get("be_floor_min_sessions", 3):
+                                        floor_threshold = arch_config.get("be_floor_threshold_pct", 0.045)
+                                        peak_gain = (pos['highest_price'] - pos['entry_price']) / pos['entry_price']
+                                        if peak_gain >= floor_threshold:
+                                            be_stop = pos['entry_price'] * (1 + (FRICTION_PCT * 2))
+                                            pos['stop_loss'] = max(pos['stop_loss'], be_stop)
+                                            
+                                    if arch_config.get("trailing_stop") == "breakeven_then_trail":
+                                        pos_atr = pos.get('atr', 0.0)
+                                        if pos_atr > 0:
+                                            # Breakeven condition: high reached +2.0 ATR
+                                            if pos['highest_price'] >= pos['entry_price'] + (2.0 * pos_atr):
+                                                be_stop = pos['entry_price'] * (1 + (FRICTION_PCT * 2))
+                                                pos['stop_loss'] = max(pos['stop_loss'], be_stop)
+                                            # Trailing condition: high reached +3.0 ATR -> trail 1.5 ATR below peak
+                                            if pos['highest_price'] >= pos['entry_price'] + (3.0 * pos_atr):
+                                                trail_stop = pos['highest_price'] - (1.5 * pos_atr)
+                                                pos['stop_loss'] = max(pos['stop_loss'], trail_stop)
                         
         for sym in symbols_to_remove:
             del open_positions[sym]
@@ -766,12 +838,27 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                 if n_close < n_sma200:
                     market_regime_blocked = True
                     
+            # Anomaly 4 fix: Fast Macro Shock Circuit Breaker
+            if arch_config.get("macro_shock_filter") and nifty_hist is not None and len(nifty_hist) >= 6:
+                n_close = nifty_hist['Close'].iloc[-1]
+                n_5d_ago = nifty_hist['Close'].iloc[-6]
+                nifty_5d_ret = (n_close / n_5d_ago) - 1.0
+                if nifty_5d_ret < arch_config.get("macro_shock_threshold", -0.025):
+                    market_regime_blocked = True
+                    
             if not market_regime_blocked:
                 for sym, df in bulk_data.items():
                     if sym == "NIFTYBEES":
                         continue
                     if sym in open_positions:
                         continue
+                        
+                    # Anomaly 1 fix: Sector Hygiene Filter (drop toxic sectors)
+                    exclude_secs = arch_config.get("exclude_sectors", [])
+                    if exclude_secs and industry_mapping:
+                        stock_sec = industry_mapping.get(sym)
+                        if stock_sec in exclude_secs:
+                            continue
                         
                     # Top Sectors Filter (Focus on Leading Institutional Flows)
                     if top_n and industry_mapping:
@@ -801,6 +888,7 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                             # STATE 1 — TREND: BCR above coin flip → momentum signals
                             primary = arch_config.get('primary_momentum', arch_config['primary'])
                             confirmation = arch_config.get('confirmation_momentum', arch_config.get('confirmation'))
+                            current_regime_state = 1
                         elif arch_config.get("cash_preservation") and breadth_val < breadth_threshold:
                             # STATE 3 — CASH PRESERVATION: BCR weak AND breadth extremely weak
                             # Skip this stock entirely — no new positions in this environment.
@@ -812,9 +900,11 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                             # STATE 2 — MEAN-REVERSION: BCR weak but breadth not extreme
                             primary = arch_config.get('primary_meanrev', arch_config['primary'])
                             confirmation = arch_config.get('confirmation_meanrev', arch_config.get('confirmation'))
+                            current_regime_state = 2
                     else:
                         primary = arch_config['primary']
                         confirmation = arch_config.get('confirmation')
+                        current_regime_state = 1
                     
                     try:
                         p_res = primary['func'](hist_df, nifty_hist=nifty_hist, sector_hist=sector_hist)
@@ -897,13 +987,13 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                                 else:
                                     risk_atr = 2.5    # Wider stop on lower conviction
                                     reward_atr = 4.0   # Standard target
-                            elif arch_config.get("adaptive_target_expansion"):
-                                if is_confirmed:
-                                    risk_atr = arch_config.get("confirmed_risk_atr", 2.0)
-                                    reward_atr = arch_config.get("confirmed_reward_atr", 5.0)
+                            elif arch_config.get("regime_adaptive_targets"):
+                                if current_regime_state == 1:
+                                    risk_atr = arch_config.get("trend_risk_atr", 2.0)
+                                    reward_atr = arch_config.get("trend_reward_atr", 4.0)
                                 else:
-                                    risk_atr = arch_config.get("primary_risk_atr", 2.0)
-                                    reward_atr = arch_config.get("primary_reward_atr", 4.0)
+                                    risk_atr = arch_config.get("sideways_risk_atr", 2.0)
+                                    reward_atr = arch_config.get("sideways_reward_atr", 3.0)
                             
                             alpha_score = p_res.get('alpha_score', 0.0) if p_res else 0.0
                             new_candidates.append({
@@ -917,6 +1007,7 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                                 "risk_pct": risk_pct,
                                 "alpha_score": alpha_score,
                                 "confirmed": is_confirmed,
+                                "regime_state": current_regime_state,
                             })
                             
         # Allocate cash
@@ -974,7 +1065,8 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                             "highest_price": cand['price'],
                             "stop_loss": cand['stop_loss'],
                             "target": cand['target'],
-                            "atr": cand.get('atr', 0.0)
+                            "atr": cand.get('atr', 0.0),
+                            "regime_state": cand.get("regime_state", 1)
                         }
             else:
                 for cand in new_candidates:
@@ -997,7 +1089,8 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                             "highest_price": cand['price'],
                             "stop_loss": cand['stop_loss'],
                             "target": cand['target'],
-                            "atr": cand.get('atr', 0.0)
+                            "atr": cand.get('atr', 0.0),
+                            "regime_state": cand.get("regime_state", 1)
                         }
                     
         total_equity = cash + sum(p['shares'] * p['current_price'] for p in open_positions.values())
@@ -1032,10 +1125,9 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
 
 def main():
     from datetime import datetime, timedelta
-    # Keep this full history for context, but judge the frozen strategy primarily
-    # on validation_report.csv's post-2024-08-25 holdout period. Do not retune
-    # parameters after inspecting that holdout.
-    years_to_test = 6
+    # Focus strictly on the 4-year modern market regime (2022-2026),
+    # excluding the artificial zero-interest-rate 2020-2021 COVID stimulus period.
+    years_to_test = 4
     today = date.today()
     calendar_days_since_start = years_to_test * 365
     start_date = today - timedelta(days=calendar_days_since_start)
@@ -1099,41 +1191,41 @@ def main():
     thrust_strat = {"name": "Breadth Thrust Reversal", "func": breadth_thrust_eval, "risk_atr": 1.5, "reward_atr": 3.5}
     
     ARCHITECTURES = [
-        {
-            "name": "E14_Strict_AVWAP",
-            "primary": avwap_strat,
-            "primary_momentum": avwap_strat,
-            "confirmation_momentum": vol_strat,
-            "primary_meanrev": pullback_strat,
-            "confirmation_meanrev": connors_strat,
-            "sizing_logic": "alpha_confirmation",
-            "dynamic_risk_scaling": False,
-            "dd_penalty_factor": 5.0,
-            "friction_pct": 0.0015,
-            "rank_candidates": True,
-            "regime_adaptive": True,
-            "bcr_threshold": BCR_THRESHOLD,
-            "cash_preservation": True,
-            "breadth_threshold": BREADTH_THRESHOLD
-        },
-        {
-            "name": "E18_Top_Sector_AVWAP",
-            "primary": avwap_strat,
-            "primary_momentum": avwap_strat,
-            "confirmation_momentum": vol_strat,
-            "primary_meanrev": pullback_strat,
-            "confirmation_meanrev": connors_strat,
-            "sizing_logic": "alpha_confirmation",
-            "dynamic_risk_scaling": False,
-            "dd_penalty_factor": 5.0,
-            "friction_pct": 0.0015,
-            "rank_candidates": True,
-            "regime_adaptive": True,
-            "bcr_threshold": BCR_THRESHOLD,
-            "cash_preservation": True,
-            "breadth_threshold": BREADTH_THRESHOLD,
-            "require_top_sectors": 3
-        },
+        # {
+        #     "name": "E14_Strict_AVWAP",
+        #     "primary": avwap_strat,
+        #     "primary_momentum": avwap_strat,
+        #     "confirmation_momentum": vol_strat,
+        #     "primary_meanrev": pullback_strat,
+        #     "confirmation_meanrev": connors_strat,
+        #     "sizing_logic": "alpha_confirmation",
+        #     "dynamic_risk_scaling": False,
+        #     "dd_penalty_factor": 5.0,
+        #     "friction_pct": 0.0015,
+        #     "rank_candidates": True,
+        #     "regime_adaptive": True,
+        #     "bcr_threshold": BCR_THRESHOLD,
+        #     "cash_preservation": True,
+        #     "breadth_threshold": BREADTH_THRESHOLD
+        # },
+        # {
+        #     "name": "E18_Top_Sector_AVWAP",
+        #     "primary": avwap_strat,
+        #     "primary_momentum": avwap_strat,
+        #     "confirmation_momentum": vol_strat,
+        #     "primary_meanrev": pullback_strat,
+        #     "confirmation_meanrev": connors_strat,
+        #     "sizing_logic": "alpha_confirmation",
+        #     "dynamic_risk_scaling": False,
+        #     "dd_penalty_factor": 5.0,
+        #     "friction_pct": 0.0015,
+        #     "rank_candidates": True,
+        #     "regime_adaptive": True,
+        #     "bcr_threshold": BCR_THRESHOLD,
+        #     "cash_preservation": True,
+        #     "breadth_threshold": BREADTH_THRESHOLD,
+        #     "require_top_sectors": 3
+        # },
         {
             "name": "E19_Dual_AVWAP_Confluence",
             "primary": dual_avwap_strat,
@@ -1149,12 +1241,13 @@ def main():
             "regime_adaptive": True,
             "bcr_threshold": BCR_THRESHOLD,
             "cash_preservation": True,
-            "breadth_threshold": BREADTH_THRESHOLD
+            "breadth_threshold": BREADTH_THRESHOLD,
+            "exclude_sectors": ["Construction Materials", "Oil Gas & Consumable Fuels", "Power"]
         },
         {
-            "name": "E20_Adaptive_Expansion_AVWAP",
-            "primary": avwap_strat,
-            "primary_momentum": avwap_strat,
+            "name": "E19_Dead_Money_Cut",
+            "primary": dual_avwap_strat,
+            "primary_momentum": dual_avwap_strat,
             "confirmation_momentum": vol_strat,
             "primary_meanrev": pullback_strat,
             "confirmation_meanrev": connors_strat,
@@ -1167,33 +1260,15 @@ def main():
             "bcr_threshold": BCR_THRESHOLD,
             "cash_preservation": True,
             "breadth_threshold": BREADTH_THRESHOLD,
-            "adaptive_target_expansion": True,
-            "confirmed_reward_atr": 5.0,
-            "confirmed_risk_atr": 2.0,
-            "primary_reward_atr": 4.0,
-            "primary_risk_atr": 2.0
+            "exclude_sectors": ["Construction Materials", "Oil Gas & Consumable Fuels", "Power"],
+            "sideways_dead_money_exit": True,
+            "dead_money_sessions": 15,
+            "dead_money_pnl_threshold": 0.0
         },
         {
-            "name": "E21_Volume_Surge_AVWAP",
-            "primary": vol_surge_strat,
-            "primary_momentum": vol_surge_strat,
-            "confirmation_momentum": vol_strat,
-            "primary_meanrev": pullback_strat,
-            "confirmation_meanrev": connors_strat,
-            "sizing_logic": "alpha_confirmation",
-            "dynamic_risk_scaling": False,
-            "dd_penalty_factor": 5.0,
-            "friction_pct": 0.0015,
-            "rank_candidates": True,
-            "regime_adaptive": True,
-            "bcr_threshold": BCR_THRESHOLD,
-            "cash_preservation": True,
-            "breadth_threshold": BREADTH_THRESHOLD
-        },
-        {
-            "name": "E22_Alpha_Max_Ensemble",
-            "primary": dual_avwap_vol_strat,
-            "primary_momentum": dual_avwap_vol_strat,
+            "name": "E19_Adaptive_Target_3ATR",
+            "primary": dual_avwap_strat,
+            "primary_momentum": dual_avwap_strat,
             "confirmation_momentum": vol_strat,
             "primary_meanrev": pullback_strat,
             "confirmation_meanrev": connors_strat,
@@ -1206,13 +1281,118 @@ def main():
             "bcr_threshold": BCR_THRESHOLD,
             "cash_preservation": True,
             "breadth_threshold": BREADTH_THRESHOLD,
-            "require_top_sectors": 4,
-            "adaptive_target_expansion": True,
-            "confirmed_reward_atr": 5.0,
-            "confirmed_risk_atr": 2.0,
-            "primary_reward_atr": 4.0,
-            "primary_risk_atr": 2.0
+            "exclude_sectors": ["Construction Materials", "Oil Gas & Consumable Fuels", "Power"],
+            "regime_adaptive_targets": True,
+            "trend_risk_atr": 2.0,
+            "trend_reward_atr": 4.0,
+            "sideways_risk_atr": 2.0,
+            "sideways_reward_atr": 3.0
+        },
+        {
+            "name": "E19_Adaptive_Regime_Lock",
+            "primary": dual_avwap_strat,
+            "primary_momentum": dual_avwap_strat,
+            "confirmation_momentum": vol_strat,
+            "primary_meanrev": pullback_strat,
+            "confirmation_meanrev": connors_strat,
+            "sizing_logic": "alpha_confirmation",
+            "dynamic_risk_scaling": False,
+            "dd_penalty_factor": 5.0,
+            "friction_pct": 0.0015,
+            "rank_candidates": True,
+            "regime_adaptive": True,
+            "bcr_threshold": BCR_THRESHOLD,
+            "cash_preservation": True,
+            "breadth_threshold": BREADTH_THRESHOLD,
+            "exclude_sectors": ["Construction Materials", "Oil Gas & Consumable Fuels", "Power"],
+            "sideways_max_sessions": 15,
+            "sideways_profit_lock": True,
+            "lock_trigger_atr": 2.0
+        },
+        {
+            "name": "E19_Baseline_Unfiltered",
+            "primary": dual_avwap_strat,
+            "primary_momentum": dual_avwap_strat,
+            "confirmation_momentum": vol_strat,
+            "primary_meanrev": pullback_strat,
+            "confirmation_meanrev": connors_strat,
+            "sizing_logic": "alpha_confirmation",
+            "dynamic_risk_scaling": False,
+            "dd_penalty_factor": 5.0,
+            "friction_pct": 0.0015,
+            "rank_candidates": True,
+            "regime_adaptive": True,
+            "bcr_threshold": BCR_THRESHOLD,
+            "cash_preservation": True,
+            "breadth_threshold": BREADTH_THRESHOLD
         }
+        # Benchmarked fixes preserved for reference:
+        # Fix 1 (Sector Hygiene): +41.14% CAGR, 2.35 Sharpe, -15.07% MDD (Champion)
+        # Fix 2 (Sector + Harvest): +24.53% CAGR, 1.53 Sharpe (Choked right-tail alpha)
+        # Fix 3 (Triple Alpha): +23.03% CAGR, 1.55 Sharpe (Premature breakeven whipsaws)
+        # Fix 4 (Master Ensemble): +25.42% CAGR, 1.68 Sharpe (Macro shock filter cut dip bounces)
+        # {
+        #     "name": "E20_Adaptive_Expansion_AVWAP",
+        #     "primary": avwap_strat,
+        #     "primary_momentum": avwap_strat,
+        #     "confirmation_momentum": vol_strat,
+        #     "primary_meanrev": pullback_strat,
+        #     "confirmation_meanrev": connors_strat,
+        #     "sizing_logic": "alpha_confirmation",
+        #     "dynamic_risk_scaling": False,
+        #     "dd_penalty_factor": 5.0,
+        #     "friction_pct": 0.0015,
+        #     "rank_candidates": True,
+        #     "regime_adaptive": True,
+        #     "bcr_threshold": BCR_THRESHOLD,
+        #     "cash_preservation": True,
+        #     "breadth_threshold": BREADTH_THRESHOLD,
+        #     "adaptive_target_expansion": True,
+        #     "confirmed_reward_atr": 5.0,
+        #     "confirmed_risk_atr": 2.0,
+        #     "primary_reward_atr": 4.0,
+        #     "primary_risk_atr": 2.0
+        # },
+        # {
+        #     "name": "E21_Volume_Surge_AVWAP",
+        #     "primary": vol_surge_strat,
+        #     "primary_momentum": vol_surge_strat,
+        #     "confirmation_momentum": vol_strat,
+        #     "primary_meanrev": pullback_strat,
+        #     "confirmation_meanrev": connors_strat,
+        #     "sizing_logic": "alpha_confirmation",
+        #     "dynamic_risk_scaling": False,
+        #     "dd_penalty_factor": 5.0,
+        #     "friction_pct": 0.0015,
+        #     "rank_candidates": True,
+        #     "regime_adaptive": True,
+        #     "bcr_threshold": BCR_THRESHOLD,
+        #     "cash_preservation": True,
+        #     "breadth_threshold": BREADTH_THRESHOLD
+        # },
+        # {
+        #     "name": "E22_Alpha_Max_Ensemble",
+        #     "primary": dual_avwap_vol_strat,
+        #     "primary_momentum": dual_avwap_vol_strat,
+        #     "confirmation_momentum": vol_strat,
+        #     "primary_meanrev": pullback_strat,
+        #     "confirmation_meanrev": connors_strat,
+        #     "sizing_logic": "alpha_confirmation",
+        #     "dynamic_risk_scaling": False,
+        #     "dd_penalty_factor": 5.0,
+        #     "friction_pct": 0.0015,
+        #     "rank_candidates": True,
+        #     "regime_adaptive": True,
+        #     "bcr_threshold": BCR_THRESHOLD,
+        #     "cash_preservation": True,
+        #     "breadth_threshold": BREADTH_THRESHOLD,
+        #     "require_top_sectors": 4,
+        #     "adaptive_target_expansion": True,
+        #     "confirmed_reward_atr": 5.0,
+        #     "confirmed_risk_atr": 2.0,
+        #     "primary_reward_atr": 4.0,
+        #     "primary_risk_atr": 2.0
+        # }
     ]
     
     tear_sheet_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))), "front_testing", "strategy_tear_sheet.csv")

@@ -1,4 +1,4 @@
-name: Swing Strategy - Live Signals & Portfolio Updates
+name: Swing Strategy - E19 Dead Money Cut Live Signals & Portfolio
 
 on:
   schedule:
@@ -76,7 +76,7 @@ jobs:
             swing-market-data-${{ runner.os }}-
             swing-market-data-
 
-      - name: Run Swing Buy Signals (3:15 PM)
+      - name: Run E19 Dead Money Cut Screener & Portfolio (3:15 PM)
         env:
           TELEGRAM_BOT_TOKEN_SWING: ${{ secrets.TELEGRAM_BOT_TOKEN_SWING }}
           TELEGRAM_CHAT_ID_SWING: ${{ secrets.TELEGRAM_CHAT_ID_SWING }}

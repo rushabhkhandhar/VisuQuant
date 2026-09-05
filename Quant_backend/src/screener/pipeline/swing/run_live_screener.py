@@ -23,12 +23,15 @@ from src.screener.pipeline.swing.run_front_test import (
     dual_avwap_pullback_eval, volatility_compression_eval,
     trend_pullback_eval, connors_rsi_eval,
 )
-from src.screener.pipeline.swing.e19_strategy import generate_e19_signals, MAX_HOLDING_SESSIONS
+from src.screener.pipeline.swing.e19_strategy import (
+    generate_e19_signals, MAX_HOLDING_SESSIONS,
+    DEAD_MONEY_SESSIONS, DEAD_MONEY_PNL_THRESHOLD, BCR_THRESHOLD
+)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-ACTIVE_STRATEGY_NAME = "E19_Dual_AVWAP_Confluence"
+ACTIVE_STRATEGY_NAME = "E19_Dead_Money_Cut"
 MAX_PORTFOLIO_SLOTS = 5
 DEFAULT_BASE_CAPITAL = 100000.0
 SLOT_CAPITAL = DEFAULT_BASE_CAPITAL / MAX_PORTFOLIO_SLOTS  # 20,000 INR per slot
@@ -202,13 +205,14 @@ def run_live_strategies(bulk_data, nifty_hist):
     )
 
 
-def process_portfolio_exits(portfolio: dict, bulk_data: dict):
+def process_portfolio_exits(portfolio: dict, bulk_data: dict, bcr: float = None):
     """
     Evaluates all currently OPEN trades against live 3:15 PM market prices.
     Checks:
       1. Stop Loss: Low <= stop_loss
       2. Target: High >= target
-      3. Time Stop: days_held >= MAX_HOLDING_SESSIONS (25 sessions)
+      3. Dead Money Cut: Sideways regime (State 2 or BCR <= 0.52) AND days_held >= 15 AND pnl <= 0.0%
+      4. Time Stop: days_held >= MAX_HOLDING_SESSIONS (25 sessions for profitable runners)
     Marks closed trades with exit details and calculates live unrealized PnL for active holdings.
     """
     closed_today = []
@@ -243,10 +247,14 @@ def process_portfolio_exits(portfolio: dict, bulk_data: dict):
             live_close = float(df['Close'].iloc[-1])
             t["current_price"] = live_close
             
+            pnl_pct = ((live_close - entry_price) / entry_price) * 100
+            pnl_rs = (live_close - entry_price) * shares
+            
+            pos_regime = t.get("regime_state", 1)
+            is_sideways = (pos_regime == 2) or (bcr is not None and bcr <= BCR_THRESHOLD)
+            
             # 1. Stop Loss Check
             if live_low <= stop_loss:
-                pnl_pct = ((live_close - entry_price) / entry_price) * 100
-                pnl_rs = (live_close - entry_price) * shares
                 t["status"] = "CLOSED"
                 t["exit_date"] = today_str
                 t["exit_price"] = live_close
@@ -268,8 +276,6 @@ def process_portfolio_exits(portfolio: dict, bulk_data: dict):
                 })
             # 2. Profit Target Check
             elif live_high >= target:
-                pnl_pct = ((live_close - entry_price) / entry_price) * 100
-                pnl_rs = (live_close - entry_price) * shares
                 t["status"] = "CLOSED"
                 t["exit_date"] = today_str
                 t["exit_price"] = live_close
@@ -289,10 +295,29 @@ def process_portfolio_exits(portfolio: dict, bulk_data: dict):
                     "days_held": days_held,
                     "strategy": t.get("strategy_name", ACTIVE_STRATEGY_NAME)
                 })
-            # 3. Time Stop Check (25 trading sessions)
+            # 3. Dead Money Cut Check (Sideways Regime, Held >= 15 sessions, Return <= 0.0%)
+            elif is_sideways and days_held >= DEAD_MONEY_SESSIONS and pnl_pct <= DEAD_MONEY_PNL_THRESHOLD:
+                t["status"] = "CLOSED"
+                t["exit_date"] = today_str
+                t["exit_price"] = live_close
+                t["exit_reason"] = f"DEAD MONEY CUT ({days_held}d, {pnl_pct:+.2f}%)"
+                t["pnl_pct"] = round(pnl_pct, 2)
+                t["pnl_rs"] = round(pnl_rs, 2)
+                closed_today.append({
+                    "symbol": sym,
+                    "action": f"SELL (DEAD MONEY CUT ✂️ {days_held}d)",
+                    "reason": f"Sideways Chop Stagnation ({days_held}d >= {DEAD_MONEY_SESSIONS}d, PnL <= 0%)",
+                    "price": live_close,
+                    "stop_loss": stop_loss,
+                    "target": target,
+                    "pnl_pct": pnl_pct,
+                    "pnl_rs": pnl_rs,
+                    "shares": shares,
+                    "days_held": days_held,
+                    "strategy": t.get("strategy_name", ACTIVE_STRATEGY_NAME)
+                })
+            # 4. Time Stop Check (25 trading sessions for profitable runners)
             elif days_held >= MAX_HOLDING_SESSIONS:
-                pnl_pct = ((live_close - entry_price) / entry_price) * 100
-                pnl_rs = (live_close - entry_price) * shares
                 t["status"] = "CLOSED"
                 t["exit_date"] = today_str
                 t["exit_price"] = live_close
@@ -314,10 +339,8 @@ def process_portfolio_exits(portfolio: dict, bulk_data: dict):
                 })
             else:
                 # Active position continues
-                unrealized_pct = ((live_close - entry_price) / entry_price) * 100
-                unrealized_rs = (live_close - entry_price) * shares
-                t["unrealized_pnl_pct"] = round(unrealized_pct, 2)
-                t["unrealized_pnl_rs"] = round(unrealized_rs, 2)
+                t["unrealized_pnl_pct"] = round(pnl_pct, 2)
+                t["unrealized_pnl_rs"] = round(pnl_rs, 2)
                 active_holdings.append(t)
         else:
             # Fallback if no fresh bar
@@ -421,7 +444,7 @@ def build_unified_telegram_message(
     slot_capital = portfolio.get("slot_capital", SLOT_CAPITAL)
     
     lines = []
-    lines.append("<b>🏛️ E19 DUAL AVWAP CONFLUENCE — DAILY UPDATE</b>")
+    lines.append("<b>🏛️ E19 DEAD MONEY CUT — DAILY UPDATE</b>")
     lines.append(f"📅 Date: <code>{today_str}</code> | 3:15 PM MOC Execution\n")
     
     # -------------------------------------------------------------
@@ -483,7 +506,16 @@ def build_unified_telegram_message(
             pnl_sign = "+" if pnl_pct >= 0 else ""
             held = pos.get("days_held", 0)
             tag = " <i>(NEW)</i>" if held == 0 else ""
-            held_str = f"Held: {held} / {MAX_HOLDING_SESSIONS} sessions" if held > 0 else "Held: Day 0 (New Entry Today)"
+            
+            # Check dead money alert for active holdings in sideways chop
+            pos_regime = pos.get("regime_state", 1)
+            is_sideways = (pos_regime == 2) or (bcr is not None and bcr <= BCR_THRESHOLD)
+            if is_sideways and held >= 10 and pnl_pct <= 0:
+                held_str = f"Held: {held}/{MAX_HOLDING_SESSIONS}d | ⚠️ <b>Dead-Money Watch ({held}/{DEAD_MONEY_SESSIONS}d)</b>"
+            elif held > 0:
+                held_str = f"Held: {held} / {MAX_HOLDING_SESSIONS} sessions"
+            else:
+                held_str = "Held: Day 0 (New Entry Today)"
             
             lines.append(
                 f"<b>{idx}. {pos['symbol']}</b>{tag} ({pos.get('shares', 1)} shares)\n"
@@ -524,7 +556,7 @@ def build_unified_telegram_message(
 
 def print_terminal_dashboard(closed_signals, actionable_buys, active_holdings, regime, bcr, breadth):
     print(f"\n{'='*95}")
-    print(f"{'E19 DUAL AVWAP CONFLUENCE — LIVE PORTFOLIO DASHBOARD (3:15 PM MOC)'.center(95)}")
+    print(f"{'E19 DEAD MONEY CUT — LIVE PORTFOLIO DASHBOARD (3:15 PM MOC)'.center(95)}")
     print(f"{'='*95}")
     print(f"Market Regime: {regime:<10} | BCR: {bcr*100:.1f}% | Breadth: {breadth*100:.1f}%")
     print(f"{'-'*95}")
@@ -594,10 +626,10 @@ def main():
     
     # 2. Process exits for existing positions
     logger.info("Evaluating active portfolio positions against live prices...")
-    closed_signals, active_holdings = process_portfolio_exits(portfolio, bulk_data)
+    closed_signals, active_holdings = process_portfolio_exits(portfolio, bulk_data, bcr=bcr)
     
     # 3. Scan for new candidate signals
-    logger.info("Scanning for fresh E19 Dual AVWAP Confluence signals...")
+    logger.info("Scanning for fresh E19 Dead Money Cut signals...")
     raw_signals = run_live_strategies(bulk_data, nifty_hist)
     
     # 4. Allocate into open slots

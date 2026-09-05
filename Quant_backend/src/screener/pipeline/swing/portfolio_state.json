@@ -1,5 +1,5 @@
 {
-    "strategy": "E19_Dual_AVWAP_Confluence",
+    "strategy": "E19_Dead_Money_Cut",
     "base_capital": 100000.0,
     "max_slots": 5,
     "slot_capital": 20000.0,

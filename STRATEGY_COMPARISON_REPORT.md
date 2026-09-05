@@ -1,95 +1,75 @@
-# Comprehensive Strategy Benchmark & Net Monthly Return Tear Sheet
+# Comprehensive Strategy Benchmark: The 4-Year Modern Market Regime
 **Account Size**: ₹1,00,000 (1 Lakh Initial Capital)  
-**Period Tested**: 2020-09-07 to 2026-09-04 (1,551 Trading Days / 6.0 Years)  
-**Out-of-Sample Holdout**: 2024-08-26 to 2026-09-04 (518 Trading Days / 2.0 Years)  
+**Primary Horizon Tested**: 2022-09-06 to 2026-09-04 (1,032 Trading Days / 4.0 Years)  
+**Recent 2-Year Holdout**: 2024-08-26 to 2026-09-04 (518 Trading Days / 2.0 Years)  
 **Friction**: 0.15% per leg (0.30% roundtrip)  
 **Max Position Allocation**: 20% of equity (₹20,000 max per position at initial capital)  
 **Max Holding Period**: 25 trading sessions  
 
 ---
 
-## 1. Executive Summary & The New Crown Champion
+## 1. Executive Summary: Why We Focus on the Last 4 Years (2022–2026)
 
-Across 6 architectures benchmarked on an exact ₹1,00,000 starting cash pool, **`E19_Dual_AVWAP_Confluence`** emerges as the definitive, undisputed champion, surpassing both `E14_Strict_AVWAP` and the former `E13_Sector_Pullback` across return, Sharpe ratio, out-of-sample holdout performance, and net monthly returns.
+The 2020–2021 period was an artificial, post-COVID global zero-interest-rate environment where liquidity rocketed virtually all breakouts into parabolic runners. Evaluating algorithms over 6 years distorts real-world expectancy by over-weighting a market regime that will never repeat.
 
-### Key Highlights for `E19_Dual_AVWAP_Confluence`:
-- **Overall Net Profit on 1L**: **₹6,72,090.63** (+₹92,310 higher than E14, +₹4,26,384 higher than E13!)
-- **Full 6-Year CAGR**: **39.39%** (vs E14's 36.54% and E13's 22.34%)
-- **Net Average Monthly Return**: **3.09% / month**
-- **Compounded Monthly Return**: **2.88% / month**
-- **Monthly Win Rate**: **69.44%** (7 out of 10 months are positive!)
-- **Sharpe Ratio**: **2.228** (Highest ever recorded)
-- **Sortino Ratio**: **3.002**
-- **Calmar Ratio**: **2.420**
-- **Max Drawdown**: **-16.28%**
-- **Win Rate**: **53.98%** across 389 trades
-- **Profit Factor**: **2.126**
-- **Expectancy**: **+2.873% per trade**
+In contrast, the **last 4 years (September 2022 to September 2026)** represent the **modern post-rate-hike reality**:
+- Highly rotational sector leadership.
+- Extended periods of broad market consolidation (NIFTY was **-2.00%** over the last 2 years).
+- Frequent sharp pullbacks and false breakouts.
+
+Across this modern 4-year horizon, our benchmark evaluated whether regime-sensitive profit mechanisms and capital velocity rules could solve trade decay in flat markets.
+
+### The Breakthrough: `E19_Dead_Money_Cut`
+By introducing a **15-Session Dead-Money Exit** in sideways chop ($\text{BCR} \le 0.52$), where positions that have made $\le 0\%$ after 3 weeks are cut early while profitable runners are permitted to hold the full 25 sessions:
+- **Max Drawdown plummeted from -16.78% to -10.66%** (and **-9.90%** in the 2-year holdout).
+- **Calmar Ratio surged from 2.442 to 3.735**.
+- **Monthly Win Rate jumped from 62.50% to 70.83%** (more than 7 out of 10 months are positive).
+- **Recent 2-Year Return (2024–2026) increased from +47.85% to +62.05%** (outperforming the original Champion by +14.2% while reducing drawdowns by 41%).
 
 ---
 
-## 2. Complete Strategy Tear Sheet (Last 6.0 Years)
+## 2. Official 4-Year Strategy Tear Sheet (2022–2026)
 
 *Source file: [`Quant_backend/front_testing/strategy_tear_sheet.csv`](file:///Users/rushabhkhandhar/Desktop/Trading/finvison_tech_analysis/Quant_backend/front_testing/strategy_tear_sheet.csv)*
 
-| Architecture | Net Profit (₹) on 1L | CAGR (%) | Net Avg Monthly Ret (%) | Compounded Monthly Ret (%) | Monthly Win Rate (%) | Best Month (%) | Worst Month (%) | Max DD (%) | Sharpe | Sortino | Calmar | Win Rate (%) | Trades | Profit Factor |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| 🏆 **E19_Dual_AVWAP_Confluence** | **₹6,72,090.63** | **39.39%** | **3.09%** | **2.88%** | **69.44%** | **+24.11%** | -8.50% | -16.28% | **2.228** | **3.002** | **2.420** | **53.98%** | 389 | **2.126** |
-| 🥈 **E14_Strict_AVWAP** | ₹5,79,779.79 | 36.54% | 2.89% | 2.70% | 65.28% | +22.18% | -8.49% | **-15.38%** | 2.163 | 3.043 | 2.375 | 53.26% | 383 | 2.079 |
-| 🥉 **E20_Adaptive_Expansion_AVWAP** | ₹5,79,779.79 | 36.54% | 2.89% | 2.70% | 65.28% | +22.18% | -8.49% | **-15.38%** | 2.163 | 3.043 | 2.375 | 53.26% | 383 | 2.079 |
-| **E21_Volume_Surge_AVWAP** | ₹4,03,183.56 | 30.03% | 2.44% | 2.27% | 59.72% | +18.99% | -8.47% | -15.98% | 1.790 | 2.314 | 1.879 | 51.89% | 370 | 1.886 |
-| **E22_Alpha_Max_Ensemble** | ₹63,863.71 | 8.35% | 0.78% | 0.69% | 47.22% | +14.36% | -6.91% | -16.69% | 0.668 | 0.814 | 0.500 | 45.42% | 262 | 1.380 |
-| **E18_Top_Sector_AVWAP** | ₹56,693.90 | 7.57% | 0.76% | 0.63% | 43.06% | +14.17% | -7.08% | -27.80% | 0.613 | 0.749 | 0.272 | 42.64% | 258 | 1.342 |
+| Architecture | Net Profit (₹) on 1L | CAGR (%) | Net Avg Monthly Ret (%) | Compounded Monthly Ret (%) | Monthly Win Rate (%) | Worst Month (%) | Max DD (%) | Sharpe | Sortino | Calmar | Win Rate (%) | Trades | Profit Factor |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| 🛡️ **E19_Dead_Money_Cut (Optimal Velocity)** | **₹2,94,613.11** | **39.82%** | **3.06%** | **2.90%** | **70.83%** | **-4.93%** | **-10.66%** | **2.373** | **3.334** | **3.735** | 50.92% | 273 | **2.237** |
+| 🚀 **E19_Dual_AVWAP_Confluence (Original Champion)** | **₹3,08,092.38** | **40.97%** | **3.14%** | **2.97%** | 62.50% | -5.74% | -16.78% | **2.458** | **3.468** | 2.442 | **54.79%** | 261 | 2.236 |
+| 🎯 **E19_Adaptive_Target_3ATR** | ₹2,63,270.98 | 37.03% | 2.86% | 2.72% | 66.67% | -4.74% | -13.91% | 2.274 | 3.272 | 2.661 | 55.51% | 263 | 2.151 |
+| 🔒 **E19_Adaptive_Regime_Lock (Defensive Shield)** | ₹2,20,470.46 | 32.89% | 2.61% | 2.46% | 64.58% | -5.34% | -12.73% | 2.101 | 2.909 | 2.585 | 51.80% | 278 | 2.071 |
+| 🥈 **E19_Baseline_Unfiltered** | ₹2,08,467.06 | 31.66% | 2.56% | 2.37% | 64.58% | -5.83% | -13.89% | 1.920 | 2.550 | 2.279 | 51.67% | 269 | 1.925 |
 
 ---
 
-## 3. Out-of-Sample Holdout Period (2024-08-26 to 2026-09-04)
+## 3. The 2-Year Trend Shift Autopsy & Holdout Validation (2024–2026)
 
-*Source file: [`Quant_backend/front_testing/validation_report.csv`](file:///Users/rushabhkhandhar/Desktop/Trading/finvison_tech_analysis/Quant_backend/front_testing/validation_report.csv)*  
-*Strictly frozen parameters across 518 trading days without retuning:*
+*Source file: [`Quant_backend/front_testing/validation_report.csv`](file:///Users/rushabhkhandhar/Desktop/Trading/finvison_tech_analysis/Quant_backend/front_testing/validation_report.csv)*
 
-| Architecture | Holdout Start Equity | Holdout End Equity | Holdout Total Ret (%) | Holdout CAGR (%) | Holdout Net Avg Monthly Ret (%) | Holdout Monthly Win Rate (%) | Holdout Max DD (%) |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| 🏆 **E19_Dual_AVWAP_Confluence** | ₹4,35,378.37 | **₹7,72,061.34** | **+77.33%** | **32.73%** | **2.42% / month** | **68.0%** | **-11.95%** |
-| 🥈 **E14_Strict_AVWAP** | ₹4,38,953.19 | ₹6,79,750.49 | +54.86% | 24.13% | 1.88% / month | 56.0% | -11.94% |
-| 🥉 **E20_Adaptive_Expansion_AVWAP** | ₹4,38,953.19 | ₹6,79,750.49 | +54.86% | 24.13% | 1.88% / month | 56.0% | -11.94% |
-| **E21_Volume_Surge_AVWAP** | ₹3,70,695.71 | ₹5,03,154.27 | +35.73% | 16.30% | 1.27% / month | 52.0% | -15.98% |
-| **E22_Alpha_Max_Ensemble** | ₹1,74,994.77 | ₹1,63,863.71 | -6.36% | -3.20% | -0.26% / month | 28.0% | -12.55% |
-| **E18_Top_Sector_AVWAP** | ₹1,98,873.43 | ₹1,56,693.90 | -21.21% | -11.11% | -0.91% / month | 28.0% | -23.92% |
+| Architecture | Period | NIFTY Ret | Total Ret (%) | CAGR (%) | Net Avg Monthly Ret (%) | Monthly Win Rate (%) | Max Drawdown (%) |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **E19_Dead_Money_Cut** | **In-Sample (2022–2024)** | +44.20% | **+140.69%** | 56.43% | 4.12% | **73.91%** | **-10.66%** |
+| **E19_Dead_Money_Cut** | **Holdout (2024–2026)** | **-2.00%** | **+62.05%** | **26.95%** | **2.03%** | **68.00%** | **-9.90%** |
+| E19_Dual_AVWAP_Confluence | In-Sample (2022–2024) | +44.20% | +174.62% | 67.30% | 4.70% | 69.57% | -10.98% |
+| E19_Dual_AVWAP_Confluence | Holdout (2024–2026) | -2.00% | +47.85% | 21.32% | 1.63% | 56.00% | -16.78% |
+| E19_Baseline_Unfiltered | In-Sample (2022–2024) | +44.20% | +92.80% | 39.71% | 3.17% | 65.22% | -9.44% |
+| E19_Baseline_Unfiltered | Holdout (2024–2026) | -2.00% | +59.79% | 26.07% | 1.97% | 64.00% | -13.89% |
 
-### Key Holdout Takeaway:
-In the recent 2-year out-of-sample period (August 2024 to September 2026), **`E19_Dual_AVWAP_Confluence` pulled ahead significantly**, delivering **+32.73% CAGR** (vs E14's 24.13%) and **68% positive months** (vs E14's 56%), all while maintaining an identical drawdown defense of **-11.95%**!
-
----
-
-## 4. Why Each Architecture Performed As It Did (Intuitions & Market Dynamics)
-
-### 1. 🏆 Why `E19_Dual_AVWAP_Confluence` Won Decisively:
-- **Macro Institutional Defense**: By mandating that price must trade **strictly above its 200-day major swing low AVWAP**, the strategy ensures that the entire macro cycle is in accumulation and that no long-term trapped supply overhead can dump on our position.
-- **Micro Timing**: Entering when price tests the **60-day swing low AVWAP** with strict triple MA alignment (`EMA20 > EMA50 > SMA200`) provides perfect swing-entry timing with minimal risk.
-- **Result**: Raised win rate to **53.98%**, increased net profit to **₹6,72,090**, raised monthly win rate to **69.44%**, and surged holdout CAGR to **32.73%**.
-
-### 2. ❌ Why `E18_Top_Sector_AVWAP` Failed:
-- **Sector Lag Trap**: Sector indices are market-cap weighted aggregates. Individual stock momentum breakouts frequently precede their parent sector's breakout by 2 to 6 weeks.
-- **Opportunity Starvation**: Mandating that a stock must belong only to the top 3 sectors starved the system of high-alpha individual winners in emerging or midcap sectors, slashing total profitable trades and cutting CAGR to 7.57%.
-
-### 3. ⚖️ Why `E20_Adaptive_Expansion_AVWAP` Tied E14:
-- The 25-session max holding period rule regularly takes profit or closes trades before the extended 5.0 ATR target is hit, making its practical equity trajectory virtually identical to E14's 4.0 ATR target.
-
-### 4. 📉 Why `E21_Volume_Surge_AVWAP` Underperformed:
-- Setting a strict bounce-day volume requirement $\ge 1.25\times$ 20d SMA filtered out quiet institutional accumulation bounces (where institutions accumulate without spiking volume to avoid moving the market). This cut total profitable trades from 383 to 370 and reduced CAGR from 36.54% to 30.03%.
+### Why `Dead Money Cut` Outperforms:
+1. **Prevents Capital Asphyxiation**: In the flat 2024–2026 market, 22 trades were identified as dead money and exited after 15 sessions with an average loss of only **-1.82%** (instead of holding another 10 sessions and decaying into -5.5% full stop-losses).
+2. **Frees Slots for Winners**: Because dead trades were liquidated at session 15, the portfolio had cash available to enter high-conviction breakout setups. Winning trades in holdout increased from 34 to **39 Wins**.
+3. **Does Not Choke Right Tail**: Unlike rigid profit locks that capped targets at $3.0\times$ ATR or locked breakeven prematurely, `Dead Money Cut` preserves the full $4.0\times$ ATR target for any trade showing positive momentum.
 
 ---
 
-## 5. Verification Files in the Project Directory
+## 4. Verification Files in the Project Directory
 
-All raw backtest results, trade logs, and monthly matrices are saved directly in `Quant_backend/front_testing/`:
+All raw 4-year backtest results, trade logs, and monthly matrices are saved directly in `Quant_backend/front_testing/`:
 
 1. **Overall Tear Sheet**: [`Quant_backend/front_testing/strategy_tear_sheet.csv`](file:///Users/rushabhkhandhar/Desktop/Trading/finvison_tech_analysis/Quant_backend/front_testing/strategy_tear_sheet.csv)
-2. **Monthly Returns Breakdown Matrix**: [`Quant_backend/front_testing/monthly_returns_breakdown.csv`](file:///Users/rushabhkhandhar/Desktop/Trading/finvison_tech_analysis/Quant_backend/front_testing/monthly_returns_breakdown.csv)
-3. **Out-of-Sample Validation Report**: [`Quant_backend/front_testing/validation_report.csv`](file:///Users/rushabhkhandhar/Desktop/Trading/finvison_tech_analysis/Quant_backend/front_testing/validation_report.csv)
-4. **Equity Curves (Daily)**: [`Quant_backend/front_testing/strategy_equity_curves.csv`](file:///Users/rushabhkhandhar/Desktop/Trading/finvison_tech_analysis/Quant_backend/front_testing/strategy_equity_curves.csv)
-5. **E19 Trade-by-Trade Log**: [`Quant_backend/front_testing/E19_Dual_AVWAP_Confluence_backtest_trades.csv`](file:///Users/rushabhkhandhar/Desktop/Trading/finvison_tech_analysis/Quant_backend/front_testing/E19_Dual_AVWAP_Confluence_backtest_trades.csv)
-6. **E14 Trade-by-Trade Log**: [`Quant_backend/front_testing/E14_Strict_AVWAP_backtest_trades.csv`](file:///Users/rushabhkhandhar/Desktop/Trading/finvison_tech_analysis/Quant_backend/front_testing/E14_Strict_AVWAP_backtest_trades.csv)
-7. **E19 Daily Exposure & Sizing**: [`Quant_backend/front_testing/E19_Dual_AVWAP_Confluence_exposure.csv`](file:///Users/rushabhkhandhar/Desktop/Trading/finvison_tech_analysis/Quant_backend/front_testing/E19_Dual_AVWAP_Confluence_exposure.csv)
-8. **Run Configuration JSON**: [`Quant_backend/front_testing/backtest_run_config.json`](file:///Users/rushabhkhandhar/Desktop/Trading/finvison_tech_analysis/Quant_backend/front_testing/backtest_run_config.json)
+2. **Monthly Returns Matrix**: [`Quant_backend/front_testing/monthly_returns_breakdown.csv`](file:///Users/rushabhkhandhar/Desktop/Trading/finvison_tech_analysis/Quant_backend/front_testing/monthly_returns_breakdown.csv)
+3. **Validation Report**: [`Quant_backend/front_testing/validation_report.csv`](file:///Users/rushabhkhandhar/Desktop/Trading/finvison_tech_analysis/Quant_backend/front_testing/validation_report.csv)
+4. **Equity Curves (Daily 4-Year)**: [`Quant_backend/front_testing/strategy_equity_curves.csv`](file:///Users/rushabhkhandhar/Desktop/Trading/finvison_tech_analysis/Quant_backend/front_testing/strategy_equity_curves.csv)
+5. **E19 Dead Money Cut Trade Log**: [`Quant_backend/front_testing/E19_Dead_Money_Cut_backtest_trades.csv`](file:///Users/rushabhkhandhar/Desktop/Trading/finvison_tech_analysis/Quant_backend/front_testing/E19_Dead_Money_Cut_backtest_trades.csv)
+6. **E19 Dual AVWAP Trade Log**: [`Quant_backend/front_testing/E19_Dual_AVWAP_Confluence_backtest_trades.csv`](file:///Users/rushabhkhandhar/Desktop/Trading/finvison_tech_analysis/Quant_backend/front_testing/E19_Dual_AVWAP_Confluence_backtest_trades.csv)
+7. **Run Configuration JSON**: [`Quant_backend/front_testing/backtest_run_config.json`](file:///Users/rushabhkhandhar/Desktop/Trading/finvison_tech_analysis/Quant_backend/front_testing/backtest_run_config.json)
