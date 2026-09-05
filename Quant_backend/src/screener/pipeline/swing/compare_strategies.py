@@ -23,10 +23,13 @@ from src.screener.pipeline.swing.run_front_test import (
     ttm_squeeze_eval,
     sector_pullback_eval,
     avwap_pullback_eval,
+    dual_avwap_pullback_eval,
+    volume_surge_avwap_eval,
+    dual_avwap_volume_surge_eval,
     leader_consolidation_eval,
     breadth_thrust_eval
 )
-from src.screener.pipeline.swing.e12_strategy import (
+from src.screener.pipeline.swing.e19_strategy import (
     BCR_THRESHOLD, BREADTH_THRESHOLD, MAX_CONFIRMED_SIGNALS, MAX_PRIMARY_SIGNALS,
     RISK_ATR, REWARD_ATR, RISK_CONFIRMED, RISK_PRIMARY, MAX_HOLDING_SESSIONS
 )
@@ -46,9 +49,15 @@ STRATEGIES = [
     # {"name": "Sector Relative Pullback", "func": sector_pullback_eval, "risk_atr": 1.5, "reward_atr": 3.5},
 ]
 
-def calculate_metrics(daily_equity, trades):
+def calculate_metrics(daily_equity, trades, test_dates=None):
     # Daily Returns
-    equity_series = pd.Series(daily_equity)
+    if test_dates is not None and len(test_dates) == len(daily_equity):
+        equity_series = pd.Series(daily_equity, index=pd.to_datetime(test_dates))
+    elif isinstance(daily_equity, pd.Series) and isinstance(daily_equity.index, pd.DatetimeIndex):
+        equity_series = daily_equity
+    else:
+        equity_series = pd.Series(daily_equity)
+        
     daily_returns = equity_series.pct_change().dropna()
     
     # CAGR
@@ -73,6 +82,30 @@ def calculate_metrics(daily_equity, trades):
     sortino = (mean_ret / downside_std) * np.sqrt(252) if downside_std > 0 else 0
     calmar = (cagr / abs(mdd)) if mdd < 0 else 0
     
+    # Monthly Return Analytics
+    avg_monthly_return = 0.0
+    compounded_monthly = 0.0
+    monthly_win_rate = 0.0
+    best_month = 0.0
+    worst_month = 0.0
+    if isinstance(equity_series.index, pd.DatetimeIndex) and len(equity_series) > 20:
+        try:
+            monthly_series = equity_series.resample('ME').last()
+        except Exception:
+            monthly_series = equity_series.resample('M').last()
+        monthly_returns = monthly_series.pct_change().dropna()
+        if len(monthly_returns) > 0:
+            num_months = len(monthly_returns)
+            avg_monthly_return = monthly_returns.mean() * 100.0
+            if equity_series.iloc[0] > 0 and num_months > 0:
+                compounded_monthly = ((equity_series.iloc[-1] / equity_series.iloc[0]) ** (1.0 / num_months) - 1.0) * 100.0
+            else:
+                compounded_monthly = avg_monthly_return
+            m_wins = monthly_returns[monthly_returns > 0]
+            monthly_win_rate = (len(m_wins) / len(monthly_returns)) * 100.0
+            best_month = monthly_returns.max() * 100.0
+            worst_month = monthly_returns.min() * 100.0
+    
     # Trades & Trade-Level Diagnostics
     wins = [t for t in trades if t['pnl_pct'] > 0]
     losses = [t for t in trades if t['pnl_pct'] <= 0]
@@ -87,23 +120,22 @@ def calculate_metrics(daily_equity, trades):
     profit_factor = (gross_win / gross_loss) if gross_loss > 0 else (99 if gross_win > 0 else 0)
     
     expectancy = (win_rate/100 * avg_win) - ((1 - win_rate/100) * abs(avg_loss))
-    
-    # Calculate Turnover (total entry value / initial capital)
     turnover = sum([t['entry_price'] * t.get('shares', 1) for t in trades]) / INITIAL_CAPITAL
-    
-    # Calculate Avg Exposure
-    # We estimate exposure as (1 - cash/equity) averaged over the curve, but we only have total equity in daily_equity.
-    # We can pass daily_cash in the future, or approximate it here. Let's return N/A for now and compute properly later if needed.
     
     return {
         "Overall Profit (Rs)": round(overall_profit, 2),
         "CAGR (%)": round(cagr, 2),
+        "Net Avg Monthly Return (%)": round(avg_monthly_return, 2),
+        "Compounded Monthly Return (%)": round(compounded_monthly, 2),
+        "Monthly Win Rate (%)": round(monthly_win_rate, 2),
+        "Best Month (%)": round(best_month, 2),
+        "Worst Month (%)": round(worst_month, 2),
         "Max Drawdown (%)": round(mdd, 2),
-        "Win Rate (%)": round(win_rate, 2),
         "Sharpe Ratio": round(sharpe, 3),
         "Sortino Ratio": round(sortino, 3),
         "Calmar Ratio": round(calmar, 3),
         "Total Trades": len(trades),
+        "Win Rate (%)": round(win_rate, 2),
         "Profit Factor": round(profit_factor, 3),
         "Expectancy (%)": round(expectancy * 100, 3) if expectancy else 0.0,
         "Avg Win (%)": round(avg_win * 100, 2),
@@ -168,6 +200,17 @@ def summarize_equity_period(strategy_name, equity_curve, dates, period_name, sta
     total_return = period.iloc[-1] / period.iloc[0] - 1
     cagr = (period.iloc[-1] / period.iloc[0]) ** (1 / years) - 1
     drawdown = period / period.cummax() - 1
+    
+    # Period Monthly Returns
+    try:
+        m_series = period.resample('ME').last()
+    except Exception:
+        m_series = period.resample('M').last()
+    m_returns = m_series.pct_change().dropna()
+    num_m = len(m_returns)
+    avg_m = m_returns.mean() * 100.0 if num_m > 0 else 0.0
+    m_win_rate = ((m_returns > 0).mean() * 100.0) if num_m > 0 else 0.0
+
     return {
         "Strategy": strategy_name,
         "Period": period_name,
@@ -178,6 +221,8 @@ def summarize_equity_period(strategy_name, equity_curve, dates, period_name, sta
         "End Equity": round(period.iloc[-1], 2),
         "Total Return (%)": round(total_return * 100, 2),
         "CAGR (%)": round(cagr * 100, 2),
+        "Net Avg Monthly Return (%)": round(avg_m, 2),
+        "Monthly Win Rate (%)": round(m_win_rate, 2),
         "Max Drawdown (%)": round(drawdown.min() * 100, 2),
     }
 
@@ -495,7 +540,7 @@ def run_ensemble_backtest(strategies, test_dates, bulk_data, industry_mapping=No
         total_equity = cash + sum(p['shares'] * p['current_price'] for p in open_positions.values())
         daily_equity_curve.append(total_equity)
         
-    metrics = calculate_metrics(daily_equity_curve, trades_log)
+    metrics = calculate_metrics(daily_equity_curve, trades_log, test_dates=test_dates)
     metrics["Strategy"] = "Ensemble (Intersection)"
     return metrics, daily_equity_curve, trades_log
 
@@ -568,6 +613,38 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
             breadth_series[td_ts] = above / n_stocks
         
         logger.info(f"  BCR and Breadth calculated for {len(bcr_series)} days.")
+    
+    # Pre-calculate Top Sectors by Date if require_top_sectors is specified
+    top_sectors_by_date = {}
+    top_n = arch_config.get("require_top_sectors")
+    if top_n and sector_indices and "NIFTYBEES" in bulk_data:
+        logger.info(f"  Pre-calculating Top {top_n} Sectors per trading day...")
+        nifty_close = bulk_data["NIFTYBEES"]['Close']
+        for td in test_dates:
+            td_ts = pd.Timestamp(td)
+            sec_scores = []
+            nifty_locs = nifty_close.index[nifty_close.index <= td_ts]
+            if len(nifty_locs) >= 60:
+                n_today = nifty_close.loc[nifty_locs[-1]]
+                n_20 = nifty_close.loc[nifty_locs[-21]]
+                n_60 = nifty_close.loc[nifty_locs[-61]]
+                n_ret20 = (n_today / n_20) - 1.0
+                n_ret60 = (n_today / n_60) - 1.0
+                
+                for sec_name, sec_df in sector_indices.items():
+                    s_locs = sec_df.index[sec_df.index <= td_ts]
+                    if len(s_locs) >= 60:
+                        s_today = sec_df['Close'].loc[s_locs[-1]]
+                        s_20 = sec_df['Close'].loc[s_locs[-21]]
+                        s_60 = sec_df['Close'].loc[s_locs[-61]]
+                        s_ret20 = (s_today / s_20) - 1.0
+                        s_ret60 = (s_today / s_60) - 1.0
+                        # Combined 20d and 60d relative strength score vs Nifty
+                        score = (s_ret20 - n_ret20) + (s_ret60 - n_ret60)
+                        sec_scores.append((sec_name, score))
+                        
+                sec_scores.sort(key=lambda x: x[1], reverse=True)
+                top_sectors_by_date[td_ts] = set(x[0] for x in sec_scores[:top_n])
     
     for i, current_date in enumerate(test_dates):
         # 1. Update prices and check exits
@@ -696,6 +773,13 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                     if sym in open_positions:
                         continue
                         
+                    # Top Sectors Filter (Focus on Leading Institutional Flows)
+                    if top_n and industry_mapping:
+                        allowed_secs = top_sectors_by_date.get(pd.Timestamp(current_date), set())
+                        stock_sec = industry_mapping.get(sym)
+                        if not stock_sec or stock_sec not in allowed_secs:
+                            continue
+                        
                     hist_df = df[df.index <= current_date]
                     if len(hist_df) < 200:
                         continue
@@ -813,6 +897,13 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                                 else:
                                     risk_atr = 2.5    # Wider stop on lower conviction
                                     reward_atr = 4.0   # Standard target
+                            elif arch_config.get("adaptive_target_expansion"):
+                                if is_confirmed:
+                                    risk_atr = arch_config.get("confirmed_risk_atr", 2.0)
+                                    reward_atr = arch_config.get("confirmed_reward_atr", 5.0)
+                                else:
+                                    risk_atr = arch_config.get("primary_risk_atr", 2.0)
+                                    reward_atr = arch_config.get("primary_reward_atr", 4.0)
                             
                             alpha_score = p_res.get('alpha_score', 0.0) if p_res else 0.0
                             new_candidates.append({
@@ -922,7 +1013,7 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
             "Risk_Multiplier": risk_multiplier
         })
         
-    metrics = calculate_metrics(daily_equity_curve, trades_log)
+    metrics = calculate_metrics(daily_equity_curve, trades_log, test_dates=test_dates)
     metrics["Strategy"] = arch_config["name"]
     
     # Save daily exposure log
@@ -1001,27 +1092,13 @@ def main():
     sector_strat = {"name": "Sector Relative Pullback", "func": sector_pullback_eval, "risk_atr": 1.5, "reward_atr": 3.5}
     connors_strat = {"name": "Connors RSI-2 Dip", "func": connors_rsi_eval, "risk_atr": 1.5, "reward_atr": 3.0}
     avwap_strat = {"name": "AVWAP Pullback", "func": avwap_pullback_eval, "risk_atr": 1.5, "reward_atr": 3.5}
+    dual_avwap_strat = {"name": "Dual AVWAP Confluence", "func": dual_avwap_pullback_eval, "risk_atr": 1.5, "reward_atr": 3.5}
+    vol_surge_strat = {"name": "Volume Surge AVWAP", "func": volume_surge_avwap_eval, "risk_atr": 1.5, "reward_atr": 3.5}
+    dual_avwap_vol_strat = {"name": "Alpha Max Dual AVWAP", "func": dual_avwap_volume_surge_eval, "risk_atr": 1.5, "reward_atr": 3.5}
     leader_strat = {"name": "Leader Consolidation", "func": leader_consolidation_eval, "risk_atr": 1.5, "reward_atr": 4.0}
     thrust_strat = {"name": "Breadth Thrust Reversal", "func": breadth_thrust_eval, "risk_atr": 1.5, "reward_atr": 3.5}
     
     ARCHITECTURES = [
-        {
-            "name": "E13_Sector_Pullback",
-            "primary": sector_strat,
-            "primary_momentum": sector_strat,
-            "confirmation_momentum": vol_strat,
-            "primary_meanrev": pullback_strat,
-            "confirmation_meanrev": connors_strat,
-            "sizing_logic": "alpha_confirmation",
-            "dynamic_risk_scaling": False,
-            "dd_penalty_factor": 5.0,
-            "friction_pct": 0.0015,
-            "rank_candidates": True,
-            "regime_adaptive": True,
-            "bcr_threshold": BCR_THRESHOLD,
-            "cash_preservation": True,
-            "breadth_threshold": BREADTH_THRESHOLD
-        },
         {
             "name": "E14_Strict_AVWAP",
             "primary": avwap_strat,
@@ -1038,6 +1115,103 @@ def main():
             "bcr_threshold": BCR_THRESHOLD,
             "cash_preservation": True,
             "breadth_threshold": BREADTH_THRESHOLD
+        },
+        {
+            "name": "E18_Top_Sector_AVWAP",
+            "primary": avwap_strat,
+            "primary_momentum": avwap_strat,
+            "confirmation_momentum": vol_strat,
+            "primary_meanrev": pullback_strat,
+            "confirmation_meanrev": connors_strat,
+            "sizing_logic": "alpha_confirmation",
+            "dynamic_risk_scaling": False,
+            "dd_penalty_factor": 5.0,
+            "friction_pct": 0.0015,
+            "rank_candidates": True,
+            "regime_adaptive": True,
+            "bcr_threshold": BCR_THRESHOLD,
+            "cash_preservation": True,
+            "breadth_threshold": BREADTH_THRESHOLD,
+            "require_top_sectors": 3
+        },
+        {
+            "name": "E19_Dual_AVWAP_Confluence",
+            "primary": dual_avwap_strat,
+            "primary_momentum": dual_avwap_strat,
+            "confirmation_momentum": vol_strat,
+            "primary_meanrev": pullback_strat,
+            "confirmation_meanrev": connors_strat,
+            "sizing_logic": "alpha_confirmation",
+            "dynamic_risk_scaling": False,
+            "dd_penalty_factor": 5.0,
+            "friction_pct": 0.0015,
+            "rank_candidates": True,
+            "regime_adaptive": True,
+            "bcr_threshold": BCR_THRESHOLD,
+            "cash_preservation": True,
+            "breadth_threshold": BREADTH_THRESHOLD
+        },
+        {
+            "name": "E20_Adaptive_Expansion_AVWAP",
+            "primary": avwap_strat,
+            "primary_momentum": avwap_strat,
+            "confirmation_momentum": vol_strat,
+            "primary_meanrev": pullback_strat,
+            "confirmation_meanrev": connors_strat,
+            "sizing_logic": "alpha_confirmation",
+            "dynamic_risk_scaling": False,
+            "dd_penalty_factor": 5.0,
+            "friction_pct": 0.0015,
+            "rank_candidates": True,
+            "regime_adaptive": True,
+            "bcr_threshold": BCR_THRESHOLD,
+            "cash_preservation": True,
+            "breadth_threshold": BREADTH_THRESHOLD,
+            "adaptive_target_expansion": True,
+            "confirmed_reward_atr": 5.0,
+            "confirmed_risk_atr": 2.0,
+            "primary_reward_atr": 4.0,
+            "primary_risk_atr": 2.0
+        },
+        {
+            "name": "E21_Volume_Surge_AVWAP",
+            "primary": vol_surge_strat,
+            "primary_momentum": vol_surge_strat,
+            "confirmation_momentum": vol_strat,
+            "primary_meanrev": pullback_strat,
+            "confirmation_meanrev": connors_strat,
+            "sizing_logic": "alpha_confirmation",
+            "dynamic_risk_scaling": False,
+            "dd_penalty_factor": 5.0,
+            "friction_pct": 0.0015,
+            "rank_candidates": True,
+            "regime_adaptive": True,
+            "bcr_threshold": BCR_THRESHOLD,
+            "cash_preservation": True,
+            "breadth_threshold": BREADTH_THRESHOLD
+        },
+        {
+            "name": "E22_Alpha_Max_Ensemble",
+            "primary": dual_avwap_vol_strat,
+            "primary_momentum": dual_avwap_vol_strat,
+            "confirmation_momentum": vol_strat,
+            "primary_meanrev": pullback_strat,
+            "confirmation_meanrev": connors_strat,
+            "sizing_logic": "alpha_confirmation",
+            "dynamic_risk_scaling": False,
+            "dd_penalty_factor": 5.0,
+            "friction_pct": 0.0015,
+            "rank_candidates": True,
+            "regime_adaptive": True,
+            "bcr_threshold": BCR_THRESHOLD,
+            "cash_preservation": True,
+            "breadth_threshold": BREADTH_THRESHOLD,
+            "require_top_sectors": 4,
+            "adaptive_target_expansion": True,
+            "confirmed_reward_atr": 5.0,
+            "confirmed_risk_atr": 2.0,
+            "primary_reward_atr": 4.0,
+            "primary_risk_atr": 2.0
         }
     ]
     
@@ -1112,6 +1286,22 @@ def main():
             validation_rows.append(holdout)
     validation_path = os.path.join(os.path.dirname(tear_sheet_path), "validation_report.csv")
     pd.DataFrame(validation_rows).to_csv(validation_path, index=False)
+
+    # Save Monthly Returns Breakdown Matrix
+    monthly_data = {}
+    for strat_name, curve in curves.items():
+        s = pd.Series(curve, index=pd.to_datetime(test_dates))
+        try:
+            m = s.resample('ME').last()
+        except Exception:
+            m = s.resample('M').last()
+        monthly_data[strat_name] = (m.pct_change() * 100).round(2)
+    
+    if monthly_data:
+        monthly_df = pd.DataFrame(monthly_data)
+        monthly_matrix_path = os.path.join(os.path.dirname(tear_sheet_path), "monthly_returns_breakdown.csv")
+        monthly_df.to_csv(monthly_matrix_path)
+        logger.info(f"Monthly returns matrix saved to {monthly_matrix_path}")
 
     def serializable_architecture(architecture):
         return {

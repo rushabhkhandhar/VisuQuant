@@ -1,4 +1,4 @@
-"""Canonical E12 near-close strategy shared by live, forward, and backtest flows."""
+"""Canonical E19 Dual AVWAP Confluence strategy shared by live, forward, and backtest flows."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ RISK_ATR = 2.0
 REWARD_ATR = 4.0
 MAX_CONFIRMED_SIGNALS = 5
 MAX_PRIMARY_SIGNALS = 5
-MAX_HOLDING_SESSIONS = 25  # Fix 3: Time-based exit after ~1 month
+MAX_HOLDING_SESSIONS = 25  # Time-based exit after 25 sessions (~5 weeks)
 
 
 def compute_bcr(bulk_data: Dict[str, pd.DataFrame], as_of_date) -> float:
@@ -45,6 +45,7 @@ def compute_bcr(bulk_data: Dict[str, pd.DataFrame], as_of_date) -> float:
 
 
 def compute_breadth(bulk_data: Dict[str, pd.DataFrame], as_of_date) -> float:
+    """Market breadth: fraction of stocks with Close > 50-day SMA as of *as_of_date*."""
     as_of = pd.Timestamp(as_of_date)
     valid = 0
     above = 0
@@ -60,6 +61,7 @@ def compute_breadth(bulk_data: Dict[str, pd.DataFrame], as_of_date) -> float:
 
 
 def build_sector_indices(bulk_data: Dict[str, pd.DataFrame], industry_mapping: Dict[str, str]) -> Dict[str, pd.DataFrame]:
+    """Construct synthetic sector indices from constituent daily returns."""
     sectors: Dict[str, List[pd.Series]] = {}
     for symbol, df in bulk_data.items():
         if symbol in industry_mapping and not df.empty:
@@ -70,29 +72,45 @@ def build_sector_indices(bulk_data: Dict[str, pd.DataFrame], industry_mapping: D
     }
 
 
-def generate_e12_signals(
+def generate_e19_signals(
     bulk_data: Dict[str, pd.DataFrame],
     nifty_hist: Optional[pd.DataFrame],
     as_of_date,
     industry_mapping: Dict[str, str],
     evaluators: Dict[str, Callable],
 ) -> List[dict]:
-    """Return the frozen E12 MOC candidate set, ranked and capacity-limited."""
+    """Return the canonical E19 Dual AVWAP Confluence candidate set, ranked and capacity-limited.
+    
+    Architecture (E19_Dual_AVWAP_Confluence):
+      - STATE 1 (Trend, BCR > 0.52):
+          Primary:      dual_avwap_pullback_eval (Price > 200d major swing low AVWAP + 60d AVWAP test)
+          Confirmation: volatility_compression_eval (TTM Squeeze / Bollinger compression)
+      - STATE 2 (Mean-Reversion, BCR <= 0.52 and Breadth >= 0.30):
+          Primary:      trend_pullback_eval
+          Confirmation: connors_rsi_eval
+      - STATE 3 (Cash Preservation, Breadth < 0.30):
+          Skip new entries (return [])
+    """
     as_of = pd.Timestamp(as_of_date)
     bcr = compute_bcr(bulk_data, as_of)
     breadth = compute_breadth(bulk_data, as_of)
+
     if bcr > BCR_THRESHOLD:
         state, label = 1, "Trend"
-        primary, confirmation = evaluators["relative_strength"], evaluators["momentum_breakout"]
+        primary = evaluators["dual_avwap_pullback"]
+        confirmation = evaluators["volatility_compression"]
     elif breadth < BREADTH_THRESHOLD:
         return []
     else:
         state, label = 2, "MeanRev"
-        primary, confirmation = evaluators["oversold_uptrend"], evaluators["trend_pullback"]
+        primary = evaluators["trend_pullback"]
+        confirmation = evaluators["connors_rsi"]
 
     sector_indices = build_sector_indices(bulk_data, industry_mapping)
     candidates = []
     for symbol, source_df in bulk_data.items():
+        if symbol == "NIFTYBEES":
+            continue
         history = source_df[source_df.index <= as_of]
         if len(history) < 200:
             continue
@@ -114,8 +132,8 @@ def generate_e12_signals(
             continue
         candidates.append({
             "symbol": symbol,
-            "strategy_name": f"E12-{label}-{'Confirmed' if confirmed else 'Primary'}",
-            "strategy": f"E12-{label}-{'Confirmed' if confirmed else 'Primary'}",
+            "strategy_name": f"E19-{label}-{'Confirmed' if confirmed else 'Primary'}",
+            "strategy": f"E19-{label}-{'Confirmed' if confirmed else 'Primary'}",
             "action": "BUY",
             "signal_date": as_of.date().isoformat(),
             "entry_price": float(price),
@@ -127,7 +145,7 @@ def generate_e12_signals(
             "regime_state": state,
             "bcr": round(float(bcr), 4),
             "breadth": round(float(breadth), 4),
-            "pending_confirmation": True,  # Fix 1: Wait 1 session before entry
+            "pending_confirmation": True,
         })
 
     confirmed = sorted((c for c in candidates if "Confirmed" in c["strategy_name"]), key=lambda c: c["alpha_score"], reverse=True)

@@ -1,3 +1,0 @@
-Strategy,Period,Start,End,Sessions,Start Equity,End Equity,Total Return (%),CAGR (%),Max Drawdown (%)
-Deep_Mean_Reversion_Strategy,In-sample (frozen design),2020-08-31,2024-08-23,1038,499256.13,642488.07,28.69,6.55,-29.58
-Deep_Mean_Reversion_Strategy,Holdout (no retuning),2024-08-26,2026-08-28,514,643739.1,494191.74,-23.23,-12.36,-32.62

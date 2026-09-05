@@ -739,6 +739,278 @@ def avwap_pullback_eval(df, nifty_hist=None, sector_hist=None):
 
     return {"passed": True, "score": 1.0, "alpha_score": alpha_score, "trigger_type": "Anchored VWAP Pullback"}
 
+def dual_avwap_pullback_eval(df, nifty_hist=None, sector_hist=None):
+    """
+    Dual Multi-Timeframe Anchored VWAP Confluence:
+    1. Requires price to be strictly above its 200-day major swing low AVWAP (zero overhead institutional supply).
+    2. Enters on a bullish bounce testing the 60-day swing low AVWAP in a winning sector with triple MA alignment.
+    """
+    if len(df) < 200:
+        return {"passed": False, "reasons": ["Not enough data for 200 SMA"]}
+    if len(df) > 300:
+        df = df.iloc[-300:]
+
+    close = df['Close'].iloc[-1]
+    open_p = df['Open'].iloc[-1]
+    low = df['Low'].iloc[-1]
+
+    # 1. Sector / Macro RS Filter
+    if sector_hist is not None and nifty_hist is not None and len(sector_hist) >= 60 and len(nifty_hist) >= 60:
+        sec_ret20 = (sector_hist['Close'].iloc[-1] / sector_hist['Close'].iloc[-21]) - 1
+        nifty_ret20 = (nifty_hist['Close'].iloc[-1] / nifty_hist['Close'].iloc[-21]) - 1
+        if sec_ret20 < nifty_ret20:
+            return {"passed": False, "reasons": ["Sector underperforming NIFTY (20d)"]}
+    elif nifty_hist is not None and len(nifty_hist) >= 40:
+        stock_ret20 = (close / df['Close'].iloc[-21]) - 1
+        nifty_ret20 = (nifty_hist['Close'].iloc[-1] / nifty_hist['Close'].iloc[-21]) - 1
+        if stock_ret20 < nifty_ret20:
+            return {"passed": False, "reasons": ["Stock underperforming NIFTY (20d)"]}
+
+    # 2. Structural Trend: Strict Triple Bullish Alignment
+    sma200 = df['Close'].rolling(window=200).mean().iloc[-1]
+    ema50 = df['Close'].ewm(span=50, adjust=False).mean().iloc[-1]
+    ema20 = df['Close'].ewm(span=20, adjust=False).mean().iloc[-1]
+    if not (close > sma200 and ema50 > sma200 and ema20 > ema50):
+        return {"passed": False, "reasons": ["MAs not aligned (Close > 200, 50 > 200, 20 > 50)"]}
+
+    # 3. Major 200-day Swing Low AVWAP (Macro Institutional Base)
+    lookback_200 = min(len(df), 200)
+    major_df = df.iloc[-lookback_200:]
+    min_pos_200 = int(np.argmin(major_df['Low'].values))
+    major_slice = major_df.iloc[min_pos_200:]
+    if len(major_slice) >= 5:
+        tp_200 = (major_slice['High'] + major_slice['Low'] + major_slice['Close']) / 3.0
+        vol_200 = major_slice['Volume']
+        avwap_200 = ((tp_200 * vol_200).cumsum() / (vol_200.cumsum() + 1e-5)).iloc[-1]
+        if pd.notna(avwap_200) and avwap_200 > 0 and close < avwap_200:
+            return {"passed": False, "reasons": ["Price below 200-day major swing low AVWAP"]}
+
+    # 4. Tactical 60-day Swing Low AVWAP (Tactical Swing Base)
+    lookback = min(len(df), 60)
+    recent_df = df.iloc[-lookback:]
+    min_pos = int(np.argmin(recent_df['Low'].values))
+    anchor_slice = recent_df.iloc[min_pos:]
+    if len(anchor_slice) < 5:
+        anchor_slice = df.iloc[-30:]
+    
+    tp = (anchor_slice['High'] + anchor_slice['Low'] + anchor_slice['Close']) / 3.0
+    vol = anchor_slice['Volume']
+    cum_vp = (tp * vol).cumsum()
+    cum_v = vol.cumsum()
+    avwap = (cum_vp / (cum_v + 1e-5)).iloc[-1]
+
+    if pd.isna(avwap) or avwap <= 0:
+        return {"passed": False, "reasons": ["Invalid tactical AVWAP"]}
+
+    # Proximity to 60d AVWAP
+    dist_avwap = (close - avwap) / avwap
+    if dist_avwap < -0.015 or dist_avwap > 0.025:
+        return {"passed": False, "reasons": [f"Not near AVWAP support (dist={dist_avwap:.1%})"]}
+
+    # Did today or yesterday test 60d AVWAP?
+    low_yesterday = df['Low'].iloc[-2]
+    if low > avwap * 1.015 and low_yesterday > avwap * 1.015:
+        return {"passed": False, "reasons": ["Did not test AVWAP support"]}
+
+    # 5. Bullish bounce candle
+    prev_close = df['Close'].iloc[-2]
+    if close < open_p or close < prev_close:
+        return {"passed": False, "reasons": ["Not a green bounce candle"]}
+
+    # 6. RSI (46-62 sweet-spot)
+    rsi = talib.RSI(df['Close'], timeperiod=14).iloc[-1]
+    if pd.isna(rsi) or not (46 <= rsi <= 62):
+        return {"passed": False, "reasons": [f"RSI {rsi:.1f} not in healthy pullback zone (46-62)"]}
+
+    # 7. Volume support
+    vol_last = df['Volume'].iloc[-1]
+    vol_sma20 = df['Volume'].rolling(20).mean().iloc[-2]
+    if pd.notna(vol_sma20) and vol_last < (0.85 * vol_sma20):
+        return {"passed": False, "reasons": ["Volume too dry on bounce (<0.85x average)"]}
+
+    proximity_score = 1.0 - (abs(dist_avwap) / 0.025)
+    rsi_score = (62.0 - rsi) / 16.0
+    alpha_score = (proximity_score * 0.5) + (rsi_score * 0.5)
+
+    return {"passed": True, "score": 1.0, "alpha_score": alpha_score, "trigger_type": "Dual AVWAP Confluence"}
+
+def volume_surge_avwap_eval(df, nifty_hist=None, sector_hist=None):
+    """
+    Heavy Volume Surge Anchored VWAP Reversal:
+    Tests 60-day AVWAP with strict triple MA alignment and requires bounce candle
+    volume >= 1.25x 20-day volume SMA, confirming decisive institutional accumulation.
+    """
+    if len(df) < 200:
+        return {"passed": False, "reasons": ["Not enough data for 200 SMA"]}
+    if len(df) > 300:
+        df = df.iloc[-300:]
+
+    close = df['Close'].iloc[-1]
+    open_p = df['Open'].iloc[-1]
+    low = df['Low'].iloc[-1]
+
+    # 1. Sector / Macro RS Filter
+    if sector_hist is not None and nifty_hist is not None and len(sector_hist) >= 60 and len(nifty_hist) >= 60:
+        sec_ret20 = (sector_hist['Close'].iloc[-1] / sector_hist['Close'].iloc[-21]) - 1
+        nifty_ret20 = (nifty_hist['Close'].iloc[-1] / nifty_hist['Close'].iloc[-21]) - 1
+        if sec_ret20 < nifty_ret20:
+            return {"passed": False, "reasons": ["Sector underperforming NIFTY (20d)"]}
+    elif nifty_hist is not None and len(nifty_hist) >= 40:
+        stock_ret20 = (close / df['Close'].iloc[-21]) - 1
+        nifty_ret20 = (nifty_hist['Close'].iloc[-1] / nifty_hist['Close'].iloc[-21]) - 1
+        if stock_ret20 < nifty_ret20:
+            return {"passed": False, "reasons": ["Stock underperforming NIFTY (20d)"]}
+
+    # 2. Structural Trend: Strict Triple Bullish Alignment
+    sma200 = df['Close'].rolling(window=200).mean().iloc[-1]
+    ema50 = df['Close'].ewm(span=50, adjust=False).mean().iloc[-1]
+    ema20 = df['Close'].ewm(span=20, adjust=False).mean().iloc[-1]
+    if not (close > sma200 and ema50 > sma200 and ema20 > ema50):
+        return {"passed": False, "reasons": ["MAs not aligned (Close > 200, 50 > 200, 20 > 50)"]}
+
+    # 3. Anchored VWAP from 60-day swing low
+    lookback = min(len(df), 60)
+    recent_df = df.iloc[-lookback:]
+    min_pos = int(np.argmin(recent_df['Low'].values))
+    anchor_slice = recent_df.iloc[min_pos:]
+    if len(anchor_slice) < 5:
+        anchor_slice = df.iloc[-30:]
+    
+    tp = (anchor_slice['High'] + anchor_slice['Low'] + anchor_slice['Close']) / 3.0
+    vol = anchor_slice['Volume']
+    cum_vp = (tp * vol).cumsum()
+    cum_v = vol.cumsum()
+    avwap = (cum_vp / (cum_v + 1e-5)).iloc[-1]
+
+    if pd.isna(avwap) or avwap <= 0:
+        return {"passed": False, "reasons": ["Invalid AVWAP"]}
+
+    # 4. Proximity to AVWAP: close within 2.5% of AVWAP
+    dist_avwap = (close - avwap) / avwap
+    if dist_avwap < -0.015 or dist_avwap > 0.025:
+        return {"passed": False, "reasons": [f"Not near AVWAP support (dist={dist_avwap:.1%})"]}
+
+    # Did today or yesterday test AVWAP?
+    low_yesterday = df['Low'].iloc[-2]
+    if low > avwap * 1.015 and low_yesterday > avwap * 1.015:
+        return {"passed": False, "reasons": ["Did not test AVWAP support"]}
+
+    # 5. Bullish bounce candle
+    prev_close = df['Close'].iloc[-2]
+    if close < open_p or close < prev_close:
+        return {"passed": False, "reasons": ["Not a green bounce candle"]}
+
+    # 6. Healthy RSI (46-62 sweet-spot)
+    rsi = talib.RSI(df['Close'], timeperiod=14).iloc[-1]
+    if pd.isna(rsi) or not (46 <= rsi <= 62):
+        return {"passed": False, "reasons": [f"RSI {rsi:.1f} not in healthy pullback zone (46-62)"]}
+
+    # 7. Heavy Volume Surge (>= 1.25x 20d SMA)
+    vol_last = df['Volume'].iloc[-1]
+    vol_sma20 = df['Volume'].rolling(20).mean().iloc[-2]
+    if pd.isna(vol_sma20) or vol_last < (1.25 * vol_sma20):
+        return {"passed": False, "reasons": ["Volume surge insufficient (<1.25x average)"]}
+
+    proximity_score = 1.0 - (abs(dist_avwap) / 0.025)
+    rsi_score = (62.0 - rsi) / 16.0
+    vol_ratio = min(float(vol_last / (vol_sma20 + 1e-5)), 3.0) / 3.0
+    alpha_score = (proximity_score * 0.4) + (rsi_score * 0.3) + (vol_ratio * 0.3)
+
+    return {"passed": True, "score": 1.0, "alpha_score": alpha_score, "trigger_type": "Volume Surge AVWAP"}
+
+def dual_avwap_volume_surge_eval(df, nifty_hist=None, sector_hist=None):
+    """
+    Alpha Max Multi-Timeframe AVWAP + Volume Surge:
+    Price > 200d major swing low AVWAP + tests 60d tactical AVWAP + Volume >= 1.15x SMA20.
+    """
+    if len(df) < 200:
+        return {"passed": False, "reasons": ["Not enough data for 200 SMA"]}
+    if len(df) > 300:
+        df = df.iloc[-300:]
+
+    close = df['Close'].iloc[-1]
+    open_p = df['Open'].iloc[-1]
+    low = df['Low'].iloc[-1]
+
+    # 1. Sector / Macro RS Filter
+    if sector_hist is not None and nifty_hist is not None and len(sector_hist) >= 60 and len(nifty_hist) >= 60:
+        sec_ret20 = (sector_hist['Close'].iloc[-1] / sector_hist['Close'].iloc[-21]) - 1
+        nifty_ret20 = (nifty_hist['Close'].iloc[-1] / nifty_hist['Close'].iloc[-21]) - 1
+        if sec_ret20 < nifty_ret20:
+            return {"passed": False, "reasons": ["Sector underperforming NIFTY (20d)"]}
+    elif nifty_hist is not None and len(nifty_hist) >= 40:
+        stock_ret20 = (close / df['Close'].iloc[-21]) - 1
+        nifty_ret20 = (nifty_hist['Close'].iloc[-1] / nifty_hist['Close'].iloc[-21]) - 1
+        if stock_ret20 < nifty_ret20:
+            return {"passed": False, "reasons": ["Stock underperforming NIFTY (20d)"]}
+
+    # 2. Strict Triple Bullish Alignment
+    sma200 = df['Close'].rolling(window=200).mean().iloc[-1]
+    ema50 = df['Close'].ewm(span=50, adjust=False).mean().iloc[-1]
+    ema20 = df['Close'].ewm(span=20, adjust=False).mean().iloc[-1]
+    if not (close > sma200 and ema50 > sma200 and ema20 > ema50):
+        return {"passed": False, "reasons": ["MAs not aligned (Close > 200, 50 > 200, 20 > 50)"]}
+
+    # 3. Major 200-day Swing Low AVWAP
+    lookback_200 = min(len(df), 200)
+    major_df = df.iloc[-lookback_200:]
+    min_pos_200 = int(np.argmin(major_df['Low'].values))
+    major_slice = major_df.iloc[min_pos_200:]
+    if len(major_slice) >= 5:
+        tp_200 = (major_slice['High'] + major_slice['Low'] + major_slice['Close']) / 3.0
+        vol_200 = major_slice['Volume']
+        avwap_200 = ((tp_200 * vol_200).cumsum() / (vol_200.cumsum() + 1e-5)).iloc[-1]
+        if pd.notna(avwap_200) and avwap_200 > 0 and close < avwap_200:
+            return {"passed": False, "reasons": ["Price below 200-day major swing low AVWAP"]}
+
+    # 4. Tactical 60-day Swing Low AVWAP
+    lookback = min(len(df), 60)
+    recent_df = df.iloc[-lookback:]
+    min_pos = int(np.argmin(recent_df['Low'].values))
+    anchor_slice = recent_df.iloc[min_pos:]
+    if len(anchor_slice) < 5:
+        anchor_slice = df.iloc[-30:]
+    
+    tp = (anchor_slice['High'] + anchor_slice['Low'] + anchor_slice['Close']) / 3.0
+    vol = anchor_slice['Volume']
+    cum_vp = (tp * vol).cumsum()
+    cum_v = vol.cumsum()
+    avwap = (cum_vp / (cum_v + 1e-5)).iloc[-1]
+
+    if pd.isna(avwap) or avwap <= 0:
+        return {"passed": False, "reasons": ["Invalid tactical AVWAP"]}
+
+    dist_avwap = (close - avwap) / avwap
+    if dist_avwap < -0.015 or dist_avwap > 0.025:
+        return {"passed": False, "reasons": [f"Not near AVWAP support (dist={dist_avwap:.1%})"]}
+
+    low_yesterday = df['Low'].iloc[-2]
+    if low > avwap * 1.015 and low_yesterday > avwap * 1.015:
+        return {"passed": False, "reasons": ["Did not test AVWAP support"]}
+
+    # 5. Bullish bounce candle
+    prev_close = df['Close'].iloc[-2]
+    if close < open_p or close < prev_close:
+        return {"passed": False, "reasons": ["Not a green bounce candle"]}
+
+    # 6. RSI (46-62 sweet-spot)
+    rsi = talib.RSI(df['Close'], timeperiod=14).iloc[-1]
+    if pd.isna(rsi) or not (46 <= rsi <= 62):
+        return {"passed": False, "reasons": [f"RSI {rsi:.1f} not in healthy pullback zone (46-62)"]}
+
+    # 7. Volume surge >= 1.15x 20d SMA
+    vol_last = df['Volume'].iloc[-1]
+    vol_sma20 = df['Volume'].rolling(20).mean().iloc[-2]
+    if pd.isna(vol_sma20) or vol_last < (1.15 * vol_sma20):
+        return {"passed": False, "reasons": ["Volume surge insufficient (<1.15x average)"]}
+
+    proximity_score = 1.0 - (abs(dist_avwap) / 0.025)
+    rsi_score = (62.0 - rsi) / 16.0
+    vol_ratio = min(float(vol_last / (vol_sma20 + 1e-5)), 3.0) / 3.0
+    alpha_score = (proximity_score * 0.4) + (rsi_score * 0.3) + (vol_ratio * 0.3)
+
+    return {"passed": True, "score": 1.0, "alpha_score": alpha_score, "trigger_type": "Alpha Max Dual AVWAP"}
+
 def leader_consolidation_eval(df, nifty_hist=None, sector_hist=None):
     """
     Sector Leader Tight Consolidation Breakout:
@@ -1057,7 +1329,7 @@ def update_open_trades(trades, as_of_date):
                 logger.info(f"Trade {t['trade_id']} ({sym}) CLOSED at WIN: {t['pnl_pct']:.2f}%")
             else:
                 # Fix 3: Time-based exit
-                from src.screener.pipeline.swing.e12_strategy import MAX_HOLDING_SESSIONS
+                from src.screener.pipeline.swing.e19_strategy import MAX_HOLDING_SESSIONS
                 from datetime import datetime
                 import numpy as np
                 entry_dt = datetime.strptime(t.get("entry_date", date_str), "%Y-%m-%d")
