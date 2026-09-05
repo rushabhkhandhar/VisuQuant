@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Header from "@/components/Header";
 import HeroLanding from "@/components/HeroLanding";
 import ScreenerView from "@/components/ScreenerView";
@@ -9,26 +9,110 @@ import CustomStrategyView from "@/components/CustomStrategyView";
 import BacktestView from "@/components/BacktestView";
 import FilingsExplorerView from "@/components/FilingsExplorerView";
 
+const VALID_TABS = ["landing", "screener", "vision", "strategy", "backtest", "filings"];
+
 export default function Home() {
   const [activeTab, setActiveTab] = useState<string>("landing");
   const [targetTicker, setTargetTicker] = useState<string>("TCS");
 
+  // 1. Initialize active tab & target ticker from URL Hash, Query Param, or LocalStorage on mount
+  useEffect(() => {
+    let initialTab = "landing";
+
+    // Priority 1: URL Hash (#screener, #strategy, #backtest, etc.)
+    const hash = window.location.hash.replace("#", "").toLowerCase().trim();
+    if (VALID_TABS.includes(hash)) {
+      initialTab = hash;
+    } else {
+      // Priority 2: Query param (?tab=screener)
+      const params = new URLSearchParams(window.location.search);
+      const qTab = params.get("tab")?.toLowerCase().trim();
+      if (qTab && VALID_TABS.includes(qTab)) {
+        initialTab = qTab;
+      } else {
+        // Priority 3: LocalStorage persistence
+        try {
+          const storedTab = localStorage.getItem("visuquant_active_tab")?.toLowerCase().trim();
+          if (storedTab && VALID_TABS.includes(storedTab)) {
+            initialTab = storedTab;
+          }
+        } catch {
+          // Ignore storage restrictions
+        }
+      }
+    }
+
+    setActiveTab(initialTab);
+    if (initialTab !== "landing" && !window.location.hash) {
+      window.history.replaceState(null, "", `#${initialTab}`);
+    }
+
+    // Restore target ticker if saved
+    try {
+      const storedTicker = localStorage.getItem("visuquant_target_ticker");
+      if (storedTicker && storedTicker.trim()) {
+        setTargetTicker(storedTicker.trim().toUpperCase());
+      }
+    } catch {
+      // Ignore
+    }
+  }, []);
+
+  // 2. Listen to Browser Back / Forward Button Navigation
+  useEffect(() => {
+    const handleHashChange = () => {
+      const hash = window.location.hash.replace("#", "").toLowerCase().trim();
+      if (VALID_TABS.includes(hash)) {
+        setActiveTab(hash);
+        try {
+          localStorage.setItem("visuquant_active_tab", hash);
+        } catch {}
+      } else if (!hash) {
+        setActiveTab("landing");
+        try {
+          localStorage.setItem("visuquant_active_tab", "landing");
+        } catch {}
+      }
+    };
+
+    window.addEventListener("hashchange", handleHashChange);
+    return () => window.removeEventListener("hashchange", handleHashChange);
+  }, []);
+
+  // 3. Tab Switch Handler with History & LocalStorage Sync
+  const handleTabChange = (tab: string) => {
+    if (!VALID_TABS.includes(tab)) return;
+    setActiveTab(tab);
+    try {
+      localStorage.setItem("visuquant_active_tab", tab);
+      if (tab === "landing") {
+        window.history.pushState(null, "", window.location.pathname + window.location.search);
+      } else {
+        window.history.pushState(null, "", `#${tab}`);
+      }
+    } catch {}
+  };
+
   const handleDeepAnalyze = (sym: string) => {
-    setTargetTicker(sym);
-    setActiveTab("vision");
+    const cleanSym = sym.trim().toUpperCase();
+    setTargetTicker(cleanSym);
+    try {
+      localStorage.setItem("visuquant_target_ticker", cleanSym);
+    } catch {}
+    handleTabChange("vision");
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   return (
     <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", background: "var(--bg-darkest)", transition: "background-color 0.25s ease" }}>
       {/* 1. Global Header with Live Marquee */}
-      <Header activeTab={activeTab} setActiveTab={setActiveTab} />
+      <Header activeTab={activeTab} setActiveTab={handleTabChange} />
 
       {/* 2. Main Body Container */}
       <main style={{ maxWidth: "1280px", margin: "0 auto", padding: "24px 20px", width: "100%", flex: 1 }}>
         {activeTab === "landing" && (
           <HeroLanding onNavigate={(tab) => {
-            setActiveTab(tab);
+            handleTabChange(tab);
             window.scrollTo({ top: 0, behavior: "smooth" });
           }} />
         )}

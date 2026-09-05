@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { IconPlay, IconBarChart, IconShield } from "./Icons";
 
 export default function BacktestView() {
@@ -46,6 +46,19 @@ export default function BacktestView() {
     },
   ];
 
+  // Restore cached backtest results on reload
+  useEffect(() => {
+    try {
+      const cached = sessionStorage.getItem("visuquant_backtest_cache");
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed.backtestData) setBacktestData(parsed.backtestData);
+        if (parsed.symbol) setSymbol(parsed.symbol);
+        if (parsed.months) setMonths(parsed.months);
+      }
+    } catch {}
+  }, []);
+
   const runBacktest = async () => {
     if (!symbol.trim()) return;
     setLoading(true);
@@ -61,6 +74,12 @@ export default function BacktestView() {
       const data = await res.json();
       if (data.status === "success" && data.data) {
         setBacktestData(data.data);
+        try {
+          sessionStorage.setItem(
+            "visuquant_backtest_cache",
+            JSON.stringify({ backtestData: data.data, symbol: symbol.trim().toUpperCase(), months })
+          );
+        } catch {}
       } else {
         setError(data.message || "Backtest execution returned no data.");
       }

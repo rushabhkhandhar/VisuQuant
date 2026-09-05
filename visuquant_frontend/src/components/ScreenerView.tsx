@@ -28,6 +28,17 @@ export default function ScreenerView({ onAnalyzeTicker }: ScreenerViewProps) {
     terminalEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [streamLogs]);
 
+  // Restore previous screener results on reload
+  useEffect(() => {
+    try {
+      const cached = sessionStorage.getItem("visuquant_screener_results");
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed) setResults(parsed);
+      }
+    } catch {}
+  }, []);
+
   const runScreener = async () => {
     setLoading(true);
     setError("");
@@ -68,6 +79,9 @@ export default function ScreenerView({ onAnalyzeTicker }: ScreenerViewProps) {
                 setStreamLogs((prev) => [...prev, { msg: item.message, level: item.level || "INFO", time: now }]);
               } else if (item.type === "result") {
                 setResults(item.data);
+                try {
+                  sessionStorage.setItem("visuquant_screener_results", JSON.stringify(item.data));
+                } catch {}
               } else if (item.type === "error") {
                 setError(item.message);
               }
