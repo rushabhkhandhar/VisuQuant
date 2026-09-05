@@ -17,16 +17,16 @@ from src.data.nse_fetcher import load_nifty500_symbols, load_nifty500_industry_m
 from src.data.live_tv_fetcher import get_tv_fetcher
 from src.screener.pipeline.swing.run_front_test import (
     load_state, STATE_FILE, record_live_signals, save_state,
-    sector_pullback_eval, volatility_compression_eval,
+    avwap_pullback_eval, volatility_compression_eval,
     trend_pullback_eval, connors_rsi_eval,
 )
-from src.screener.pipeline.swing.e13_strategy import generate_e13_signals, MAX_HOLDING_SESSIONS
+from src.screener.pipeline.swing.e14_strategy import generate_e14_signals, MAX_HOLDING_SESSIONS
 import json
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-ACTIVE_STRATEGY_NAME = "E13_Sector_Pullback"
+ACTIVE_STRATEGY_NAME = "E14_Strict_AVWAP"
 
 def send_telegram_message(message: str):
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN_SWING")
@@ -197,10 +197,10 @@ def compute_live_breadth(bulk_data):
 
 def run_live_strategies(bulk_data, nifty_hist):
     """
-    E13_Sector_Pullback regime-adaptive architecture (mirrors compare_strategies.py E13).
+    E14_Strict_AVWAP regime-adaptive architecture (mirrors compare_strategies.py E14).
     
     STATE 1 — TREND (BCR > 52%):
-        Primary:      Sector Relative Pullback (20 EMA pullback in leading sectors)
+        Primary:      Anchored VWAP Pullback (60d swing low AVWAP + EMA20>50>200 + RSI 46-62)
         Confirmation: Volatility Compression (TTM squeeze / Bollinger compression)
     STATE 2 — MEAN-REVERT (BCR <= 52%, Breadth >= 30%):
         Primary:      Trend Pullback
@@ -210,13 +210,13 @@ def run_live_strategies(bulk_data, nifty_hist):
     
     All regime inputs are backward-looking only. No forward bias.
     """
-    return generate_e13_signals(
+    return generate_e14_signals(
         bulk_data=bulk_data,
         nifty_hist=nifty_hist,
         as_of_date=pd.Timestamp.now(),
         industry_mapping=load_nifty500_industry_mapping(),
         evaluators={
-            "sector_pullback": sector_pullback_eval,
+            "avwap_pullback": avwap_pullback_eval,
             "volatility_compression": volatility_compression_eval,
             "trend_pullback": trend_pullback_eval,
             "connors_rsi": connors_rsi_eval,
@@ -292,12 +292,12 @@ def main():
     # This script is purely for generating live execution signals for the user.
     
     print_terminal_table("SELL SIGNALS (STOP / TARGET HIT)", closed_signals)
-    print_terminal_table("BUY SIGNALS (E13 SECTOR PULLBACK MOC)", buy_signals)
+    print_terminal_table("BUY SIGNALS (E14 STRICT AVWAP MOC)", buy_signals)
     
     today = date.today().strftime('%Y-%m-%d')
     
     # Format and send Telegram Message immediately
-    tg_msg = f"<b>📈 E13 Sector Pullback Strategy (3:15 PM Update): {today} 📈</b>\n\n"
+    tg_msg = f"<b>📈 E14 Strict AVWAP Strategy (3:15 PM Update): {today} 📈</b>\n\n"
     
     tg_msg += "<b>🔴 SELL SIGNALS (STOP / TARGET HIT):</b>\n"
     if not closed_signals:

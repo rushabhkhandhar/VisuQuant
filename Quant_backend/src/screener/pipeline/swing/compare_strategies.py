@@ -21,7 +21,10 @@ from src.screener.pipeline.swing.run_front_test import (
     pocket_pivot_eval,
     connors_rsi_eval,
     ttm_squeeze_eval,
-    sector_pullback_eval
+    sector_pullback_eval,
+    avwap_pullback_eval,
+    leader_consolidation_eval,
+    breadth_thrust_eval
 )
 from src.screener.pipeline.swing.e12_strategy import (
     BCR_THRESHOLD, BREADTH_THRESHOLD, MAX_CONFIRMED_SIGNALS, MAX_PRIMARY_SIGNALS,
@@ -31,8 +34,7 @@ from src.screener.pipeline.swing.e12_strategy import (
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-INITIAL_CAPITAL = 1_00_000.0  #   This does NOT affect architectural backtests (E4/A1/E11 etc).
-                              # Architectural backtests use a hardcoded 5L in run_architectural_backtest().
+INITIAL_CAPITAL = 1_00_000.0  # 1 Lakh initial capital
 MAX_WEIGHT_PER_TRADE = 0.20  # Max 20% of total equity per trade
 FRICTION_PCT = 0.0015  # 0.15% cost per trade leg
 HOLDOUT_START = pd.Timestamp("2024-08-25")
@@ -75,7 +77,7 @@ def calculate_metrics(daily_equity, trades):
     wins = [t for t in trades if t['pnl_pct'] > 0]
     losses = [t for t in trades if t['pnl_pct'] <= 0]
     win_rate = (len(wins) / len(trades) * 100) if trades else 0
-    overall_profit = equity_series.iloc[-1] - INITIAL_CAPITAL
+    overall_profit = equity_series.iloc[-1] - equity_series.iloc[0]
     
     avg_win = np.mean([t['pnl_pct'] for t in wins]) if wins else 0
     avg_loss = np.mean([t['pnl_pct'] for t in losses]) if losses else 0
@@ -504,9 +506,7 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
     logger = logging.getLogger(__name__)
     logger.info(f"Backtesting Architecture: {arch_config['name']}...")
     
-    # ⚠️ ARCHITECTURAL BACKTEST ALWAYS STARTS WITH 5L — INDEPENDENT OF INITIAL_CAPITAL CONSTANT ABOVE
-    # Changing INITIAL_CAPITAL at the top of the file has NO effect here.
-    ARCH_STARTING_CAPITAL = 5_00_000.0
+    ARCH_STARTING_CAPITAL = arch_config.get("starting_capital", INITIAL_CAPITAL)
     cash = ARCH_STARTING_CAPITAL
     FRICTION_PCT = arch_config.get("friction_pct", 0.0015)
     MAX_WEIGHT_PER_TRADE = 0.20
@@ -601,7 +601,7 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                             "stop_loss": pos["stop_loss"],
                             "target": pos["target"],
                             "pnl_pct": pnl, 
-                            "status": "Loss"
+                            "status": "Win" if pnl > 0 else "Loss"
                         })
                     elif high >= pos['target']:
                         exit_price = pos['target']
@@ -634,7 +634,7 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                             cash += pos['shares'] * exit_price * (1 - FRICTION_PCT)
                             symbols_to_remove.append(sym)
                             trades_log.append({
-                                "symbol": sym,
+                                "symbol": sym, 
                                 "signal_date": pos.get("signal_date", pos.get("entry_date", "")),
                                 "entry_date": pos.get("entry_date", ""),
                                 "exit_date": current_date.strftime("%Y-%m-%d"),
@@ -642,9 +642,23 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                                 "exit_price": exit_price,
                                 "stop_loss": pos["stop_loss"],
                                 "target": pos["target"],
-                                "pnl_pct": pnl,
+                                "pnl_pct": pnl, 
                                 "status": "TimeStop"
                             })
+                        else:
+                            # Position survives session: track highest price & check trailing stop
+                            pos['highest_price'] = max(pos.get('highest_price', pos['entry_price']), high)
+                            if arch_config.get("trailing_stop") == "breakeven_then_trail":
+                                pos_atr = pos.get('atr', 0.0)
+                                if pos_atr > 0:
+                                    # Breakeven condition: high reached +2.0 ATR
+                                    if pos['highest_price'] >= pos['entry_price'] + (2.0 * pos_atr):
+                                        be_stop = pos['entry_price'] * (1 + (FRICTION_PCT * 2))
+                                        pos['stop_loss'] = max(pos['stop_loss'], be_stop)
+                                    # Trailing condition: high reached +3.0 ATR -> trail 1.5 ATR below peak
+                                    if pos['highest_price'] >= pos['entry_price'] + (3.0 * pos_atr):
+                                        trail_stop = pos['highest_price'] - (1.5 * pos_atr)
+                                        pos['stop_loss'] = max(pos['stop_loss'], trail_stop)
                         
         for sym in symbols_to_remove:
             del open_positions[sym]
@@ -662,7 +676,7 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                 
         # 2. Evaluate new candidates
         new_candidates = []
-        if cash > (5_00_000.0 * 0.05):
+        if cash > (ARCH_STARTING_CAPITAL * 0.05):
             nifty_hist = None
             if "NIFTYBEES" in bulk_data and current_date in bulk_data["NIFTYBEES"].index:
                 nifty_hist = bulk_data["NIFTYBEES"][bulk_data["NIFTYBEES"].index <= current_date]
@@ -788,8 +802,8 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                         entry_price = hist_df['Close'].iloc[-1]
                         atr = talib.ATR(hist_df['High'], hist_df['Low'], hist_df['Close'], timeperiod=14).iloc[-1]
                         if pd.notna(atr) and atr > 0:
-                            risk_atr = RISK_ATR
-                            reward_atr = REWARD_ATR
+                            risk_atr = arch_config.get("risk_atr", RISK_ATR)
+                            reward_atr = arch_config.get("reward_atr", REWARD_ATR)
                             
                             # A2+A3: Adaptive Risk/Reward based on confirmation
                             if arch_config.get("adaptive_rr") and sizing_logic == "alpha_confirmation":
@@ -808,6 +822,7 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                                 "signal_date": current_date.strftime("%Y-%m-%d"),
                                 "stop_loss": entry_price - (atr * risk_atr),
                                 "target": entry_price + (atr * reward_atr),
+                                "atr": atr,
                                 "risk_pct": risk_pct,
                                 "alpha_score": alpha_score,
                                 "confirmed": is_confirmed,
@@ -865,8 +880,10 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                             "signal_date": cand["signal_date"],
                             "entry_price": cand['price'],
                             "current_price": cand['price'],
+                            "highest_price": cand['price'],
                             "stop_loss": cand['stop_loss'],
-                            "target": cand['target']
+                            "target": cand['target'],
+                            "atr": cand.get('atr', 0.0)
                         }
             else:
                 for cand in new_candidates:
@@ -886,8 +903,10 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                             "signal_date": cand["signal_date"],
                             "entry_price": cand['price'],
                             "current_price": cand['price'],
+                            "highest_price": cand['price'],
                             "stop_loss": cand['stop_loss'],
-                            "target": cand['target']
+                            "target": cand['target'],
+                            "atr": cand.get('atr', 0.0)
                         }
                     
         total_equity = cash + sum(p['shares'] * p['current_price'] for p in open_positions.values())
@@ -908,7 +927,9 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
     
     # Save daily exposure log
     safe_name = arch_config['name'].replace(' ', '_').replace(':', '')
-    pd.DataFrame(daily_exposure_log).to_csv(f"/Users/rushabhkhandhar/Desktop/Trading/finvison_tech_analysis/Quant_backend/front_testing/{safe_name}_exposure.csv", index=False)
+    out_dir = "/Users/rushabhkhandhar/Desktop/Trading/finvison_tech_analysis/Quant_backend/front_testing"
+    os.makedirs(out_dir, exist_ok=True)
+    pd.DataFrame(daily_exposure_log).to_csv(f"{out_dir}/{safe_name}_exposure.csv", index=False)
     
     # Calculate Regime Breakdown
     nifty_full = bulk_data.get("NIFTYBEES")
@@ -979,25 +1000,11 @@ def main():
     pullback_strat = {"name": "Trend Pullback", "func": trend_pullback_eval, "risk_atr": 2.0, "reward_atr": 4.0}
     sector_strat = {"name": "Sector Relative Pullback", "func": sector_pullback_eval, "risk_atr": 1.5, "reward_atr": 3.5}
     connors_strat = {"name": "Connors RSI-2 Dip", "func": connors_rsi_eval, "risk_atr": 1.5, "reward_atr": 3.0}
+    avwap_strat = {"name": "AVWAP Pullback", "func": avwap_pullback_eval, "risk_atr": 1.5, "reward_atr": 3.5}
+    leader_strat = {"name": "Leader Consolidation", "func": leader_consolidation_eval, "risk_atr": 1.5, "reward_atr": 4.0}
+    thrust_strat = {"name": "Breadth Thrust Reversal", "func": breadth_thrust_eval, "risk_atr": 1.5, "reward_atr": 3.5}
     
     ARCHITECTURES = [
-        {
-            "name": "E12_Vol_Pullback",
-            "primary": vol_strat,
-            "primary_momentum": vol_strat,
-            "confirmation_momentum": pullback_strat,
-            "primary_meanrev": pullback_strat,
-            "confirmation_meanrev": oversold_strat,
-            "sizing_logic": "alpha_confirmation",
-            "dynamic_risk_scaling": False,
-            "dd_penalty_factor": 5.0,
-            "friction_pct": 0.0015,
-            "rank_candidates": True,
-            "regime_adaptive": True,
-            "bcr_threshold": BCR_THRESHOLD,
-            "cash_preservation": True,
-            "breadth_threshold": BREADTH_THRESHOLD
-        },
         {
             "name": "E13_Sector_Pullback",
             "primary": sector_strat,
@@ -1014,10 +1021,28 @@ def main():
             "bcr_threshold": BCR_THRESHOLD,
             "cash_preservation": True,
             "breadth_threshold": BREADTH_THRESHOLD
+        },
+        {
+            "name": "E14_Strict_AVWAP",
+            "primary": avwap_strat,
+            "primary_momentum": avwap_strat,
+            "confirmation_momentum": vol_strat,
+            "primary_meanrev": pullback_strat,
+            "confirmation_meanrev": connors_strat,
+            "sizing_logic": "alpha_confirmation",
+            "dynamic_risk_scaling": False,
+            "dd_penalty_factor": 5.0,
+            "friction_pct": 0.0015,
+            "rank_candidates": True,
+            "regime_adaptive": True,
+            "bcr_threshold": BCR_THRESHOLD,
+            "cash_preservation": True,
+            "breadth_threshold": BREADTH_THRESHOLD
         }
     ]
     
     tear_sheet_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))), "front_testing", "strategy_tear_sheet.csv")
+    os.makedirs(os.path.dirname(tear_sheet_path), exist_ok=True)
     
     from concurrent.futures import ProcessPoolExecutor, as_completed
     
@@ -1105,7 +1130,7 @@ def main():
         "execution": "Signal at 3:15 PM; near-close/MOC fill proxied by the daily close in historical data",
         "transaction_cost_per_leg": FRICTION_PCT,
         "position_cap": MAX_WEIGHT_PER_TRADE,
-        "starting_capital": 5_00_000.0,
+        "starting_capital": INITIAL_CAPITAL,
         "data_integrity": "Weekends rejected; exchange holidays excluded when no valid bhavcopy is available",
         "architectures": [serializable_architecture(architecture) for architecture in ARCHITECTURES],
     }

@@ -656,6 +656,204 @@ def sector_pullback_eval(df, nifty_hist=None, sector_hist=None):
 
     return {"passed": True, "score": 1.0, "alpha_score": alpha_score, "trigger_type": "Sector Relative Pullback"}
 
+def avwap_pullback_eval(df, nifty_hist=None, sector_hist=None):
+    """
+    Anchored VWAP Institutional Reversal:
+    Calculates Anchored VWAP from the 60-day swing low. Enters when a leading-sector
+    stock tests its institutional AVWAP support and prints a bullish bounce candle.
+    """
+    if len(df) < 200:
+        return {"passed": False, "reasons": ["Not enough data for 200 SMA"]}
+    if len(df) > 300:
+        df = df.iloc[-300:]
+
+    close = df['Close'].iloc[-1]
+    open_p = df['Open'].iloc[-1]
+    low = df['Low'].iloc[-1]
+
+    # 1. Sector / Macro RS Filter
+    if sector_hist is not None and nifty_hist is not None and len(sector_hist) >= 60 and len(nifty_hist) >= 60:
+        sec_ret20 = (sector_hist['Close'].iloc[-1] / sector_hist['Close'].iloc[-21]) - 1
+        nifty_ret20 = (nifty_hist['Close'].iloc[-1] / nifty_hist['Close'].iloc[-21]) - 1
+        if sec_ret20 < nifty_ret20:
+            return {"passed": False, "reasons": ["Sector underperforming NIFTY (20d)"]}
+    elif nifty_hist is not None and len(nifty_hist) >= 40:
+        stock_ret20 = (close / df['Close'].iloc[-21]) - 1
+        nifty_ret20 = (nifty_hist['Close'].iloc[-1] / nifty_hist['Close'].iloc[-21]) - 1
+        if stock_ret20 < nifty_ret20:
+            return {"passed": False, "reasons": ["Stock underperforming NIFTY (20d)"]}
+
+    # 2. Structural Trend: Strict Triple Bullish Alignment
+    sma200 = df['Close'].rolling(window=200).mean().iloc[-1]
+    ema50 = df['Close'].ewm(span=50, adjust=False).mean().iloc[-1]
+    ema20 = df['Close'].ewm(span=20, adjust=False).mean().iloc[-1]
+    if not (close > sma200 and ema50 > sma200 and ema20 > ema50):
+        return {"passed": False, "reasons": ["MAs not aligned (Close > 200, 50 > 200, 20 > 50)"]}
+
+    # 3. Anchored VWAP from 60-day swing low
+    lookback = min(len(df), 60)
+    recent_df = df.iloc[-lookback:]
+    min_pos = int(np.argmin(recent_df['Low'].values))
+    anchor_slice = recent_df.iloc[min_pos:]
+    if len(anchor_slice) < 5:
+        anchor_slice = df.iloc[-30:]
+    
+    tp = (anchor_slice['High'] + anchor_slice['Low'] + anchor_slice['Close']) / 3.0
+    vol = anchor_slice['Volume']
+    cum_vp = (tp * vol).cumsum()
+    cum_v = vol.cumsum()
+    avwap = (cum_vp / (cum_v + 1e-5)).iloc[-1]
+
+    if pd.isna(avwap) or avwap <= 0:
+        return {"passed": False, "reasons": ["Invalid AVWAP"]}
+
+    # 4. Proximity to AVWAP: close within 2.5% of AVWAP
+    dist_avwap = (close - avwap) / avwap
+    if dist_avwap < -0.015 or dist_avwap > 0.025:
+        return {"passed": False, "reasons": [f"Not near AVWAP support (dist={dist_avwap:.1%})"]}
+
+    # Did today or yesterday test AVWAP?
+    low_yesterday = df['Low'].iloc[-2]
+    if low > avwap * 1.015 and low_yesterday > avwap * 1.015:
+        return {"passed": False, "reasons": ["Did not test AVWAP support"]}
+
+    # 5. Bullish bounce candle
+    prev_close = df['Close'].iloc[-2]
+    if close < open_p or close < prev_close:
+        return {"passed": False, "reasons": ["Not a green bounce candle"]}
+
+    # 6. Healthy RSI (46-62 sweet-spot)
+    rsi = talib.RSI(df['Close'], timeperiod=14).iloc[-1]
+    if pd.isna(rsi) or not (46 <= rsi <= 62):
+        return {"passed": False, "reasons": [f"RSI {rsi:.1f} not in healthy pullback zone (46-62)"]}
+
+    # 7. Volume support
+    vol_last = df['Volume'].iloc[-1]
+    vol_sma20 = df['Volume'].rolling(20).mean().iloc[-2]
+    if pd.notna(vol_sma20) and vol_last < (0.85 * vol_sma20):
+        return {"passed": False, "reasons": ["Volume too dry on bounce (<0.85x average)"]}
+
+    proximity_score = 1.0 - (abs(dist_avwap) / 0.025)
+    rsi_score = (62.0 - rsi) / 16.0
+    alpha_score = (proximity_score * 0.5) + (rsi_score * 0.5)
+
+    return {"passed": True, "score": 1.0, "alpha_score": alpha_score, "trigger_type": "Anchored VWAP Pullback"}
+
+def leader_consolidation_eval(df, nifty_hist=None, sector_hist=None):
+    """
+    Sector Leader Tight Consolidation Breakout:
+    Finds top-tier stocks in winning sectors that coiled in a <8% range over 15 sessions,
+    then break out on heavy volume.
+    """
+    if len(df) < 200:
+        return {"passed": False, "reasons": ["Not enough data for 200 SMA"]}
+    if len(df) > 300:
+        df = df.iloc[-300:]
+
+    close = df['Close'].iloc[-1]
+    open_p = df['Open'].iloc[-1]
+
+    # 1. Sector / Macro Relative Strength (60d)
+    if sector_hist is not None and nifty_hist is not None and len(sector_hist) >= 60 and len(nifty_hist) >= 60:
+        sec_ret60 = (sector_hist['Close'].iloc[-1] / sector_hist['Close'].iloc[-61]) - 1
+        nifty_ret60 = (nifty_hist['Close'].iloc[-1] / nifty_hist['Close'].iloc[-61]) - 1
+        if sec_ret60 < nifty_ret60 + 0.01:
+            return {"passed": False, "reasons": ["Sector not beating NIFTY (60d)"]}
+    elif nifty_hist is not None and len(nifty_hist) >= 60:
+        stock_ret60 = (close / df['Close'].iloc[-61]) - 1
+        nifty_ret60 = (nifty_hist['Close'].iloc[-1] / nifty_hist['Close'].iloc[-61]) - 1
+        if stock_ret60 < nifty_ret60 + 0.03:
+            return {"passed": False, "reasons": ["Stock not beating NIFTY (60d)"]}
+
+    # 2. Structural Uptrend
+    sma200 = df['Close'].rolling(window=200).mean().iloc[-1]
+    ema50 = df['Close'].ewm(span=50, adjust=False).mean().iloc[-1]
+    ema20 = df['Close'].ewm(span=20, adjust=False).mean().iloc[-1]
+    if not (close > sma200 and ema50 > sma200 and ema20 > ema50):
+        return {"passed": False, "reasons": ["MAs not in bullish alignment"]}
+
+    # 3. 15-Day Tight Consolidation (excluding today's breakout bar)
+    window15 = df.iloc[-16:-1]
+    box_high = window15['High'].max()
+    box_low = window15['Low'].min()
+    box_width = (box_high - box_low) / box_low
+    if box_width > 0.08:
+        return {"passed": False, "reasons": [f"Consolidation range too wide ({box_width:.1%} > 8%)"]}
+
+    # 4. Volume Contraction during Consolidation
+    box_vol_avg = window15['Volume'].mean()
+    vol_sma50 = df['Volume'].rolling(50).mean().iloc[-2]
+    if pd.notna(vol_sma50) and box_vol_avg > (0.95 * vol_sma50):
+        return {"passed": False, "reasons": ["Volume did not contract during consolidation"]}
+
+    # 5. Breakout Trigger: Today crosses box high with strong green candle
+    if close <= box_high:
+        return {"passed": False, "reasons": ["Close not above consolidation high"]}
+    if close <= open_p:
+        return {"passed": False, "reasons": ["Not a green breakout bar"]}
+
+    # 6. Volume Expansion on Breakout (>= 1.4x 20-day SMA)
+    vol_today = df['Volume'].iloc[-1]
+    vol_sma20 = df['Volume'].rolling(20).mean().iloc[-2]
+    if pd.notna(vol_sma20) and vol_today < (1.4 * vol_sma20):
+        return {"passed": False, "reasons": [f"Breakout volume too low ({vol_today / (vol_sma20+1e-5):.2f}x < 1.4x)"]}
+
+    vol_surge = min(3.0, vol_today / (vol_sma20 + 1e-5)) / 3.0
+    tightness = 1.0 - (box_width / 0.08)
+    alpha_score = (vol_surge * 0.6) + (tightness * 0.4)
+
+    return {"passed": True, "score": 1.0, "alpha_score": alpha_score, "trigger_type": "Leader Consolidation Breakout"}
+
+def breadth_thrust_eval(df, nifty_hist=None, sector_hist=None):
+    """
+    Capitulation Reversal:
+    Identifies high-beta, long-term uptrend stocks that have been oversold during market pullbacks
+    and form an explosive hammer / reversal pin bar.
+    """
+    if len(df) < 200:
+        return {"passed": False, "reasons": ["Not enough data for 200 SMA"]}
+    if len(df) > 300:
+        df = df.iloc[-300:]
+
+    close = df['Close'].iloc[-1]
+    open_p = df['Open'].iloc[-1]
+    high = df['High'].iloc[-1]
+    low = df['Low'].iloc[-1]
+
+    # 1. Long-term trend intact (Above 200 SMA)
+    sma200 = df['Close'].rolling(window=200).mean().iloc[-1]
+    if close < sma200:
+        return {"passed": False, "reasons": ["Close below 200 SMA"]}
+
+    # 2. Severe Short-Term Oversold Dip
+    rsi14 = talib.RSI(df['Close'], timeperiod=14).iloc[-1]
+    rsi3 = talib.RSI(df['Close'], timeperiod=3).iloc[-1]
+    if pd.isna(rsi14) or rsi14 > 45:
+        return {"passed": False, "reasons": [f"RSI(14) {rsi14:.1f} not oversold (<45)"]}
+    if pd.isna(rsi3) or rsi3 > 25:
+        return {"passed": False, "reasons": [f"RSI(3) {rsi3:.1f} not deeply washed out (<25)"]}
+
+    # 3. Bullish Reversal Candle (Hammer / Strong Pin bar)
+    candle_range = high - low
+    if candle_range <= 0:
+        return {"passed": False, "reasons": ["Zero candle range"]}
+    close_pct_in_range = (close - low) / candle_range
+    if close_pct_in_range < 0.60:
+        return {"passed": False, "reasons": ["Close not in upper 60% of day's range"]}
+    if close < open_p:
+        return {"passed": False, "reasons": ["Red candle"]}
+
+    # 4. ATR Check
+    atr = talib.ATR(df['High'], df['Low'], df['Close'], timeperiod=14).iloc[-1]
+    if pd.isna(atr) or (atr / close) > 0.06:
+        return {"passed": False, "reasons": ["High ATR (>6%)"]}
+
+    oversold_score = (45.0 - rsi14) / 25.0
+    reversal_score = close_pct_in_range
+    alpha_score = (oversold_score * 0.5) + (reversal_score * 0.5)
+
+    return {"passed": True, "score": 1.0, "alpha_score": alpha_score, "trigger_type": "Capitulation Reversal"}
+
 # Define strategies here.
 STRATEGIES = [
     {
