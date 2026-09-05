@@ -20,6 +20,9 @@ __pycache__/
 # Project specific
 *_chart.png
 bhavcopy_cache/
+data_cache/
+*.parquet
+*.csv.gz
 
 outputs/
 tp/
