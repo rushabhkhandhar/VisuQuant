@@ -237,20 +237,55 @@
     </table>
 </div>
 
-<!-- Corporate Announcements -->
-{% if announcements %}
+<!-- Corporate Filings, Annual Reports & Fundamentals -->
+{% if announcements or (screener_context and screener_context.ratios) %}
 <div class="card">
-    <h2>2. Recent Corporate Announcements</h2>
+    <h2>2. Corporate Filings, Annual Reports & Fundamentals</h2>
+    
+    {% if screener_context and screener_context.ratios %}
+    <div style="margin-bottom: 14px;">
+        <h3 style="font-size: 14px; margin: 0 0 8px 0; color: #1e293b;">Key Fundamental Ratios (Screener.in)</h3>
+        <table>
+            <tr>
+                {% for key, val in screener_context.ratios.items() %}
+                {% if loop.index <= 5 %}
+                <td style="padding: 6px 8px; font-size: 12px; background: #f8fafc;">
+                    <strong>{{ key }}:</strong> <span class="value-cell">{{ val }}</span>
+                </td>
+                {% endif %}
+                {% endfor %}
+            </tr>
+            {% if screener_context.ratios|length > 5 %}
+            <tr>
+                {% for key, val in screener_context.ratios.items() %}
+                {% if loop.index > 5 and loop.index <= 10 %}
+                <td style="padding: 6px 8px; font-size: 12px; background: #f8fafc;">
+                    <strong>{{ key }}:</strong> <span class="value-cell">{{ val }}</span>
+                </td>
+                {% endif %}
+                {% endfor %}
+            </tr>
+            {% endif %}
+        </table>
+    </div>
+    {% endif %}
+
+    {% if announcements %}
     <table>
         <tr>
-            <th align="left" width="20%">Date</th>
-            <th align="left" width="30%">Title</th>
-            <th align="left" width="50%">Content / Summary</th>
+            <th align="left" width="18%">Date / FY</th>
+            <th align="left" width="32%">Filing / Title</th>
+            <th align="left" width="50%">Key Intelligence & Extracted POV</th>
         </tr>
         {% for ann in announcements %}
         <tr>
             <td class="value-cell">{{ ann.date }}</td>
-            <td><strong>{{ ann.title }}</strong><br><a href="{{ ann.attachment }}" style="font-size: 11px; color: #3b82f6;">View PDF Attachment</a></td>
+            <td>
+                <strong>{{ ann.title }}</strong>
+                {% if ann.attachment %}
+                <br><a href="{{ ann.attachment }}" target="_blank" style="font-size: 11px; color: #3b82f6; text-decoration: underline;">View Official Document</a>
+                {% endif %}
+            </td>
             <td style="font-size: 12px; color: #475569;">
                 {% if ann.text_content is mapping %}
                     {% if ann.text_content.error %}
@@ -258,7 +293,7 @@
                     {% else %}
                         {% if ann.text_content.short_term_pov %}
                         <div style="margin-bottom: 8px;">
-                            <strong style="color: #3b82f6;">Short-Term POV (Financials & Catalysts):</strong>
+                            <strong style="color: #3b82f6;">Short-Term POV (Catalysts & Numbers):</strong>
                             <ul style="margin: 4px 0; padding-left: 15px;">
                                 {% for item in ann.text_content.short_term_pov %}
                                 <li>{{ item }}</li>
@@ -280,12 +315,13 @@
                 {% elif ann.text_content %}
                     {{ ann.text_content }}
                 {% else %}
-                    No PDF text extracted or available.
+                    {{ ann.description or "Official document filed on exchange." }}
                 {% endif %}
             </td>
         </tr>
         {% endfor %}
     </table>
+    {% endif %}
 </div>
 {% endif %}
 

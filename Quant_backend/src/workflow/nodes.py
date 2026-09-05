@@ -153,14 +153,39 @@ def node_run_nse_scraper(state: TradingState) -> dict:
     }
 
 from src.data.news_fetcher import fetch_latest_announcements
+from src.data.screener_in_client import get_screener_data_sync
 
 def node_fetch_announcements(state: TradingState) -> dict:
     ticker = state["ticker"]
     as_of_date = state.get("as_of_date")
-    print(f"[{ticker}] Fetching latest corporate announcements (as_of_date: {as_of_date or 'today'})...")
-    announcements = fetch_latest_announcements(ticker, limit=3, as_of_date=as_of_date)
-    print(f"[{ticker}] Found {len(announcements)} announcements.")
-    return {"announcements": announcements}
+    print(f"[{ticker}] Fetching filings, annual reports, concalls & fundamentals via Screener.in (as_of_date: {as_of_date or 'today'})...")
+    
+    # Single-pass Playwright session: fetch both fundamentals and documents
+    screener_data = {}
+    try:
+        screener_data = get_screener_data_sync(ticker)
+    except Exception as e:
+        print(f"[{ticker}] Warning: Failed to fetch screener data: {e}")
+        
+    screener_context = {
+        "ratios": screener_data.get("ratios", {}),
+        "company_name": screener_data.get("company_name", ticker),
+        "about": screener_data.get("about", "")
+    }
+    
+    # Process announcements, annual report, concalls using extracted documents
+    announcements = fetch_latest_announcements(
+        ticker,
+        limit=3,
+        as_of_date=as_of_date,
+        screener_docs=screener_data.get("documents")
+    )
+    print(f"[{ticker}] Successfully synthesized {len(announcements)} corporate items.")
+        
+    return {
+        "announcements": announcements,
+        "screener_context": screener_context
+    }
 
 
 def node_vision_analysis(state: TradingState) -> dict:
@@ -493,6 +518,7 @@ def node_confluence_engine(state: TradingState) -> dict:
     technical_indicators = state.get("technical_indicators", {})
     unified_trend = state.get("unified_trend", {})
     announcements = state.get("announcements", [])
+    screener_context = state.get("screener_context", {})
     
     print(f"[{ticker}] Running confluence engine (evidence synthesis)...")
     
@@ -515,7 +541,10 @@ def node_confluence_engine(state: TradingState) -> dict:
     Available Technical Indicators (Quantitative):
     {json.dumps(simplified_quantitative)}
     
-    Recent Corporate Announcements / Fundamentals:
+    Key Fundamental Ratios & Context (Screener.in):
+    {json.dumps(screener_context.get("ratios", {}))}
+    
+    Recent Corporate Announcements / Annual Reports / Concalls:
     {json.dumps(announcements)}
     
     RULES:
@@ -732,6 +761,7 @@ def node_decision_engine(state: TradingState) -> dict:
     unified_trend = state.get("unified_trend", {})
     risk_analysis = state.get("risk_analysis", {})
     announcements = state.get("announcements", [])
+    screener_context = state.get("screener_context", {})
     
     # Strip raw numerical noise to prevent LLM hallucinations
     simplified_quantitative = {
@@ -760,7 +790,10 @@ def node_decision_engine(state: TradingState) -> dict:
     Risk Management Profile:
     {json.dumps(risk_analysis)}
     
-    Recent Corporate Announcements / Fundamentals:
+    Key Fundamental Ratios & Context (Screener.in):
+    {json.dumps(screener_context.get("ratios", {}))}
+    
+    Recent Corporate Announcements / Annual Reports / Concalls:
     {json.dumps(announcements)}
     
     INSTRUCTIONS (CRITICAL):

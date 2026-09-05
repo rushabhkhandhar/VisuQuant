@@ -2,6 +2,7 @@ import json
 import requests
 import time
 import os
+import re
 import fitz  # PyMuPDF
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -48,9 +49,8 @@ def summarize_text_with_llm(raw_text: str) -> str:
     api_key = api_keys_str.split(",")[0].strip()
     
     models_to_try = [
-            "gemini-3.6-flash",
-            "gemini-3.5-flash-lite",
-            "gemini-1.5-flash"
+        "gemini-flash-latest",
+        "gemini-flash-lite-latest"
     ]
     
     headers = {"Content-Type": "application/json"}
@@ -79,10 +79,10 @@ def summarize_text_with_llm(raw_text: str) -> str:
                 return json_repair.loads(raw_text.strip())
                 
             elif res.status_code in [503, 429, 404, 400]:
-                print(f"Warning: {model_name} returned {res.status_code}: {res.text}. Falling back to next model...")
+                print(f"Warning: {model_name} returned {res.status_code}: {res.text[:100]}. Falling back to next model...")
                 continue
             else:
-                print(f"Gemini API Error {res.status_code} on {model_name}: {res.text}")
+                print(f"Gemini API Error {res.status_code} on {model_name}: {res.text[:100]}")
                 continue
                 
         except requests.exceptions.Timeout:
@@ -96,11 +96,11 @@ def summarize_text_with_llm(raw_text: str) -> str:
 
 def download_and_parse_pdf(pdf_url: str) -> str:
     headers = {
-        "User-Agent": "Mozilla/5.0",
-        "Accept": "application/pdf"
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/pdf,text/html,*/*"
     }
     try:
-        res = requests.get(pdf_url, headers=headers, timeout=10)
+        res = requests.get(pdf_url, headers=headers, timeout=12)
         if res.status_code == 200:
             pdf_document = fitz.open(stream=res.content, filetype="pdf")
             text = ""
@@ -113,126 +113,181 @@ def download_and_parse_pdf(pdf_url: str) -> str:
     return ""
 
 from datetime import datetime, date
+from src.data.screener_in_client import get_screener_documents_sync
 
-def fetch_latest_announcements(ticker: str, limit: int = 3, as_of_date: str = None) -> list:
-    """Fetch the latest corporate announcements and extract PDF text."""
-    url = f"https://www.nseindia.com/api/corporate-announcements?index=equities&symbol={ticker}"
-    homepage = "https://www.nseindia.com"
-    
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Connection": "keep-alive"
-    }
-    
-    session = requests.Session()
-    session.headers.update(headers)
-    
+def fetch_latest_announcements(ticker: str, limit: int = 3, as_of_date: str = None, screener_docs: dict = None) -> list:
+    """
+    Fetch corporate announcements, latest annual reports, and concall transcripts.
+    Uses Screener.in (and BSE India direct filings) to prevent GitHub Actions / cloud 403 blocks.
+    """
     announcements = []
-    
+    target_date = None
+    if as_of_date and as_of_date != date.today().strftime("%Y-%m-%d"):
+        try:
+            target_date = datetime.strptime(as_of_date, "%Y-%m-%d")
+        except Exception:
+            pass
+
+    # 1. Fetch documents via Screener.in (Playwright) if not passed in
     try:
-        session.get(homepage, timeout=10)
-        time.sleep(2)
+        if screener_docs is None:
+            print(f"[{ticker}] Fetching documents and filings via Screener.in...")
+            screener_docs = get_screener_documents_sync(ticker)
         
-        api_headers = headers.copy()
-        api_headers["Accept"] = "application/json, text/javascript, */*; q=0.01"
-        api_headers["X-Requested-With"] = "XMLHttpRequest"
-        api_headers["Referer"] = f"https://www.nseindia.com/get-quote/equity?symbol={ticker}"
+        # A. Process Latest Corporate Announcements
+        screener_anns = screener_docs.get("announcements", [])
+        print(f"[{ticker}] Retrieved {len(screener_anns)} announcements from Screener.in.")
         
-        res = session.get(url, headers=api_headers, timeout=10)
-        
-        if res.status_code == 200:
-            data = res.json()
-            
-            # Filter for relevant announcements only (Board Meetings, Financials, Transcripts)
-            relevant_anns = []
-            
-            target_date = None
-            if as_of_date and as_of_date != date.today().strftime("%Y-%m-%d"):
-                target_date = datetime.strptime(as_of_date, "%Y-%m-%d")
-                
-            for item in data:
-                # Discard future announcements if doing historical time-travel
-                if target_date and item.get('an_dt'):
-                    try:
-                        # Format is usually '29-Jul-2026 18:29:49'
-                        ann_date = datetime.strptime(item.get('an_dt'), "%d-%b-%Y %H:%M:%S")
-                        if ann_date > target_date:
-                            continue
-                    except Exception:
-                        pass # if parsing fails, assume it's safe or discard? Let's assume safe to avoid missing data, though it might bleed future.
-                        
-                title = (item.get('subject') or item.get('desc') or '').lower()
-                if "outcome of board meeting" in title or "financial result" in title or "transcript" in title:
-                    relevant_anns.append(item)
-                    if len(relevant_anns) >= limit:
-                        break
-                        
-            # Process the filtered announcements
-            for item in relevant_anns:
-                ann = {
-                    "date": item.get('an_dt'),
-                    "title": item.get('subject') or item.get('desc'),
-                    "description": item.get('desc'),
-                    "attachment": item.get('attchmntFile'),
-                    "text_content": ""
-                }
-                
-                # If there's a PDF attachment, fetch, parse, and summarize it
-                if ann["attachment"] and ann["attachment"].endswith('.pdf'):
+        count = 0
+        for item in screener_anns:
+            ann_date_str = item.get("date", "")
+            if target_date and ann_date_str:
+                try:
+                    # e.g., "5 Sep 2026" or "5 Sep"
+                    clean_date_str = ann_date_str if re.search(r'20\d\d', ann_date_str) else f"{ann_date_str} {datetime.now().year}"
+                    ann_dt = datetime.strptime(clean_date_str, "%d %b %Y")
+                    if ann_dt > target_date:
+                        continue
+                except Exception:
+                    pass
+
+            ann = {
+                "date": item.get("date") or datetime.today().strftime("%d-%b-%Y"),
+                "title": item.get("title") or item.get("description", "")[:80],
+                "description": item.get("description", ""),
+                "attachment": item.get("attachment") or "",
+                "text_content": ""
+            }
+
+            # If there's a PDF attachment, fetch, parse, and summarize it
+            if ann["attachment"] and (ann["attachment"].endswith('.pdf') or 'AnnPdfOpen' in ann["attachment"]):
+                try:
                     extracted_text = download_and_parse_pdf(ann["attachment"])
                     if extracted_text:
                         print(f"[{ticker}] Summarizing announcement from {ann['date']}...")
                         ann["text_content"] = summarize_text_with_llm(extracted_text)
-                    
-                announcements.append(ann)
-                
-        # --- Add Google News Headlines ---
-        print(f"[{ticker}] Fetching latest Google News headlines...")
-        try:
-            url_news = f'https://news.google.com/rss/search?q={ticker}+stock+NSE&hl=en-IN&gl=IN&ceid=IN:en'
-            req = urllib.request.Request(url_news, headers={'User-Agent': 'Mozilla/5.0'})
-            rss_data = urllib.request.urlopen(req, timeout=10).read()
-            root = ET.fromstring(rss_data)
-            
-            headlines_text = ""
-            count = 0
-            for item in root.findall('.//item'):
-                pubDate = item.find('pubDate').text if item.find('pubDate') is not None else ''
-                
-                # Check date for time-travel
-                if target_date and pubDate:
-                    try:
-                        # RSS date format: 'Tue, 04 Aug 2026 10:00:00 GMT'
-                        news_date = datetime.strptime(pubDate, "%a, %d %b %Y %H:%M:%S %Z")
-                        if news_date > target_date:
-                            continue
-                    except Exception:
-                        pass
-                
-                title = item.find('title').text if item.find('title') is not None else ''
-                headlines_text += f"- {title} ({pubDate})\n"
-                
-                count += 1
-                if count >= 5:
-                    break
-                
-            if headlines_text.strip():
-                print(f"[{ticker}] Summarizing Google News headlines...")
-                google_ann = {
-                    "date": time.strftime("%d-%b-%Y %H:%M:%S"),
-                    "title": f"Latest Google News Headlines for {ticker}",
-                    "description": "Aggregated recent news articles and market sentiment.",
-                    "attachment": "",
-                    "text_content": summarize_text_with_llm(f"LATEST GOOGLE NEWS HEADLINES:\n{headlines_text}")
+                except Exception as ex:
+                    print(f"[{ticker}] Failed to parse/summarize PDF: {ex}")
+
+            announcements.append(ann)
+            count += 1
+            if count >= limit:
+                break
+
+        # B. Inject Latest Annual Report
+        annual_reports = screener_docs.get("annual_reports", [])
+        if annual_reports:
+            latest_ar = annual_reports[0]
+            print(f"[{ticker}] Injected latest annual report: {latest_ar.get('title')} ({latest_ar.get('year')})")
+            announcements.append({
+                "date": latest_ar.get("year") or datetime.today().strftime("%Y"),
+                "title": f"Annual Report: {latest_ar.get('title', 'Latest Annual Report')}",
+                "description": f"Official Audited Annual Report filing from BSE/Screener.",
+                "attachment": latest_ar.get("url") or "",
+                "text_content": {
+                    "short_term_pov": [f"Official Annual Report ({latest_ar.get('year')}) available for audit review."],
+                    "long_term_pov": [f"Full-year audited statutory financial statements, notes, and management discussion."]
                 }
-                announcements.append(google_ann)
-        except Exception as e:
-            print(f"[{ticker}] Error fetching Google News: {e}")
-                
+            })
+
+        # C. Inject Latest Concall / Investor Presentation
+        concalls = screener_docs.get("concalls", [])
+        if concalls:
+            latest_cc = concalls[0]
+            cc_url = latest_cc.get("transcript_url") or latest_cc.get("ppt_url") or ""
+            print(f"[{ticker}] Injected latest earnings concall: {latest_cc.get('period')}")
+            
+            cc_content = {
+                "short_term_pov": [f"Quarterly earnings conference call ({latest_cc.get('period')}) filed."],
+                "long_term_pov": ["Management commentary on operational runway, margins, and industry tailwinds."]
+            }
+            # Attempt to parse transcript if PDF
+            if cc_url and (cc_url.endswith('.pdf') or 'AnnPdfOpen' in cc_url):
+                try:
+                    cc_text = download_and_parse_pdf(cc_url)
+                    if cc_text:
+                        cc_content = summarize_text_with_llm(cc_text)
+                except Exception:
+                    pass
+
+            announcements.append({
+                "date": latest_cc.get("period") or datetime.today().strftime("%b %Y"),
+                "title": f"Earnings Concall ({latest_cc.get('period')})",
+                "description": f"Management earnings conference call transcript and presentation.",
+                "attachment": cc_url,
+                "text_content": cc_content
+            })
+
     except Exception as e:
-        print(f"[{ticker}] Error fetching announcements: {e}")
-        
+        print(f"[{ticker}] Error fetching documents via Screener.in: {e}")
+
+    # 2. Fallback to NSE only if Screener returned nothing
+    if not announcements:
+        print(f"[{ticker}] Screener returned no documents. Trying NSE fallback...")
+        try:
+            url = f"https://www.nseindia.com/api/corporate-announcements?index=equities&symbol={ticker}"
+            homepage = "https://www.nseindia.com"
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Accept": "application/json, text/javascript, */*; q=0.01",
+                "Connection": "keep-alive"
+            }
+            session = requests.Session()
+            session.headers.update(headers)
+            session.get(homepage, timeout=5)
+            time.sleep(1)
+            res = session.get(url, timeout=5)
+            if res.status_code == 200:
+                data = res.json()
+                for item in data[:limit]:
+                    announcements.append({
+                        "date": item.get('an_dt'),
+                        "title": item.get('subject') or item.get('desc'),
+                        "description": item.get('desc'),
+                        "attachment": item.get('attchmntFile'),
+                        "text_content": ""
+                    })
+        except Exception as nse_err:
+            print(f"[{ticker}] NSE fallback also failed/blocked: {nse_err}")
+
+    # 3. Add Google News Headlines Sentiment
+    print(f"[{ticker}] Fetching latest Google News headlines...")
+    try:
+        url_news = f'https://news.google.com/rss/search?q={ticker}+stock+NSE&hl=en-IN&gl=IN&ceid=IN:en'
+        req = urllib.request.Request(url_news, headers={'User-Agent': 'Mozilla/5.0'})
+        rss_data = urllib.request.urlopen(req, timeout=10).read()
+        root = ET.fromstring(rss_data)
+
+        headlines_text = ""
+        count = 0
+        for item in root.findall('.//item'):
+            pubDate = item.find('pubDate').text if item.find('pubDate') is not None else ''
+            if target_date and pubDate:
+                try:
+                    news_date = datetime.strptime(pubDate, "%a, %d %b %Y %H:%M:%S %Z")
+                    if news_date > target_date:
+                        continue
+                except Exception:
+                    pass
+
+            title = item.find('title').text if item.find('title') is not None else ''
+            headlines_text += f"- {title} ({pubDate})\n"
+            count += 1
+            if count >= 5:
+                break
+
+        if headlines_text.strip():
+            print(f"[{ticker}] Summarizing Google News headlines...")
+            google_ann = {
+                "date": time.strftime("%d-%b-%Y %H:%M:%S"),
+                "title": f"Latest Google News Headlines for {ticker}",
+                "description": "Aggregated recent news articles and market sentiment.",
+                "attachment": "",
+                "text_content": summarize_text_with_llm(f"LATEST GOOGLE NEWS HEADLINES:\n{headlines_text}")
+            }
+            announcements.append(google_ann)
+    except Exception as e:
+        print(f"[{ticker}] Error fetching Google News: {e}")
+
     return announcements
+

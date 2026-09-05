@@ -5,7 +5,7 @@ import os
 # Add the project root to the Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.news_fetcher import fetch_latest_announcements
+from src.data.news_fetcher import fetch_latest_announcements
 
 def test_single_stock_fetch():
     ticker = "RELIANCE"
