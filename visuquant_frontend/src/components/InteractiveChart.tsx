@@ -13,6 +13,7 @@ import {
 import {
   createChart,
   ColorType,
+  LineStyle,
   CandlestickSeries,
   HistogramSeries,
   LineSeries,
@@ -47,12 +48,19 @@ interface ChartPayload {
   avwap: { time: string; value: number }[];
   ema20: { time: string; value: number }[];
   ema50: { time: string; value: number }[];
+  ema200?: { time: string; value: number }[];
+  bb_upper?: { time: string; value: number }[];
+  bb_lower?: { time: string; value: number }[];
+  rsi?: { time: string; value: number }[];
+  macd?: { time: string; value: number }[];
+  macd_signal?: { time: string; value: number }[];
+  macd_hist?: { time: string; value: number; color?: string }[];
   message?: string;
 }
 
 export default function InteractiveChart({
   initialSymbol = "NIFTY",
-  height = 520,
+  height = 540,
   showQuickSwitcher = true,
   showControls = true,
   title = "Live Market Terminal & Candlestick Forensics",
@@ -76,11 +84,16 @@ export default function InteractiveChart({
   const [showSuggestions, setShowSuggestions] = useState<boolean>(false);
   const searchContainerRef = useRef<HTMLDivElement>(null);
 
-  // Indicator Toggles
+  // Overlay Indicator Toggles
   const [showAvwap, setShowAvwap] = useState<boolean>(true);
   const [showEma20, setShowEma20] = useState<boolean>(true);
   const [showEma50, setShowEma50] = useState<boolean>(true);
+  const [showEma200, setShowEma200] = useState<boolean>(false);
+  const [showBB, setShowBB] = useState<boolean>(false);
   const [showVolume, setShowVolume] = useState<boolean>(true);
+
+  // Oscillator Sub-Pane Mode: "none" | "rsi" | "macd"
+  const [oscillatorMode, setOscillatorMode] = useState<"none" | "rsi" | "macd">("rsi");
 
   // Live Metrics & Crosshair HUD
   const [latestMetrics, setLatestMetrics] = useState<{
@@ -91,6 +104,12 @@ export default function InteractiveChart({
     change: number;
     pct: number;
     volume: number;
+    rsi?: number;
+    ema200?: number;
+    bbUpper?: number;
+    bbLower?: number;
+    macd?: number;
+    macdSignal?: number;
   }>({
     ltp: 0,
     open: 0,
@@ -109,20 +128,44 @@ export default function InteractiveChart({
     close: number;
     volume?: number;
     avwap?: number;
+    ema20?: number;
+    ema50?: number;
+    ema200?: number;
+    bbUpper?: number;
+    bbLower?: number;
+    rsi?: number;
+    macd?: number;
+    macdSignal?: number;
   } | null>(null);
 
   // Chart References & Lifecycle Guards
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const isDisposedRef = useRef<boolean>(false);
+  const isSyncingRef = useRef<boolean>(false);
   const currentPayloadRef = useRef<ChartPayload | null>(null);
 
+  // Main Chart Series
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const areaSeriesRef = useRef<ISeriesApi<"Area"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const avwapSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const ema20SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const ema50SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const ema200SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const bbUpperSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const bbLowerSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+
+  // Oscillator Sub-Chart References
+  const subContainerRef = useRef<HTMLDivElement>(null);
+  const subChartRef = useRef<IChartApi | null>(null);
+  const rsiSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const rsiObLineRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const rsiOsLineRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const rsiMidLineRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const macdSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const macdSignalSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const macdHistSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
 
   const POPULAR_TICKERS = [
     { label: "NIFTY 50", sym: "NIFTY" },
@@ -145,6 +188,9 @@ export default function InteractiveChart({
     const avSeries = avwapSeriesRef.current;
     const e20Series = ema20SeriesRef.current;
     const e50Series = ema50SeriesRef.current;
+    const e200Series = ema200SeriesRef.current;
+    const bbUSeries = bbUpperSeriesRef.current;
+    const bbLSeries = bbLowerSeriesRef.current;
 
     if (!cSeries) return;
 
@@ -154,16 +200,42 @@ export default function InteractiveChart({
         cSeries.setData(payload.candles);
 
         if (aSeries) {
-          const areaData = payload.candles.map((c: CandleData) => ({ time: c.time, value: c.close }));
-          aSeries.setData(areaData);
+          aSeries.setData(payload.candles.map((c: CandleData) => ({ time: c.time, value: c.close })));
         }
 
         if (vSeries && payload.volume) vSeries.setData(payload.volume);
         if (avSeries && payload.avwap) avSeries.setData(payload.avwap);
         if (e20Series && payload.ema20) e20Series.setData(payload.ema20);
         if (e50Series && payload.ema50) e50Series.setData(payload.ema50);
+        if (e200Series && payload.ema200) e200Series.setData(payload.ema200);
+        if (bbUSeries && payload.bb_upper) bbUSeries.setData(payload.bb_upper);
+        if (bbLSeries && payload.bb_lower) bbLSeries.setData(payload.bb_lower);
 
         chartRef.current.timeScale().fitContent();
+
+        // Populate Sub-Chart Oscillators
+        if (subChartRef.current) {
+          if (rsiSeriesRef.current && payload.rsi) {
+            rsiSeriesRef.current.setData(payload.rsi);
+            // Overbought (70), Oversold (30), Neutral (50) lines
+            const obData = payload.rsi.map((r) => ({ time: r.time, value: 70 }));
+            const osData = payload.rsi.map((r) => ({ time: r.time, value: 30 }));
+            const midData = payload.rsi.map((r) => ({ time: r.time, value: 50 }));
+            rsiObLineRef.current?.setData(obData);
+            rsiOsLineRef.current?.setData(osData);
+            rsiMidLineRef.current?.setData(midData);
+          }
+          if (macdSeriesRef.current && payload.macd) {
+            macdSeriesRef.current.setData(payload.macd);
+          }
+          if (macdSignalSeriesRef.current && payload.macd_signal) {
+            macdSignalSeriesRef.current.setData(payload.macd_signal);
+          }
+          if (macdHistSeriesRef.current && payload.macd_hist) {
+            macdHistSeriesRef.current.setData(payload.macd_hist);
+          }
+          subChartRef.current.timeScale().fitContent();
+        }
 
         const lastCandle = payload.candles[payload.candles.length - 1];
         const prevCandle = payload.candles[payload.candles.length - 2] || lastCandle;
@@ -174,6 +246,12 @@ export default function InteractiveChart({
         const change = ltp - prevCandle.close;
         const pct = prevCandle.close > 0 ? (change / prevCandle.close) * 100 : 0;
         const lastVol = payload.volume && payload.volume.length > 0 ? payload.volume[payload.volume.length - 1].value : 0;
+        const lastRsi = payload.rsi && payload.rsi.length > 0 ? payload.rsi[payload.rsi.length - 1].value : undefined;
+        const lastEma200 = payload.ema200 && payload.ema200.length > 0 ? payload.ema200[payload.ema200.length - 1].value : undefined;
+        const lastBbU = payload.bb_upper && payload.bb_upper.length > 0 ? payload.bb_upper[payload.bb_upper.length - 1].value : undefined;
+        const lastBbL = payload.bb_lower && payload.bb_lower.length > 0 ? payload.bb_lower[payload.bb_lower.length - 1].value : undefined;
+        const lastMacd = payload.macd && payload.macd.length > 0 ? payload.macd[payload.macd.length - 1].value : undefined;
+        const lastMacdSig = payload.macd_signal && payload.macd_signal.length > 0 ? payload.macd_signal[payload.macd_signal.length - 1].value : undefined;
 
         setLatestMetrics({
           ltp,
@@ -183,6 +261,12 @@ export default function InteractiveChart({
           change,
           pct,
           volume: lastVol,
+          rsi: lastRsi,
+          ema200: lastEma200,
+          bbUpper: lastBbU,
+          bbLower: lastBbL,
+          macd: lastMacd,
+          macdSignal: lastMacdSig,
         });
       } else {
         handleError(payload.message || `No market candle data found for "${symbol}".`);
@@ -202,8 +286,15 @@ export default function InteractiveChart({
       avwapSeriesRef.current?.setData([]);
       ema20SeriesRef.current?.setData([]);
       ema50SeriesRef.current?.setData([]);
+      ema200SeriesRef.current?.setData([]);
+      bbUpperSeriesRef.current?.setData([]);
+      bbLowerSeriesRef.current?.setData([]);
+      rsiSeriesRef.current?.setData([]);
+      macdSeriesRef.current?.setData([]);
+      macdSignalSeriesRef.current?.setData([]);
+      macdHistSeriesRef.current?.setData([]);
     } catch {
-      // Ignore cleanup on disposed series
+      // Ignore
     }
     setLatestMetrics({ ltp: 0, open: 0, high: 0, low: 0, change: 0, pct: 0, volume: 0 });
     setHoveredData(null);
@@ -237,7 +328,7 @@ export default function InteractiveChart({
       fetch(`http://localhost:5000/api/search_symbols?q=${encodeURIComponent(customInput.trim())}`)
         .then((res) => res.json())
         .then((data) => {
-          if (data.symbols) {
+          if (data && data.symbols) {
             setSuggestions(data.symbols);
           }
         })
@@ -248,7 +339,7 @@ export default function InteractiveChart({
     return () => clearTimeout(timer);
   }, [customInput]);
 
-  // 1. Chart Initialization (MOUNT ONCE ONLY)
+  // 1. Main Chart Initialization (Mounts Once)
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -257,9 +348,13 @@ export default function InteractiveChart({
     const container = containerRef.current;
     container.innerHTML = "";
 
+    const mainHeight = isFullscreen
+      ? oscillatorMode !== "none" ? window.innerHeight - 340 : window.innerHeight - 180
+      : oscillatorMode !== "none" ? height - 140 : height;
+
     const chart = createChart(container, {
       width: container.clientWidth || 800,
-      height: isFullscreen ? window.innerHeight - 150 : height,
+      height: mainHeight,
       layout: {
         background: {
           type: ColorType.Solid,
@@ -275,12 +370,13 @@ export default function InteractiveChart({
       timeScale: {
         borderColor: isDark ? "rgba(255, 255, 255, 0.08)" : "rgba(0, 0, 0, 0.1)",
         timeVisible: true,
+        visible: oscillatorMode === "none", // Hide bottom timescale if sub-chart is attached
       },
       rightPriceScale: {
         borderColor: isDark ? "rgba(255, 255, 255, 0.08)" : "rgba(0, 0, 0, 0.1)",
         scaleMargins: {
-          top: 0.1,
-          bottom: 0.22,
+          top: 0.08,
+          bottom: 0.2,
         },
       },
       crosshair: {
@@ -320,6 +416,7 @@ export default function InteractiveChart({
     });
     volumeSeriesRef.current = volumeSeries;
 
+    // Overlay Series
     const avwapSeries = chart.addSeries(LineSeries, {
       color: "#00f0ff",
       lineWidth: 2,
@@ -344,6 +441,32 @@ export default function InteractiveChart({
     });
     ema50SeriesRef.current = ema50Series;
 
+    const ema200Series = chart.addSeries(LineSeries, {
+      color: "#f43f5e",
+      lineWidth: 2,
+      title: "200 EMA",
+      visible: showEma200,
+    });
+    ema200SeriesRef.current = ema200Series;
+
+    const bbUpperSeries = chart.addSeries(LineSeries, {
+      color: "#38bdf8",
+      lineWidth: 1,
+      lineStyle: LineStyle.Dashed,
+      title: "BB Upper",
+      visible: showBB,
+    });
+    bbUpperSeriesRef.current = bbUpperSeries;
+
+    const bbLowerSeries = chart.addSeries(LineSeries, {
+      color: "#38bdf8",
+      lineWidth: 1,
+      lineStyle: LineStyle.Dashed,
+      title: "BB Lower",
+      visible: showBB,
+    });
+    bbLowerSeriesRef.current = bbLowerSeries;
+
     // Crosshair hover subscriber
     chart.subscribeCrosshairMove((param) => {
       if (isDisposedRef.current) return;
@@ -361,6 +484,11 @@ export default function InteractiveChart({
           const cData = param.seriesData.get(candleSeries) as any;
           const vData = param.seriesData.get(volumeSeries) as any;
           const avData = param.seriesData.get(avwapSeries) as any;
+          const e20 = param.seriesData.get(ema20Series) as any;
+          const e50 = param.seriesData.get(ema50Series) as any;
+          const e200 = param.seriesData.get(ema200Series) as any;
+          const bbu = param.seriesData.get(bbUpperSeries) as any;
+          const bbl = param.seriesData.get(bbLowerSeries) as any;
 
           if (cData) {
             setHoveredData({
@@ -371,6 +499,14 @@ export default function InteractiveChart({
               close: cData.close ?? cData.value ?? 0,
               volume: vData ? vData.value : undefined,
               avwap: avData ? avData.value : undefined,
+              ema20: e20 ? e20.value : undefined,
+              ema50: e50 ? e50.value : undefined,
+              ema200: e200 ? e200.value : undefined,
+              bbUpper: bbu ? bbu.value : undefined,
+              bbLower: bbl ? bbl.value : undefined,
+              rsi: latestMetrics.rsi,
+              macd: latestMetrics.macd,
+              macdSignal: latestMetrics.macdSignal,
             });
           }
         } catch {
@@ -379,17 +515,18 @@ export default function InteractiveChart({
       }
     });
 
-    // If data arrived before canvas mounted, render it now!
     if (currentPayloadRef.current) {
       applyPayloadToChart(currentPayloadRef.current);
     }
 
-    // ResizeObserver for continuous responsive layout
     const ro = new ResizeObserver(() => {
       if (!isDisposedRef.current && chartRef.current && containerRef.current) {
+        const h = isFullscreen
+          ? oscillatorMode !== "none" ? window.innerHeight - 340 : window.innerHeight - 180
+          : oscillatorMode !== "none" ? height - 140 : height;
         chartRef.current.applyOptions({
           width: containerRef.current.clientWidth,
-          height: isFullscreen ? window.innerHeight - 150 : height,
+          height: h,
         });
       }
     });
@@ -406,10 +543,147 @@ export default function InteractiveChart({
       avwapSeriesRef.current = null;
       ema20SeriesRef.current = null;
       ema50SeriesRef.current = null;
+      ema200SeriesRef.current = null;
+      bbUpperSeriesRef.current = null;
+      bbLowerSeriesRef.current = null;
     };
   }, []); // Run ONCE on mount
 
-  // 2. Dynamic Theme Updates (Never Recreates Chart)
+  // 2. Sub-Chart Initialization & Synchronization (RSI / MACD Oscillator)
+  useEffect(() => {
+    if (oscillatorMode === "none" || !subContainerRef.current) {
+      if (subChartRef.current) {
+        subChartRef.current.remove();
+        subChartRef.current = null;
+        rsiSeriesRef.current = null;
+        macdSeriesRef.current = null;
+        macdSignalSeriesRef.current = null;
+        macdHistSeriesRef.current = null;
+      }
+      return;
+    }
+
+    const isDark = theme === "dark";
+    const subContainer = subContainerRef.current;
+    subContainer.innerHTML = "";
+
+    const subChart = createChart(subContainer, {
+      width: subContainer.clientWidth || 800,
+      height: 140,
+      layout: {
+        background: { type: ColorType.Solid, color: isDark ? "#090d16" : "#ffffff" },
+        textColor: isDark ? "#94a3b8" : "#475569",
+        fontFamily: "'JetBrains Mono', monospace",
+      },
+      grid: {
+        vertLines: { color: isDark ? "rgba(255, 255, 255, 0.04)" : "rgba(0, 0, 0, 0.05)" },
+        horzLines: { color: isDark ? "rgba(255, 255, 255, 0.04)" : "rgba(0, 0, 0, 0.05)" },
+      },
+      timeScale: {
+        borderColor: isDark ? "rgba(255, 255, 255, 0.08)" : "rgba(0, 0, 0, 0.1)",
+        timeVisible: true,
+      },
+      rightPriceScale: {
+        borderColor: isDark ? "rgba(255, 255, 255, 0.08)" : "rgba(0, 0, 0, 0.1)",
+        scaleMargins: { top: 0.1, bottom: 0.1 },
+      },
+      crosshair: { mode: 1 },
+    });
+
+    subChartRef.current = subChart;
+
+    if (oscillatorMode === "rsi") {
+      // Overbought 70 line
+      const obLine = subChart.addSeries(LineSeries, {
+        color: "rgba(255, 51, 102, 0.5)",
+        lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
+      });
+      rsiObLineRef.current = obLine;
+
+      // Oversold 30 line
+      const osLine = subChart.addSeries(LineSeries, {
+        color: "rgba(0, 255, 136, 0.5)",
+        lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
+      });
+      rsiOsLineRef.current = osLine;
+
+      // Midpoint 50 line
+      const midLine = subChart.addSeries(LineSeries, {
+        color: "rgba(148, 163, 184, 0.25)",
+        lineWidth: 1,
+        lineStyle: LineStyle.Dotted,
+      });
+      rsiMidLineRef.current = midLine;
+
+      // Main RSI line
+      const rsiLine = subChart.addSeries(LineSeries, {
+        color: "#c084fc",
+        lineWidth: 2,
+        title: "RSI 14",
+      });
+      rsiSeriesRef.current = rsiLine;
+    } else if (oscillatorMode === "macd") {
+      const macdHist = subChart.addSeries(HistogramSeries, {
+        priceFormat: { type: "volume" },
+        priceScaleId: "",
+      });
+      macdHistSeriesRef.current = macdHist;
+
+      const macdLine = subChart.addSeries(LineSeries, {
+        color: "#00f0ff",
+        lineWidth: 2,
+        title: "MACD",
+      });
+      macdSeriesRef.current = macdLine;
+
+      const macdSignal = subChart.addSeries(LineSeries, {
+        color: "#f59e0b",
+        lineWidth: 1,
+        title: "Signal",
+      });
+      macdSignalSeriesRef.current = macdSignal;
+    }
+
+    // Synchronize time scales between main chart and sub-chart
+    if (chartRef.current) {
+      const mainTimeScale = chartRef.current.timeScale();
+      const subTimeScale = subChart.timeScale();
+
+      mainTimeScale.subscribeVisibleLogicalRangeChange((range) => {
+        if (range && !isSyncingRef.current && subChartRef.current) {
+          isSyncingRef.current = true;
+          subTimeScale.setVisibleLogicalRange(range);
+          isSyncingRef.current = false;
+        }
+      });
+
+      subTimeScale.subscribeVisibleLogicalRangeChange((range) => {
+        if (range && !isSyncingRef.current && chartRef.current) {
+          isSyncingRef.current = true;
+          mainTimeScale.setVisibleLogicalRange(range);
+          isSyncingRef.current = false;
+        }
+      });
+    }
+
+    // Populate data if payload is already in memory
+    if (currentPayloadRef.current) {
+      applyPayloadToChart(currentPayloadRef.current);
+    }
+
+    return () => {
+      subChart.remove();
+      subChartRef.current = null;
+      rsiSeriesRef.current = null;
+      macdSeriesRef.current = null;
+      macdSignalSeriesRef.current = null;
+      macdHistSeriesRef.current = null;
+    };
+  }, [oscillatorMode, theme, applyPayloadToChart]);
+
+  // 3. Dynamic Theme Updates
   useEffect(() => {
     if (isDisposedRef.current || !chartRef.current) return;
     const isDark = theme === "dark";
@@ -435,15 +709,27 @@ export default function InteractiveChart({
         bottomColor: isDark ? "rgba(0, 240, 255, 0.0)" : "rgba(6, 182, 212, 0.0)",
         lineColor: isDark ? "#00f0ff" : "#0284c7",
       });
+      subChartRef.current?.applyOptions({
+        layout: {
+          background: { type: ColorType.Solid, color: isDark ? "#090d16" : "#ffffff" },
+          textColor: isDark ? "#94a3b8" : "#475569",
+        },
+        grid: {
+          vertLines: { color: isDark ? "rgba(255, 255, 255, 0.04)" : "rgba(0, 0, 0, 0.05)" },
+          horzLines: { color: isDark ? "rgba(255, 255, 255, 0.04)" : "rgba(0, 0, 0, 0.05)" },
+        },
+      });
     } catch {
       // Ignore
     }
   }, [theme]);
 
-  // 3. Smooth Fullscreen / Height Expansion (Never Disposes Chart)
+  // 4. Smooth Fullscreen / Height Expansion
   useEffect(() => {
     if (isDisposedRef.current || !chartRef.current || !containerRef.current) return;
-    const targetHeight = isFullscreen ? window.innerHeight - 160 : height;
+    const targetHeight = isFullscreen
+      ? oscillatorMode !== "none" ? window.innerHeight - 340 : window.innerHeight - 180
+      : oscillatorMode !== "none" ? height - 140 : height;
 
     const timer = setTimeout(() => {
       if (!isDisposedRef.current && chartRef.current && containerRef.current) {
@@ -452,13 +738,20 @@ export default function InteractiveChart({
           height: targetHeight,
         });
         chartRef.current.timeScale().fitContent();
+        if (subChartRef.current && subContainerRef.current) {
+          subChartRef.current.applyOptions({
+            width: subContainerRef.current.clientWidth,
+            height: 140,
+          });
+          subChartRef.current.timeScale().fitContent();
+        }
       }
     }, 50);
 
     return () => clearTimeout(timer);
-  }, [isFullscreen, height]);
+  }, [isFullscreen, height, oscillatorMode]);
 
-  // 4. Dynamic Visibility Toggles
+  // 5. Dynamic Overlay Visibility Toggles
   useEffect(() => {
     if (!isDisposedRef.current) {
       candleSeriesRef.current?.applyOptions({ visible: chartType === "candles" });
@@ -482,7 +775,18 @@ export default function InteractiveChart({
     if (!isDisposedRef.current) ema50SeriesRef.current?.applyOptions({ visible: showEma50 });
   }, [showEma50]);
 
-  // 5. Guaranteed Real Candle Data Fetch (Always Runs on Mount & Symbol/Period Change)
+  useEffect(() => {
+    if (!isDisposedRef.current) ema200SeriesRef.current?.applyOptions({ visible: showEma200 });
+  }, [showEma200]);
+
+  useEffect(() => {
+    if (!isDisposedRef.current) {
+      bbUpperSeriesRef.current?.applyOptions({ visible: showBB });
+      bbLowerSeriesRef.current?.applyOptions({ visible: showBB });
+    }
+  }, [showBB]);
+
+  // 6. Guaranteed Real Candle Data Fetch (Runs on Mount & Symbol/Period Change)
   useEffect(() => {
     let active = true;
     setChartLoading(true);
@@ -530,6 +834,14 @@ export default function InteractiveChart({
     close: latestMetrics.ltp,
     volume: latestMetrics.volume,
     avwap: undefined,
+    ema20: undefined,
+    ema50: undefined,
+    ema200: latestMetrics.ema200,
+    bbUpper: latestMetrics.bbUpper,
+    bbLower: latestMetrics.bbLower,
+    rsi: latestMetrics.rsi,
+    macd: latestMetrics.macd,
+    macdSignal: latestMetrics.macdSignal,
   };
 
   const isBullish = latestMetrics.change >= 0;
@@ -709,7 +1021,7 @@ export default function InteractiveChart({
               <IconExternalLink size={12} />
             </a>
 
-            {/* Fullscreen Expansion Toggle (Smooth Resize, Zero Disposed Error) */}
+            {/* Fullscreen Expansion Toggle */}
             <button
               onClick={() => setIsFullscreen(!isFullscreen)}
               className="btn-glass"
@@ -730,7 +1042,7 @@ export default function InteractiveChart({
             display: "flex",
             alignItems: "center",
             flexWrap: "wrap",
-            gap: "14px",
+            gap: "12px",
             background: "var(--bg-surface-elevated)",
             padding: "8px 14px",
             borderRadius: "8px",
@@ -763,6 +1075,40 @@ export default function InteractiveChart({
           {showAvwap && activeData.avwap !== undefined && (
             <span>
               AVWAP: <strong style={{ color: "var(--cyan)" }}>₹{activeData.avwap.toFixed(2)}</strong>
+            </span>
+          )}
+          {showEma200 && activeData.ema200 !== undefined && (
+            <span>
+              200 EMA: <strong style={{ color: "#f43f5e" }}>₹{activeData.ema200.toFixed(2)}</strong>
+            </span>
+          )}
+          {showBB && activeData.bbUpper !== undefined && (
+            <span>
+              BB: <strong style={{ color: "#38bdf8" }}>[{activeData.bbLower?.toFixed(0)} - {activeData.bbUpper.toFixed(0)}]</strong>
+            </span>
+          )}
+          {oscillatorMode === "rsi" && activeData.rsi !== undefined && (
+            <span>
+              RSI (14):{" "}
+              <strong
+                style={{
+                  color:
+                    activeData.rsi >= 70
+                      ? "var(--crimson)"
+                      : activeData.rsi <= 30
+                      ? "var(--emerald)"
+                      : "var(--purple)",
+                }}
+              >
+                {activeData.rsi.toFixed(2)}
+                {activeData.rsi >= 70 ? " (Overbought)" : activeData.rsi <= 30 ? " (Oversold)" : ""}
+              </strong>
+            </span>
+          )}
+          {oscillatorMode === "macd" && activeData.macd !== undefined && (
+            <span>
+              MACD: <strong style={{ color: "var(--cyan)" }}>{activeData.macd.toFixed(2)}</strong> (Sig:{" "}
+              {activeData.macdSignal?.toFixed(2)})
             </span>
           )}
         </div>
@@ -884,12 +1230,13 @@ export default function InteractiveChart({
       <div
         style={{
           width: "100%",
-          height: isFullscreen ? "calc(100vh - 200px)" : `${height}px`,
-          position: "relative",
+          display: "flex",
+          flexDirection: "column",
           borderRadius: "8px",
           overflow: "hidden",
           border: "1px solid var(--border-subtle)",
           background: theme === "dark" ? "#090d16" : "#ffffff",
+          position: "relative",
         }}
       >
         {chartLoading && (
@@ -914,7 +1261,7 @@ export default function InteractiveChart({
           </div>
         )}
 
-        {/* Error / Invalid Symbol Empty State */}
+        {/* Error State */}
         {chartError && (
           <div
             style={{
@@ -977,10 +1324,62 @@ export default function InteractiveChart({
           </div>
         )}
 
-        <div ref={containerRef} style={{ width: "100%", height: "100%", position: "relative" }} />
+        {/* Main Candlestick Chart */}
+        <div ref={containerRef} style={{ width: "100%", position: "relative" }} />
+
+        {/* Synced Oscillator Sub-Pane (RSI / MACD) */}
+        {oscillatorMode !== "none" && !chartError && (
+          <div
+            style={{
+              width: "100%",
+              height: "140px",
+              borderTop: "1px solid var(--border-subtle)",
+              position: "relative",
+              background: theme === "dark" ? "#070a11" : "#f8fafc",
+            }}
+          >
+            <div
+              style={{
+                position: "absolute",
+                top: "6px",
+                left: "12px",
+                zIndex: 5,
+                fontSize: "10px",
+                fontFamily: "'JetBrains Mono', monospace",
+                fontWeight: 700,
+                display: "flex",
+                alignItems: "center",
+                gap: "10px",
+              }}
+            >
+              {oscillatorMode === "rsi" ? (
+                <>
+                  <span style={{ color: "var(--purple)" }}>RSI 14</span>
+                  <span style={{ color: "var(--text-muted)" }}>[70 Overbought / 30 Oversold]</span>
+                  {activeData.rsi !== undefined && (
+                    <span style={{ color: activeData.rsi >= 70 ? "var(--crimson)" : activeData.rsi <= 30 ? "var(--emerald)" : "var(--cyan)" }}>
+                      Current: {activeData.rsi.toFixed(2)}
+                    </span>
+                  )}
+                </>
+              ) : (
+                <>
+                  <span style={{ color: "var(--cyan)" }}>MACD (12, 26, 9)</span>
+                  {activeData.macd !== undefined && (
+                    <span style={{ color: "var(--text-secondary)" }}>
+                      MACD: {activeData.macd.toFixed(2)} | Sig: {activeData.macdSignal?.toFixed(2)}
+                    </span>
+                  )}
+                </>
+              )}
+            </div>
+
+            <div ref={subContainerRef} style={{ width: "100%", height: "100%", position: "relative" }} />
+          </div>
+        )}
       </div>
 
-      {/* 5. Indicators Pill Toggles & Legend Bar */}
+      {/* 5. Indicators Pill Toggles & Sub-Pane Selector */}
       {!chartError && (
         <div
           style={{
@@ -988,14 +1387,16 @@ export default function InteractiveChart({
             alignItems: "center",
             justifyContent: "space-between",
             flexWrap: "wrap",
-            gap: "12px",
-            marginTop: "12px",
+            gap: "14px",
+            marginTop: "14px",
             fontSize: "11px",
             color: "var(--text-muted)",
           }}
         >
-          {/* Toggleable Pills */}
+          {/* Overlay Indicator Pills */}
           <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+            <span style={{ fontSize: "11px", fontWeight: 700, color: "var(--text-muted)" }}>Overlays:</span>
+
             <button
               onClick={() => setShowAvwap(!showAvwap)}
               style={{
@@ -1013,7 +1414,7 @@ export default function InteractiveChart({
               }}
             >
               <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: "var(--cyan)" }} />
-              <span>Anchored VWAP</span>
+              <span>AVWAP</span>
             </button>
 
             <button
@@ -1057,6 +1458,46 @@ export default function InteractiveChart({
             </button>
 
             <button
+              onClick={() => setShowEma200(!showEma200)}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
+                background: showEma200 ? "rgba(244, 63, 94, 0.15)" : "var(--bg-surface-elevated)",
+                color: showEma200 ? "#f43f5e" : "var(--text-muted)",
+                border: `1px solid ${showEma200 ? "#f43f5e" : "var(--border-subtle)"}`,
+                padding: "3px 8px",
+                borderRadius: "6px",
+                fontSize: "11px",
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: "#f43f5e" }} />
+              <span>200 EMA</span>
+            </button>
+
+            <button
+              onClick={() => setShowBB(!showBB)}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
+                background: showBB ? "rgba(56, 189, 248, 0.15)" : "var(--bg-surface-elevated)",
+                color: showBB ? "#38bdf8" : "var(--text-muted)",
+                border: `1px solid ${showBB ? "#38bdf8" : "var(--border-subtle)"}`,
+                padding: "3px 8px",
+                borderRadius: "6px",
+                fontSize: "11px",
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: "#38bdf8" }} />
+              <span>Bollinger Bands</span>
+            </button>
+
+            <button
               onClick={() => setShowVolume(!showVolume)}
               style={{
                 display: "inline-flex",
@@ -1073,12 +1514,46 @@ export default function InteractiveChart({
               }}
             >
               <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: "var(--emerald)" }} />
-              <span>Volume Bars</span>
+              <span>Volume</span>
             </button>
           </div>
 
-          <div className="font-mono" style={{ fontSize: "10px" }}>
-            Engine: TradingView Lightweight Charts (Verified Authentic) • IST Timezone
+          {/* Oscillator Sub-Pane Mode Selector */}
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+            <span style={{ fontSize: "11px", fontWeight: 700, color: "var(--text-muted)" }}>Oscillator Pane:</span>
+            <div
+              style={{
+                display: "inline-flex",
+                background: "var(--bg-surface-elevated)",
+                padding: "2px",
+                borderRadius: "8px",
+                border: "1px solid var(--border-subtle)",
+              }}
+            >
+              {[
+                { id: "none", label: "None" },
+                { id: "rsi", label: "RSI (14)" },
+                { id: "macd", label: "MACD" },
+              ].map((m) => (
+                <button
+                  key={m.id}
+                  onClick={() => setOscillatorMode(m.id as any)}
+                  style={{
+                    background: oscillatorMode === m.id ? (m.id === "rsi" ? "var(--purple)" : m.id === "macd" ? "var(--cyan)" : "var(--border-glass)") : "transparent",
+                    color: oscillatorMode === m.id ? (m.id === "none" ? "var(--text-primary)" : "#05070b") : "var(--text-muted)",
+                    border: "none",
+                    padding: "3px 10px",
+                    borderRadius: "6px",
+                    fontSize: "11px",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    transition: "all 0.15s ease",
+                  }}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       )}

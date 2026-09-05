@@ -277,6 +277,31 @@ def get_chart_data(symbol: str, period: str = "6mo"):
 
         df["EMA20"] = df["Close"].ewm(span=20, adjust=False).mean()
         df["EMA50"] = df["Close"].ewm(span=50, adjust=False).mean()
+        df["EMA200"] = df["Close"].ewm(span=200, adjust=False).mean()
+
+        # Bollinger Bands (20, 2)
+        sma20 = df["Close"].rolling(window=20, min_periods=1).mean()
+        std20 = df["Close"].rolling(window=20, min_periods=1).std().fillna(0)
+        df["BB_Upper"] = sma20 + (std20 * 2)
+        df["BB_Lower"] = sma20 - (std20 * 2)
+
+        # 14-period RSI
+        delta = df["Close"].diff()
+        gain = delta.clip(lower=0)
+        loss = -delta.clip(upper=0)
+        avg_gain = gain.ewm(com=13, adjust=False).mean()
+        avg_loss = loss.ewm(com=13, adjust=False).mean()
+        rs = np.where(avg_loss != 0, avg_gain / avg_loss, 0)
+        df["RSI"] = np.where(np.isnan(rs), 50.0, 100 - (100 / (1 + rs)))
+
+        # MACD (12, 26, 9)
+        ema12 = df["Close"].ewm(span=12, adjust=False).mean()
+        ema26 = df["Close"].ewm(span=26, adjust=False).mean()
+        macd = ema12 - ema26
+        macd_signal = macd.ewm(span=9, adjust=False).mean()
+        df["MACD"] = macd
+        df["MACD_Signal"] = macd_signal
+        df["MACD_Hist"] = macd - macd_signal
 
         # Cumulative Anchored VWAP
         v = df["Volume"].values
@@ -291,6 +316,13 @@ def get_chart_data(symbol: str, period: str = "6mo"):
         avwap_data = []
         ema20_data = []
         ema50_data = []
+        ema200_data = []
+        bb_upper_data = []
+        bb_lower_data = []
+        rsi_data = []
+        macd_data = []
+        macd_signal_data = []
+        macd_hist_data = []
 
         for idx, row in df.iterrows():
             time_str = idx.strftime("%Y-%m-%d")
@@ -298,7 +330,7 @@ def get_chart_data(symbol: str, period: str = "6mo"):
             h = round(float(row["High"]), 2)
             l = round(float(row["Low"]), 2)
             c = round(float(row["Close"]), 2)
-            vol = int(row["Volume"])
+            vol = int(row["Volume"]) if not np.isnan(row["Volume"]) else 0
 
             candles.append({"time": time_str, "open": o, "high": h, "low": l, "close": c})
             volume.append({
@@ -309,6 +341,19 @@ def get_chart_data(symbol: str, period: str = "6mo"):
             avwap_data.append({"time": time_str, "value": round(float(row["AVWAP"]), 2)})
             ema20_data.append({"time": time_str, "value": round(float(row["EMA20"]), 2)})
             ema50_data.append({"time": time_str, "value": round(float(row["EMA50"]), 2)})
+            ema200_data.append({"time": time_str, "value": round(float(row["EMA200"]), 2)})
+            bb_upper_data.append({"time": time_str, "value": round(float(row["BB_Upper"]), 2)})
+            bb_lower_data.append({"time": time_str, "value": round(float(row["BB_Lower"]), 2)})
+            rsi_val = round(float(row["RSI"]), 2) if not np.isnan(row["RSI"]) else 50.0
+            rsi_data.append({"time": time_str, "value": rsi_val})
+            macd_data.append({"time": time_str, "value": round(float(row["MACD"]), 2)})
+            macd_signal_data.append({"time": time_str, "value": round(float(row["MACD_Signal"]), 2)})
+            m_hist = round(float(row["MACD_Hist"]), 2)
+            macd_hist_data.append({
+                "time": time_str,
+                "value": m_hist,
+                "color": "rgba(0, 255, 136, 0.6)" if m_hist >= 0 else "rgba(255, 51, 102, 0.6)"
+            })
 
         return {
             "status": "success",
@@ -318,6 +363,13 @@ def get_chart_data(symbol: str, period: str = "6mo"):
             "avwap": avwap_data,
             "ema20": ema20_data,
             "ema50": ema50_data,
+            "ema200": ema200_data,
+            "bb_upper": bb_upper_data,
+            "bb_lower": bb_lower_data,
+            "rsi": rsi_data,
+            "macd": macd_data,
+            "macd_signal": macd_signal_data,
+            "macd_hist": macd_hist_data,
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}
