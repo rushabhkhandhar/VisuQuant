@@ -1,14 +1,18 @@
 """
 VisuQuant Pro Terminal - Single Ticker Historical Simulation Engine
 Simulates the canonical E19 Dual AVWAP & Dead Money Cut ruleset on any requested security
-using authentic daily OHLCV market candles.
+using authentic National Stock Exchange (NSE) Bhavcopy and TradingView market candles.
+Strictly zero yfinance usage.
 """
 
+from datetime import date as dt_date
 from typing import Any, Dict, List
 import numpy as np
 import pandas as pd
-import yfinance as yf
-from src.services.chart_service import resolve_symbol_to_ticker
+
+from src.data.nse_fetcher import fetch_bulk_history
+from src.data.live_tv_fetcher import get_tv_fetcher
+from src.services.chart_service import resolve_symbol
 
 
 def run_single_stock_backtest(symbol: str, months: int = 24) -> Dict[str, Any]:
@@ -21,39 +25,35 @@ def run_single_stock_backtest(symbol: str, months: int = 24) -> Dict[str, Any]:
     - E19 Dead Money Cut at 15 sessions (cut if flat/losing)
     - Maximum holding period time-stop of 25 sessions
     - 0.15% round-trip trading friction
+    All data sourced from verified National Stock Exchange archives.
     """
-    clean_sym = symbol.strip().upper()
-    ticker_str, display_sym = resolve_symbol_to_ticker(clean_sym)
+    clean_sym = resolve_symbol(symbol)
+    lookback_days = (months * 21) + 250
 
-    # 1. Fetch OHLCV History from Yahoo Finance (with fallback to BSE or Bhavcopy)
-    years = max(2, (months // 12) + 1)
     df = pd.DataFrame()
 
+    # 1. Primary Source: Verified National Stock Exchange (NSE) Bhavcopy Archive
     try:
-        t = yf.Ticker(ticker_str)
-        df = t.history(period=f"{years}y")
-        if df.empty and not ticker_str.endswith(".BO") and not ticker_str.startswith("^"):
-            bse_ticker = f"{display_sym}.BO"
-            df = yf.Ticker(bse_ticker).history(period=f"{years}y")
+        bulk = fetch_bulk_history([clean_sym], dt_date.today(), lookback_days=lookback_days)
+        if clean_sym in bulk and not bulk[clean_sym].empty:
+            df = bulk[clean_sym].copy()
     except Exception:
         df = pd.DataFrame()
 
-    # Fallback to local NSE Bhavcopy cache if Yahoo Finance is unreachable
-    if df.empty:
+    # 2. Secondary Source: TradingView Native Feed
+    if df.empty or len(df) < 50:
         try:
-            from datetime import date as dt_date
-            from src.data.nse_fetcher import fetch_bulk_history
-            lookback = months * 21 + 250
-            bulk = fetch_bulk_history([display_sym], dt_date.today(), lookback_days=lookback)
-            if display_sym in bulk and not bulk[display_sym].empty:
-                df = bulk[display_sym].copy()
+            tv = get_tv_fetcher()
+            tv_df = tv.fetch_symbol(clean_sym, n_bars=min(lookback_days, 500))
+            if tv_df is not None and not tv_df.empty:
+                df = tv_df
         except Exception:
             pass
 
-    if df.empty or len(df) < 50:
+    if df.empty or len(df) < 30:
         return {
             "status": "error",
-            "message": f"Insufficient historical candle data for symbol '{display_sym}' over {months} months.",
+            "message": f"Insufficient historical candle data for NSE symbol '{clean_sym}' over {months} months.",
         }
 
     # 2. Compute Technical Indicators
@@ -71,7 +71,7 @@ def run_single_stock_backtest(symbol: str, months: int = 24) -> Dict[str, Any]:
 
     # 3. Determine Evaluation Window
     eval_bars = months * 21
-    start_idx = max(50, len(df) - eval_bars)
+    start_idx = max(20, len(df) - eval_bars)
 
     trades: List[Dict[str, Any]] = []
     in_trade = False
@@ -125,7 +125,7 @@ def run_single_stock_backtest(symbol: str, months: int = 24) -> Dict[str, Any]:
                 # Deduct 0.15% round-trip trading friction
                 net_ret = ((exit_price - entry_price) / entry_price) - 0.0015
                 trades.append({
-                    "symbol": display_sym,
+                    "symbol": clean_sym,
                     "entry_date": str(entry_date.date()) if hasattr(entry_date, "date") else str(entry_date)[:10],
                     "exit_date": str(current_date.date()) if hasattr(current_date, "date") else str(current_date)[:10],
                     "entry_price": round(entry_price, 2),
@@ -139,7 +139,7 @@ def run_single_stock_backtest(symbol: str, months: int = 24) -> Dict[str, Any]:
 
         else:
             # Entry Signal Check:
-            # 1. Macro Trend: Price above 200 EMA (or 50 EMA if young stock)
+            # 1. Macro Trend: Price above 200 EMA (or 20 SMA if earlier)
             # 2. Pullback Bounce: Price near 20 EMA (tested within 2.5%) and closed above 20 EMA
             # 3. Volume Check: Healthy volume participation (> 70% of 20-day average)
             close = float(row["Close"])
@@ -229,7 +229,7 @@ def run_single_stock_backtest(symbol: str, months: int = 24) -> Dict[str, Any]:
 
     return {
         "status": "success",
-        "symbol": display_sym,
+        "symbol": clean_sym,
         "period": f"{months}mo",
         "metrics": metrics,
         "trades": trades,

@@ -1,19 +1,21 @@
 """
 VisuQuant Pro Terminal - Interactive Chart Service
-Handles ticker resolution, historical data retrieval, and technical indicator computations
-(AVWAP, 20/50/200 EMA, Bollinger Bands, Wilder's RSI, and MACD).
+Native National Stock Exchange (NSE) & TradingView data provider.
+Zero third-party scraper dependencies.
 """
 
 from datetime import date as dt_date
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 import numpy as np
 import pandas as pd
-import yfinance as yf
+
+from src.data.nse_fetcher import fetch_bulk_history
+from src.data.live_tv_fetcher import get_tv_fetcher
 
 
-def resolve_symbol_to_ticker(raw_symbol: str) -> tuple[str, str]:
+def resolve_symbol(raw_symbol: str) -> str:
     """
-    Normalizes user-supplied symbol into an institutional ticker and display name.
+    Normalizes user-supplied symbol into clean NSE ticker format.
     """
     sym = raw_symbol.strip().upper()
     clean = (
@@ -21,17 +23,17 @@ def resolve_symbol_to_ticker(raw_symbol: str) -> tuple[str, str]:
         .replace("BSE:", "")
         .replace(".NS", "")
         .replace(".BO", "")
+        .replace("^", "")
         .strip()
     )
 
-    if clean in ["NIFTY", "NIFTY 50", "^NSEI", "NIFTY50"]:
-        return "^NSEI", "NIFTY 50"
-    elif clean in ["BANKNIFTY", "BANK NIFTY", "^NSEBANK"]:
-        return "^NSEBANK", "BANK NIFTY"
-    elif clean in ["SENSEX", "^BSESN"]:
-        return "^BSESN", "SENSEX"
-    else:
-        return f"{clean}.NS", clean
+    if clean in ["NIFTY", "NIFTY 50", "NSEI", "NIFTY50"]:
+        return "NIFTY"
+    elif clean in ["BANKNIFTY", "BANK NIFTY", "NSEBANK"]:
+        return "BANKNIFTY"
+    elif clean in ["SENSEX", "BSESN"]:
+        return "SENSEX"
+    return clean
 
 
 def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
@@ -86,33 +88,46 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
 def fetch_chart_payload(symbol: str, period: str = "6mo") -> Dict[str, Any]:
     """
-    Fetches market candle history and formats indicator series for Lightweight Charts.
+    Fetches market candle history using authentic NSE Bhavcopy and TradingView feeds.
+    Strictly zero yfinance usage.
     """
     try:
-        raw_sym = symbol.strip().upper()
-        ticker_str, display_sym = resolve_symbol_to_ticker(raw_sym)
+        clean_sym = resolve_symbol(symbol)
 
-        # Primary attempt: Yahoo Finance
-        t = yf.Ticker(ticker_str)
-        df = t.history(period=period)
+        period_to_days = {
+            "1mo": 45,
+            "3mo": 120,
+            "6mo": 250,
+            "1y": 450,
+            "2y": 800,
+            "5y": 1800,
+        }
+        lookback_days = period_to_days.get(period, 250)
 
-        # Fallback to BSE suffix if NSE returned empty
-        if df.empty and not ticker_str.endswith(".BO") and not ticker_str.startswith("^"):
-            bse_ticker = f"{display_sym}.BO"
-            df = yf.Ticker(bse_ticker).history(period=period)
+        df = pd.DataFrame()
 
-        # Fallback to local Bhavcopy daily history cache
-        if df.empty:
-            from src.data.nse_fetcher import fetch_bulk_history
-            lookback = 30 if period == "1mo" else 90 if period == "3mo" else 365 if period == "1y" else 180
-            bulk = fetch_bulk_history([display_sym], dt_date.today(), lookback)
-            if display_sym in bulk and not bulk[display_sym].empty:
-                df = bulk[display_sym].copy()
+        # 1. Primary: Load historical daily bars from official NSE Bhavcopy archive
+        try:
+            bulk = fetch_bulk_history([clean_sym], dt_date.today(), lookback_days=lookback_days)
+            if clean_sym in bulk and not bulk[clean_sym].empty:
+                df = bulk[clean_sym].copy()
+        except Exception:
+            df = pd.DataFrame()
 
-        if df.empty:
+        # 2. Secondary / Live overlay: TradingView native datafeed
+        try:
+            if df.empty or len(df) < 20:
+                tv = get_tv_fetcher()
+                tv_df = tv.fetch_symbol(clean_sym, n_bars=min(lookback_days, 500))
+                if tv_df is not None and not tv_df.empty:
+                    df = tv_df
+        except Exception:
+            pass
+
+        if df.empty or len(df) < 5:
             return {
                 "status": "error",
-                "message": f"Symbol '{raw_sym}' is not a valid NSE/BSE ticker or has no trading data.",
+                "message": f"Symbol '{symbol}' not found in National Stock Exchange records.",
             }
 
         df = compute_indicators(df)
@@ -166,7 +181,7 @@ def fetch_chart_payload(symbol: str, period: str = "6mo") -> Dict[str, Any]:
 
         return {
             "status": "success",
-            "symbol": display_sym,
+            "symbol": clean_sym,
             "candles": candles,
             "volume": volume,
             "avwap": avwap_data,
