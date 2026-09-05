@@ -253,6 +253,11 @@ def _load_symbol_universe():
     indices = ["NIFTY", "BANKNIFTY", "SENSEX", "FINNIFTY", "MIDCPNIFTY"]
     symbols = set(indices)
     try:
+        from src.data.nse_fetcher import load_nifty500_symbols
+        symbols.update(load_nifty500_symbols())
+    except Exception:
+        pass
+    try:
         import glob
         bhavcopy_files = sorted(glob.glob(os.path.join(os.path.dirname(__file__), "data/bhavcopy_cache/*.parquet")))
         if bhavcopy_files:

@@ -106,28 +106,30 @@ def fetch_chart_payload(symbol: str, period: str = "6mo") -> Dict[str, Any]:
 
         df = pd.DataFrame()
 
-        # 1. Primary: Load historical daily bars from official NSE Bhavcopy archive
+        # 1. Primary Source: TradingView Native Datafeed (tvDatafeed)
+        # Cloud-ready, real-time, zero NSE datacenter IP blocking.
         try:
-            bulk = fetch_bulk_history([clean_sym], dt_date.today(), lookback_days=lookback_days)
-            if clean_sym in bulk and not bulk[clean_sym].empty:
-                df = bulk[clean_sym].copy()
+            tv = get_tv_fetcher()
+            n_bars = min(2000, max(45, lookback_days))
+            tv_df = tv.fetch_symbol(clean_sym, n_bars=n_bars)
+            if tv_df is not None and not tv_df.empty:
+                df = tv_df
         except Exception:
             df = pd.DataFrame()
 
-        # 2. Secondary / Live overlay: TradingView native datafeed
-        try:
-            if df.empty or len(df) < 20:
-                tv = get_tv_fetcher()
-                tv_df = tv.fetch_symbol(clean_sym, n_bars=min(lookback_days, 500))
-                if tv_df is not None and not tv_df.empty:
-                    df = tv_df
-        except Exception:
-            pass
+        # 2. Offline / Local Fallback: Cached NSE Bhavcopy archive (used only if TV feed is unreachable)
+        if df.empty or len(df) < 5:
+            try:
+                bulk = fetch_bulk_history([clean_sym], dt_date.today(), lookback_days=lookback_days)
+                if clean_sym in bulk and not bulk[clean_sym].empty:
+                    df = bulk[clean_sym].copy()
+            except Exception:
+                pass
 
         if df.empty or len(df) < 5:
             return {
                 "status": "error",
-                "message": f"Symbol '{symbol}' not found in National Stock Exchange records.",
+                "message": f"Symbol '{symbol}' not found or market data currently unavailable.",
             }
 
         df = compute_indicators(df)

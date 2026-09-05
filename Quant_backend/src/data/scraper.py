@@ -10,32 +10,31 @@ def fetch_nse_data(ticker: str, as_of_date: str = None) -> dict:
     print(f"[{ticker}] Scraping live NSE data (as_of_date: {as_of_date or 'today'})...")
     
     df = None
-    # 1. Try NSE direct fetch first
+    # 1. Primary: Fast, cloud-safe TradingView feed (zero NSE IP blocking)
     try:
-        if as_of_date and as_of_date != date.today().strftime("%Y-%m-%d"):
-            target_date = datetime.strptime(as_of_date, "%Y-%m-%d").date()
-            bulk_data = fetch_bulk_history([ticker], target_date, lookback_days=365)
-            df = bulk_data.get(ticker)
-            if df is not None and not df.empty:
-                import pandas as pd
-                df = df.loc[df.index <= pd.Timestamp(target_date)]
-        else:
-            df = fetch_daily_candles(ticker, date.today(), lookback_days=365)
+        from src.data.live_tv_fetcher import get_tv_fetcher
+        fetcher = get_tv_fetcher()
+        df = fetcher.fetch_symbol(ticker, n_bars=300)
+        if df is not None and not df.empty and as_of_date:
+            import pandas as pd
+            df = df.loc[df.index <= pd.Timestamp(as_of_date)]
     except Exception as e:
-        print(f"[{ticker}] Warning: NSE direct fetch failed ({e}). Falling back to TradingView...")
+        print(f"[{ticker}] TradingView fetch failed ({e}). Trying Bhavcopy...")
 
-    # 2. Fallback to TradingView (critical for GitHub Actions / cloud runners where NSE blocks IP)
+    # 2. Fallback: NSE Bhavcopy archive
     if df is None or df.empty:
         try:
-            print(f"[{ticker}] Fetching market data via TradingView fallback...")
-            from src.data.live_tv_fetcher import get_tv_fetcher
-            fetcher = get_tv_fetcher()
-            df = fetcher.fetch_symbol(ticker, n_bars=260)
-            if df is not None and not df.empty and as_of_date:
-                import pandas as pd
-                df = df.loc[df.index <= pd.Timestamp(as_of_date)]
+            if as_of_date and as_of_date != date.today().strftime("%Y-%m-%d"):
+                target_date = datetime.strptime(as_of_date, "%Y-%m-%d").date()
+                bulk_data = fetch_bulk_history([ticker], target_date, lookback_days=365)
+                df = bulk_data.get(ticker)
+                if df is not None and not df.empty:
+                    import pandas as pd
+                    df = df.loc[df.index <= pd.Timestamp(target_date)]
+            else:
+                df = fetch_daily_candles(ticker, date.today(), lookback_days=365)
         except Exception as e:
-            print(f"[{ticker}] TradingView fallback failed: {e}")
+            print(f"[{ticker}] NSE Bhavcopy fallback failed: {e}")
 
     if df is not None and not df.empty:
         latest = df.iloc[-1]

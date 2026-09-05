@@ -113,11 +113,11 @@ def node_capture_chart(state: TradingState) -> dict:
                 outputs_dir = os.path.join(os.path.dirname(__file__), '../../outputs')
                 os.makedirs(outputs_dir, exist_ok=True)
                 chart_path = os.path.join(outputs_dir, f"{ticker}_fallback_chart.png")
-                bulk_data = fetch_bulk_history([ticker], datetime.today().date(), lookback_days=300)
-                df = bulk_data.get(ticker)
+                from src.data.live_tv_fetcher import get_tv_fetcher
+                df = get_tv_fetcher().fetch_symbol(ticker, n_bars=300)
                 if df is None or df.empty:
-                    from src.data.live_tv_fetcher import get_tv_fetcher
-                    df = get_tv_fetcher().fetch_symbol(ticker, n_bars=200)
+                    bulk_data = fetch_bulk_history([ticker], datetime.today().date(), lookback_days=300)
+                    df = bulk_data.get(ticker)
                 if df is not None and not df.empty:
                     plot_df = df.tail(150).copy()
                     plot_df.index.name = 'Date'

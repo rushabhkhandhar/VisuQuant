@@ -32,28 +32,30 @@ def run_single_stock_backtest(symbol: str, months: int = 24) -> Dict[str, Any]:
 
     df = pd.DataFrame()
 
-    # 1. Primary Source: Verified National Stock Exchange (NSE) Bhavcopy Archive
+    # 1. Primary Source: TradingView Native Datafeed (tvDatafeed)
+    # Fast, cloud-ready, zero IP blocking from NSE. Up to 2,000 daily bars (~8 years).
     try:
-        bulk = fetch_bulk_history([clean_sym], dt_date.today(), lookback_days=lookback_days)
-        if clean_sym in bulk and not bulk[clean_sym].empty:
-            df = bulk[clean_sym].copy()
+        tv = get_tv_fetcher()
+        bars_needed = min(2000, max(100, lookback_days))
+        tv_df = tv.fetch_symbol(clean_sym, n_bars=bars_needed)
+        if tv_df is not None and not tv_df.empty:
+            df = tv_df
     except Exception:
         df = pd.DataFrame()
 
-    # 2. Secondary Source: TradingView Native Feed
+    # 2. Offline / Local Fallback: Verified National Stock Exchange (NSE) Bhavcopy Archive
     if df.empty or len(df) < 50:
         try:
-            tv = get_tv_fetcher()
-            tv_df = tv.fetch_symbol(clean_sym, n_bars=min(lookback_days, 500))
-            if tv_df is not None and not tv_df.empty:
-                df = tv_df
+            bulk = fetch_bulk_history([clean_sym], dt_date.today(), lookback_days=lookback_days)
+            if clean_sym in bulk and not bulk[clean_sym].empty:
+                df = bulk[clean_sym].copy()
         except Exception:
             pass
 
     if df.empty or len(df) < 30:
         return {
             "status": "error",
-            "message": f"Insufficient historical candle data for NSE symbol '{clean_sym}' over {months} months.",
+            "message": f"Insufficient historical candle data for symbol '{clean_sym}' over {months} months.",
         }
 
     # 2. Compute Technical Indicators

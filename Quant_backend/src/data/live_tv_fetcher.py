@@ -10,7 +10,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 def sanitize_tv_symbol(symbol: str) -> str:
-    """Normalize NSE ticker to TradingView naming conventions to avoid timeouts."""
+    """Normalize NSE/BSE ticker to TradingView naming conventions to avoid timeouts."""
     mapping = {
         "BAJAJ-AUTO": "BAJAJ_AUTO",
         "NAM-INDIA": "NAM_INDIA",
@@ -18,10 +18,26 @@ def sanitize_tv_symbol(symbol: str) -> str:
         "M&MFIN": "M_MFIN",
         "L&TFH": "L_TFH",
         "MCDOWELL-N": "UNITDSPR",
+        "NIFTY 50": "NIFTY",
+        "NIFTY50": "NIFTY",
+        "NSEI": "NIFTY",
+        "BANK NIFTY": "BANKNIFTY",
+        "NSEBANK": "BANKNIFTY",
+        "BSESN": "SENSEX",
     }
-    if symbol in mapping:
-        return mapping[symbol]
-    return symbol.replace("-", "_").replace("&", "_")
+    clean = (
+        symbol.strip()
+        .upper()
+        .replace("NSE:", "")
+        .replace("BSE:", "")
+        .replace(".NS", "")
+        .replace(".BO", "")
+        .replace("^", "")
+        .strip()
+    )
+    if clean in mapping:
+        return mapping[clean]
+    return clean.replace("-", "_").replace("&", "_")
 
 class LiveTVFetcher:
     def __init__(self):
@@ -30,55 +46,83 @@ class LiveTVFetcher:
         self.password = None
         self.tv = TvDatafeed()
 
-    def fetch_symbol(self, symbol: str, n_bars: int = 200, retries: int = 1) -> Optional[pd.DataFrame]:
+    def fetch_symbol(
+        self,
+        symbol: str,
+        n_bars: int = 200,
+        exchange: Optional[str] = None,
+        retries: int = 2,
+    ) -> Optional[pd.DataFrame]:
         """Fetch historical daily candles (including the current live daily candle) for a single symbol."""
         tv_symbol = sanitize_tv_symbol(symbol)
-        for attempt in range(retries + 1):
-            try:
-                # We request NSE exchange by default.
-                df = self.tv.get_hist(symbol=tv_symbol, exchange='NSE', interval=Interval.in_daily, n_bars=n_bars)
-                
-                if df is None or df.empty:
+
+        # Route index and exchange appropriately
+        if exchange is not None:
+            exchange_candidates = [exchange]
+        elif tv_symbol in ["SENSEX", "BSESN"]:
+            exchange_candidates = ["BSE"]
+        elif tv_symbol in ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"]:
+            exchange_candidates = ["NSE"]
+        else:
+            # Equities: try NSE first, then BSE as fallback
+            exchange_candidates = ["NSE", "BSE"]
+
+        for cur_exchange in exchange_candidates:
+            for attempt in range(retries + 1):
+                try:
+                    df = self.tv.get_hist(
+                        symbol=tv_symbol,
+                        exchange=cur_exchange,
+                        interval=Interval.in_daily,
+                        n_bars=n_bars,
+                    )
+
+                    if df is None or df.empty:
+                        if attempt < retries:
+                            logger.debug(f"Empty data for {symbol} ({tv_symbol}) on {cur_exchange}, reconnecting...")
+                            try:
+                                self.tv = TvDatafeed()
+                            except Exception:
+                                pass
+                            time.sleep(0.5)
+                            continue
+                        break  # Try next exchange candidate
+
+                    # Format to match our strategy's expected schema: [Open, High, Low, Close, Volume]
+                    df = df.rename(
+                        columns={
+                            "open": "Open",
+                            "high": "High",
+                            "low": "Low",
+                            "close": "Close",
+                            "volume": "Volume",
+                        }
+                    )
+
+                    # Keep only necessary columns
+                    df = df[["Open", "High", "Low", "Close", "Volume"]]
+
+                    # Ensure index is DatetimeIndex
+                    if not isinstance(df.index, pd.DatetimeIndex):
+                        df.index = pd.to_datetime(df.index)
+
+                    time.sleep(0.05)  # Minimal sleep for snappy interactive queries
+                    return df
+
+                except Exception as e:
                     if attempt < retries:
-                        logger.debug(f"Empty data for {symbol} ({tv_symbol}), reconnecting...")
-                        try:
-                            self.tv = TvDatafeed()
-                        except:
-                            pass
-                        time.sleep(1)
-                        continue
-                    return None
-                    
-                # Format to match our strategy's expected schema: [Open, High, Low, Close, Volume]
-                # tvDatafeed returns lower case columns: symbol, open, high, low, close, volume
-                df = df.rename(columns={
-                    "open": "Open",
-                    "high": "High",
-                    "low": "Low",
-                    "close": "Close",
-                    "volume": "Volume"
-                })
-                
-                # Keep only necessary columns
-                df = df[['Open', 'High', 'Low', 'Close', 'Volume']]
-                
-                time.sleep(0.2) # Light anti rate-limit sleep
-                return df
-                
-            except Exception as e:
-                if attempt < retries:
-                    logger.debug(f"Retrying {symbol} ({tv_symbol}) daily fetch after error: {e}")
-                    time.sleep(1)
-                    if "Connection" in str(e) or "timeout" in str(e).lower() or "lost" in str(e).lower():
-                        try:
-                            self.tv = TvDatafeed()
-                            time.sleep(1)
-                        except:
-                            pass
-                else:
-                    logger.debug(f"Failed to fetch {symbol} ({tv_symbol}) after {retries} retries: {e}")
-                    return None
-                    
+                        logger.debug(f"Retrying {symbol} ({tv_symbol}) on {cur_exchange} daily fetch after error: {e}")
+                        time.sleep(0.5)
+                        if "Connection" in str(e) or "timeout" in str(e).lower() or "lost" in str(e).lower():
+                            try:
+                                self.tv = TvDatafeed()
+                                time.sleep(0.5)
+                            except Exception:
+                                pass
+                    else:
+                        logger.debug(f"Failed to fetch {symbol} ({tv_symbol}) on {cur_exchange} after {retries} retries: {e}")
+                        break
+
         return None
 
     def fetch_bulk_live(self, symbols: List[str], n_bars: int = 200, max_workers: int = 1) -> Dict[str, pd.DataFrame]:
@@ -412,8 +456,8 @@ def get_tv_fetcher():
         _fetcher = LiveTVFetcher()
     return _fetcher
 
-def get_live_ohlcv(symbol: str, lookback: int = 200) -> Optional[pd.DataFrame]:
+def get_live_ohlcv(symbol: str, lookback: int = 200, exchange: Optional[str] = None) -> Optional[pd.DataFrame]:
     """Helper for single symbol fetch matching the nse_fetcher interface style."""
     fetcher = get_tv_fetcher()
-    return fetcher.fetch_symbol(symbol, n_bars=lookback)
+    return fetcher.fetch_symbol(symbol, n_bars=lookback, exchange=exchange)
 
