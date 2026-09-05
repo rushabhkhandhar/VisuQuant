@@ -273,7 +273,7 @@ def get_chart_data(symbol: str, period: str = "6mo"):
                 df = bulk[clean_sym].copy()
 
         if df.empty:
-            return {"status": "error", "message": f"No market candle data found for {symbol}"}
+            return {"status": "error", "message": f"Symbol '{raw_sym}' is not a valid NSE/BSE ticker or has no trading data."}
 
         df["EMA20"] = df["Close"].ewm(span=20, adjust=False).mean()
         df["EMA50"] = df["Close"].ewm(span=50, adjust=False).mean()
@@ -321,6 +321,40 @@ def get_chart_data(symbol: str, period: str = "6mo"):
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+_SYMBOL_UNIVERSE_CACHE = []
+
+def _load_symbol_universe():
+    global _SYMBOL_UNIVERSE_CACHE
+    if _SYMBOL_UNIVERSE_CACHE:
+        return _SYMBOL_UNIVERSE_CACHE
+    indices = ["NIFTY", "BANKNIFTY", "SENSEX", "FINNIFTY", "MIDCPNIFTY"]
+    symbols = set(indices)
+    try:
+        import glob
+        bhavcopy_files = sorted(glob.glob(os.path.join(os.path.dirname(__file__), "data/bhavcopy_cache/*.parquet")))
+        if bhavcopy_files:
+            import pandas as pd
+            df = pd.read_parquet(bhavcopy_files[-1])
+            symbols.update(df.index.astype(str).tolist())
+    except Exception:
+        pass
+    _SYMBOL_UNIVERSE_CACHE = sorted(list(symbols))
+    return _SYMBOL_UNIVERSE_CACHE
+
+@app.get("/api/search_symbols")
+def search_symbols(q: str = ""):
+    query = q.strip().upper().replace("NSE:", "").replace("BSE:", "").replace(".NS", "")
+    universe = _load_symbol_universe()
+    if not query:
+        return {
+            "query": "",
+            "symbols": ["NIFTY", "BANKNIFTY", "TCS", "INFY", "RELIANCE", "TATASTEEL", "TATAPOWER", "HDFCBANK", "ICICIBANK", "DIXON", "MTARTECH"]
+        }
+    prefix_matches = [s for s in universe if s.startswith(query)]
+    contains_matches = [s for s in universe if query in s and not s.startswith(query)]
+    results = (prefix_matches + contains_matches)[:12]
+    return {"query": query, "symbols": results}
 
 if __name__ == "__main__":
     import uvicorn
