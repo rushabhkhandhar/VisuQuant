@@ -1,0 +1,8 @@
+{
+    "strategy": "E19_Dual_AVWAP_Confluence",
+    "base_capital": 100000.0,
+    "max_slots": 5,
+    "slot_capital": 20000.0,
+    "updated_at": null,
+    "trades": []
+}

@@ -75,10 +75,10 @@ jobs:
           cd Quant_backend
           python src/screener/pipeline/fno/strategies/long/live_signals.py
 
-      - name: Upload Signals Artifact
+      - name: Upload F&O Portfolio State Artifact
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: fno-signals-${{ github.run_id }}
+          name: fno-portfolio-state-${{ github.run_id }}
           path: Quant_backend/src/screener/pipeline/fno/strategies/long/output/
-          retention-days: 14
+          retention-days: 30

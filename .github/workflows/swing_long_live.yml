@@ -65,10 +65,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r Quant_backend/requirements-live.txt
 
-      - name: Cache Market Data (Incremental Parquet)
+      - name: Cache Market Data & Swing Portfolio State
         uses: actions/cache@v4
         with:
-          path: Quant_backend/src/screener/pipeline/swing/data_cache
+          path: |
+            Quant_backend/src/screener/pipeline/swing/data_cache
+            Quant_backend/src/screener/pipeline/swing/portfolio_state.json
           key: swing-market-data-${{ runner.os }}-${{ github.run_id }}
           restore-keys: |
             swing-market-data-${{ runner.os }}-
@@ -81,6 +83,15 @@ jobs:
         run: |
           cd Quant_backend
           python src/screener/pipeline/swing/run_live_screener.py
+
+      - name: Upload Portfolio State Artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: swing-portfolio-state-${{ github.run_id }}
+          path: Quant_backend/src/screener/pipeline/swing/portfolio_state.json
+          retention-days: 30
+
 
   run-swing-portfolio-update:
     if: false  # DISABLED - re-enable when portfolio job is ready
