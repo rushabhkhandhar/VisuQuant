@@ -916,6 +916,39 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                         f_res = filter_strat['func'](hist_df, nifty_hist=nifty_hist, sector_hist=sector_hist) if filter_strat else None
                     except: f_res = None
                     
+                    # Relative Strength (RS) & Mansfield Filters (Option 2)
+                    rs_score = 0.0
+                    if p_res and p_res.get('passed'):
+                        mrs_filter = arch_config.get("mrs_filter", False)
+                        if mrs_filter and nifty_hist is not None and len(nifty_hist) >= 60 and len(hist_df) >= 60:
+                            common_idx = hist_df.index.intersection(nifty_hist.index)[-60:]
+                            if len(common_idx) >= 50:
+                                s_c = hist_df['Close'].loc[common_idx]
+                                n_c = nifty_hist['Close'].loc[common_idx]
+                                rs_series = s_c / n_c
+                                rs_sma50 = rs_series.rolling(50).mean().iloc[-1]
+                                if pd.isna(rs_sma50) or rs_series.iloc[-1] <= rs_sma50:
+                                    continue  # Fails Mansfield RS > 0 (trading below 50d RS SMA)
+                            else:
+                                continue
+                                
+                        dual_rs_filter = arch_config.get("dual_rs_filter", False)
+                        if dual_rs_filter and nifty_hist is not None and len(nifty_hist) >= 61 and len(hist_df) >= 61:
+                            s_ret20 = (hist_df['Close'].iloc[-1] / hist_df['Close'].iloc[-21]) - 1.0
+                            n_ret20 = (nifty_hist['Close'].iloc[-1] / nifty_hist['Close'].iloc[-21]) - 1.0
+                            s_ret60 = (hist_df['Close'].iloc[-1] / hist_df['Close'].iloc[-61]) - 1.0
+                            n_ret60 = (nifty_hist['Close'].iloc[-1] / nifty_hist['Close'].iloc[-61]) - 1.0
+                            if (s_ret20 <= n_ret20) or (s_ret60 <= n_ret60):
+                                continue  # Fails Dual-Period Outperformance (must beat Nifty on both 20d and 60d)
+                                
+                        min_rs_outperformance = arch_config.get("min_rs_outperformance")
+                        if nifty_hist is not None and len(nifty_hist) >= 61 and len(hist_df) >= 61:
+                            s_ret60 = (hist_df['Close'].iloc[-1] / hist_df['Close'].iloc[-61]) - 1.0
+                            n_ret60 = (nifty_hist['Close'].iloc[-1] / nifty_hist['Close'].iloc[-61]) - 1.0
+                            rs_score = s_ret60 - n_ret60
+                            if min_rs_outperformance is not None and rs_score < min_rs_outperformance:
+                                continue  # Fails minimum 60d relative alpha threshold
+                    
                     # Architecture Logic
                     sizing_logic = arch_config.get('sizing_logic', 'primary_only')
                     risk_pct = 0.0
@@ -1029,18 +1062,24 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                                 "confirmed": is_confirmed,
                                 "max_sessions": max_sessions,
                                 "tm_mode": tm_mode,
+                                "rs_score": rs_score,
                             })
                             
         # Allocate cash
         if new_candidates:
-            # Rank candidates by alpha score (best first) if enabled
-            if arch_config.get("rank_candidates"):
+            # Rank candidates by RS score or alpha score (best first)
+            if arch_config.get("rank_by_rs"):
+                confirmed = sorted((c for c in new_candidates if c["confirmed"]), key=lambda c: (c.get("rs_score", 0.0), c["alpha_score"]), reverse=True)
+                primary = sorted((c for c in new_candidates if not c["confirmed"]), key=lambda c: (c.get("rs_score", 0.0), c["alpha_score"]), reverse=True)
+                new_candidates = confirmed[:MAX_CONFIRMED_SIGNALS] + primary[:MAX_PRIMARY_SIGNALS]
+            elif arch_config.get("rank_candidates"):
                 confirmed = sorted((c for c in new_candidates if c["confirmed"]), key=lambda c: c["alpha_score"], reverse=True)
                 primary = sorted((c for c in new_candidates if not c["confirmed"]), key=lambda c: c["alpha_score"], reverse=True)
                 new_candidates = confirmed[:MAX_CONFIRMED_SIGNALS] + primary[:MAX_PRIMARY_SIGNALS]
             
             total_equity = cash + sum(p['shares'] * p['current_price'] for p in open_positions.values())
             max_alloc_per_trade = total_equity * MAX_WEIGHT_PER_TRADE * risk_multiplier
+            max_per_sector = arch_config.get("max_positions_per_sector")
             
             if "portfolio_cap" in arch_config:
                 portfolio_cap = arch_config.get("portfolio_cap", 1.0)
@@ -1050,6 +1089,12 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                 
                 ideal_allocations = []
                 for cand in new_candidates:
+                    if max_per_sector and industry_mapping:
+                        cand_sec = industry_mapping.get(cand['symbol'])
+                        if cand_sec:
+                            curr_sec_count = sum(1 for p_sym in open_positions if industry_mapping.get(p_sym) == cand_sec)
+                            if curr_sec_count >= max_per_sector:
+                                continue
                     risk_amount = total_equity * cand['risk_pct']
                     risk_per_share = cand['price'] - cand['stop_loss']
                     if risk_per_share <= 0: continue
@@ -1072,6 +1117,12 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                     
                 for alloc in ideal_allocations:
                     cand = alloc['cand']
+                    if max_per_sector and industry_mapping:
+                        cand_sec = industry_mapping.get(cand['symbol'])
+                        if cand_sec:
+                            curr_sec_count = sum(1 for p_sym in open_positions if industry_mapping.get(p_sym) == cand_sec)
+                            if curr_sec_count >= max_per_sector:
+                                continue
                     final_shares = int(alloc['ideal_shares'] * scaling_factor)
                     required_cash = final_shares * cand['price'] * (1 + FRICTION_PCT)
                     
@@ -1093,6 +1144,12 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                         }
             else:
                 for cand in new_candidates:
+                    if max_per_sector and industry_mapping:
+                        cand_sec = industry_mapping.get(cand['symbol'])
+                        if cand_sec:
+                            curr_sec_count = sum(1 for p_sym in open_positions if industry_mapping.get(p_sym) == cand_sec)
+                            if curr_sec_count >= max_per_sector:
+                                continue
                     risk_amount = total_equity * cand['risk_pct']
                     risk_per_share = cand['price'] - cand['stop_loss']
                     if risk_per_share <= 0: continue
@@ -1233,12 +1290,11 @@ def main():
             "bcr_threshold": BCR_THRESHOLD,
             "cash_preservation": True,
             "breadth_threshold": BREADTH_THRESHOLD,
-            "trade_management": None,
             "risk_atr": 2.0,
             "reward_atr": 4.0
         },
         {
-            "name": "E19_T1_Breakeven_Lock",
+            "name": "E19_RS1_Mansfield_Positive",
             "primary": dual_avwap_strat,
             "primary_momentum": dual_avwap_strat,
             "confirmation_momentum": vol_strat,
@@ -1253,12 +1309,12 @@ def main():
             "bcr_threshold": BCR_THRESHOLD,
             "cash_preservation": True,
             "breadth_threshold": BREADTH_THRESHOLD,
-            "trade_management": "breakeven_lock",
+            "mrs_filter": True,
             "risk_atr": 2.0,
             "reward_atr": 4.0
         },
         {
-            "name": "E19_T2_Partial_Scale_Out",
+            "name": "E19_RS2_Dual_Period_Alpha",
             "primary": dual_avwap_strat,
             "primary_momentum": dual_avwap_strat,
             "confirmation_momentum": vol_strat,
@@ -1273,12 +1329,12 @@ def main():
             "bcr_threshold": BCR_THRESHOLD,
             "cash_preservation": True,
             "breadth_threshold": BREADTH_THRESHOLD,
-            "trade_management": "partial_scale_out",
+            "dual_rs_filter": True,
             "risk_atr": 2.0,
             "reward_atr": 4.0
         },
         {
-            "name": "E19_T3_Chandelier_Runner",
+            "name": "E19_RS3_Top_Quintile_Rank",
             "primary": dual_avwap_strat,
             "primary_momentum": dual_avwap_strat,
             "confirmation_momentum": vol_strat,
@@ -1293,32 +1349,13 @@ def main():
             "bcr_threshold": BCR_THRESHOLD,
             "cash_preservation": True,
             "breadth_threshold": BREADTH_THRESHOLD,
-            "trade_management": "chandelier_runner",
-            "risk_atr": 2.0,
-            "reward_atr": 10.0
-        },
-        {
-            "name": "E19_T4_Regime_Adaptive_Targets",
-            "primary": dual_avwap_strat,
-            "primary_momentum": dual_avwap_strat,
-            "confirmation_momentum": vol_strat,
-            "primary_meanrev": pullback_strat,
-            "confirmation_meanrev": connors_strat,
-            "sizing_logic": "alpha_confirmation",
-            "dynamic_risk_scaling": False,
-            "dd_penalty_factor": 5.0,
-            "friction_pct": 0.0015,
-            "rank_candidates": True,
-            "regime_adaptive": True,
-            "bcr_threshold": BCR_THRESHOLD,
-            "cash_preservation": True,
-            "breadth_threshold": BREADTH_THRESHOLD,
-            "trade_management": "regime_adaptive_targets",
+            "min_rs_outperformance": 0.05,
+            "rank_by_rs": True,
             "risk_atr": 2.0,
             "reward_atr": 4.0
         },
         {
-            "name": "E19_T5_EMA20_Dynamic_Trail",
+            "name": "E19_RS4_Sector_Cap_2",
             "primary": dual_avwap_strat,
             "primary_momentum": dual_avwap_strat,
             "confirmation_momentum": vol_strat,
@@ -1333,9 +1370,30 @@ def main():
             "bcr_threshold": BCR_THRESHOLD,
             "cash_preservation": True,
             "breadth_threshold": BREADTH_THRESHOLD,
-            "trade_management": "ema20_dynamic_trail",
+            "max_positions_per_sector": 2,
             "risk_atr": 2.0,
-            "reward_atr": 6.0
+            "reward_atr": 4.0
+        },
+        {
+            "name": "E19_RS5_Mansfield_Plus_Sector_Cap",
+            "primary": dual_avwap_strat,
+            "primary_momentum": dual_avwap_strat,
+            "confirmation_momentum": vol_strat,
+            "primary_meanrev": pullback_strat,
+            "confirmation_meanrev": connors_strat,
+            "sizing_logic": "alpha_confirmation",
+            "dynamic_risk_scaling": False,
+            "dd_penalty_factor": 5.0,
+            "friction_pct": 0.0015,
+            "rank_candidates": True,
+            "regime_adaptive": True,
+            "bcr_threshold": BCR_THRESHOLD,
+            "cash_preservation": True,
+            "breadth_threshold": BREADTH_THRESHOLD,
+            "mrs_filter": True,
+            "max_positions_per_sector": 2,
+            "risk_atr": 2.0,
+            "reward_atr": 4.0
         }
     ]
     
