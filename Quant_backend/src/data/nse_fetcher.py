@@ -368,17 +368,6 @@ def load_nifty100_symbols() -> List[str]:
     ]
     return _load_symbols_from_csv_urls(urls, column_name="Symbol")
 
-def load_fno_symbols() -> List[str]:
-    """Fetch F&O constituent symbols from the hardcoded JSON file."""
-    try:
-        file_path = os.path.join(os.path.dirname(__file__), "fno_symbols.json")
-        with open(file_path, "r") as f:
-            symbols = json.load(f)
-            return sorted(symbols)
-    except Exception as e:
-        logger.error(f"Failed to load F&O symbols: {e}")
-        return []
-
 def load_nifty500_industry_mapping() -> Dict[str, str]:
     """Fetch NIFTY 500 constituents and return a mapping of Symbol -> Industry."""
     urls = [
