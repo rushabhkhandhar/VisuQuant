@@ -560,11 +560,20 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
     trades_log = []
     daily_exposure_log = []
     high_water_mark = cash
+    hedge_position = None
     
     # Pre-calculate Breakout Continuation Rate (BCR) for regime-adaptive architectures
     bcr_series = {}
     breadth_series = {}  # % of stocks with Close > 50-day SMA — purely historical per day
-    if arch_config.get("regime_adaptive"):
+    needs_regime = (
+        arch_config.get("regime_adaptive") 
+        or arch_config.get("enable_nifty_hedge") 
+        or arch_config.get("block_on_bear_regime") 
+        or arch_config.get("defensive_cash_preservation") 
+        or arch_config.get("tighten_stops_on_bear") 
+        or arch_config.get("dynamic_bear_risk_throttling")
+    )
+    if needs_regime:
         logger.info("  Pre-calculating BCR and Market Breadth...")
         
         # --- BCR: use breakouts from 120→30 days ago with 20-day outcomes (all past data) ---
@@ -647,6 +656,29 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                 top_sectors_by_date[td_ts] = set(x[0] for x in sec_scores[:top_n])
     
     for i, current_date in enumerate(test_dates):
+        current_ts = pd.Timestamp(current_date)
+        bcr_val = bcr_series.get(current_ts, 0.5)
+        breadth_val = breadth_series.get(current_ts, 0.5)
+        bear_bcr_threshold = arch_config.get("bear_bcr_threshold", 0.45)
+        bear_breadth_threshold = arch_config.get("bear_breadth_threshold", 0.35)
+        bear_regime = (bcr_val < bear_bcr_threshold) and (breadth_val < bear_breadth_threshold)
+        
+        n_curr = None
+        if "NIFTYBEES" in bulk_data and current_date in bulk_data["NIFTYBEES"].index:
+            n_row = bulk_data["NIFTYBEES"].loc[current_date]
+            if isinstance(n_row, pd.DataFrame):
+                n_row = n_row.iloc[-1]
+            n_curr = float(n_row['Close'])
+            
+        # Bear stop compression if enabled
+        if arch_config.get("tighten_stops_on_bear") and bear_regime:
+            for p_pos in open_positions.values():
+                p_atr = p_pos.get('atr', 0.0)
+                if p_atr > 0:
+                    tight_stop = p_pos['entry_price'] - (p_atr * 1.0)
+                    p_pos['stop_loss'] = max(p_pos['stop_loss'], tight_stop)
+                    p_pos['max_sessions'] = min(p_pos.get('max_sessions', MAX_HOLDING_SESSIONS), 7)
+                    
         # 1. Update prices and check exits
         symbols_to_remove = []
         tm = arch_config.get("trade_management")
@@ -662,6 +694,29 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                     pos['current_price'] = close
                     pos_atr = pos.get('atr', 0.0)
                     
+                    # 1A0. Defensive Cash Preservation in Bear Regime (cut loss immediately if below entry)
+                    if arch_config.get("defensive_cash_preservation") and bear_regime and (close < pos['entry_price']):
+                        exit_price = close
+                        net_entry_cost = pos['entry_price'] * (1 + FRICTION_PCT)
+                        net_exit_revenue = exit_price * (1 - FRICTION_PCT)
+                        pnl = (net_exit_revenue - net_entry_cost) / net_entry_cost
+                        cash += pos['shares'] * exit_price * (1 - FRICTION_PCT)
+                        symbols_to_remove.append(sym)
+                        trades_log.append({
+                            "symbol": sym, 
+                            "signal_date": pos.get("signal_date", pos.get("entry_date", "")),
+                            "entry_date": pos.get("entry_date", ""),
+                            "exit_date": current_date.strftime("%Y-%m-%d"),
+                            "entry_price": pos["entry_price"],
+                            "exit_price": exit_price,
+                            "stop_loss": pos["stop_loss"],
+                            "target": pos["target"],
+                            "shares": pos["shares"],
+                            "pnl_pct": pnl, 
+                            "status": "BearCashPreserve"
+                        })
+                        continue
+                        
                     # 1A. Stop Loss Hit (Evaluated BEFORE target to ensure conservative bias on intraday conflict)
                     if low <= pos['stop_loss']:
                         exit_price = pos['stop_loss']
@@ -827,17 +882,79 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
         for sym in symbols_to_remove:
             del open_positions[sym]
             
-        current_equity_for_hwm = cash + sum(p['shares'] * p['current_price'] for p in open_positions.values())
+        # 1D. Hedge Management (NIFTYBEES Inverse Short Hedge)
+        if arch_config.get("enable_nifty_hedge") and n_curr is not None:
+            unhedge_breadth = arch_config.get("unhedge_breadth_threshold", 0.40)
+            unhedge_bcr = arch_config.get("unhedge_bcr_threshold", 0.50)
+            
+            # Check Unwind conditions for active hedge
+            if hedge_position is not None:
+                hedge_stop_hit = n_curr >= hedge_position['entry_price'] * 1.03  # 3% stop on hedge if market rallies
+                market_recovered = (breadth_val >= unhedge_breadth) or (bcr_val >= unhedge_bcr)
+                no_longs_left = (len(open_positions) == 0)
+                is_final_date = (i == len(test_dates) - 1)
+                
+                if hedge_stop_hit or market_recovered or no_longs_left or is_final_date:
+                    gross_cash = hedge_position['margin_cash'] + (hedge_position['entry_price'] - n_curr) * hedge_position['shares']
+                    net_exit_cash = gross_cash - (n_curr * hedge_position['shares'] * FRICTION_PCT)
+                    cash += net_exit_cash
+                    h_pnl = (net_exit_cash - hedge_position['margin_cash']) / hedge_position['margin_cash'] if hedge_position['margin_cash'] > 0 else 0.0
+                    trades_log.append({
+                        "symbol": "NIFTYBEES_HEDGE",
+                        "signal_date": hedge_position['entry_date'],
+                        "entry_date": hedge_position['entry_date'],
+                        "exit_date": current_date.strftime("%Y-%m-%d"),
+                        "entry_price": hedge_position['entry_price'],
+                        "exit_price": n_curr,
+                        "stop_loss": hedge_position['entry_price'] * 1.03,
+                        "target": 0.0,
+                        "shares": hedge_position['shares'],
+                        "pnl_pct": h_pnl,
+                        "status": "HedgeStop" if hedge_stop_hit else ("HedgeCover" if market_recovered else "HedgeUnwind")
+                    })
+                    hedge_position = None
+            
+            # Check Entry condition for new hedge
+            if hedge_position is None and bear_regime and len(open_positions) > 0 and i < len(test_dates) - 1:
+                long_val = sum(p['shares'] * p['current_price'] for p in open_positions.values())
+                hedge_ratio = arch_config.get("hedge_ratio", 0.50)
+                target_hedge_val = long_val * hedge_ratio
+                ideal_h_shares = int(target_hedge_val / n_curr)
+                if ideal_h_shares > 0:
+                    margin_cap = cash * 0.90  # Keep 10% cash buffer
+                    actual_h_shares = min(ideal_h_shares, int(margin_cap / n_curr)) if margin_cap > 0 else 0
+                    if actual_h_shares > 0:
+                        margin_cash = actual_h_shares * n_curr
+                        friction_cost = margin_cash * FRICTION_PCT
+                        if cash >= (margin_cash + friction_cost):
+                            cash -= (margin_cash + friction_cost)
+                            hedge_position = {
+                                "shares": actual_h_shares,
+                                "entry_price": n_curr,
+                                "margin_cash": margin_cash,
+                                "entry_date": current_date.strftime("%Y-%m-%d")
+                            }
+
+        hedge_equity = 0.0
+        if hedge_position is not None and n_curr is not None:
+            hedge_equity = hedge_position['margin_cash'] + (hedge_position['entry_price'] - n_curr) * hedge_position['shares']
+            
+        current_equity_for_hwm = cash + sum(p['shares'] * p['current_price'] for p in open_positions.values()) + hedge_equity
         if current_equity_for_hwm > high_water_mark:
             high_water_mark = current_equity_for_hwm
             
         risk_multiplier = 1.0
+        max_weight_multiplier = 1.0
         if arch_config.get("dynamic_risk_scaling"):
             current_drawdown = (current_equity_for_hwm - high_water_mark) / high_water_mark
             if current_drawdown < -0.05:
                 penalty = (abs(current_drawdown) - 0.05) * 5.0
                 risk_multiplier = max(0.20, 1.0 - penalty)
                 
+        if arch_config.get("dynamic_bear_risk_throttling") and (bcr_val < 0.48 or breadth_val < 0.40):
+            risk_multiplier = min(risk_multiplier, 0.35)
+            max_weight_multiplier = 0.35
+            
         # 2. Evaluate new candidates
         new_candidates = []
         if cash > (ARCH_STARTING_CAPITAL * 0.05):
@@ -852,6 +969,9 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                 n_sma200 = nifty_hist['Close'].rolling(200).mean().iloc[-1]
                 if n_close < n_sma200:
                     market_regime_blocked = True
+                    
+            if arch_config.get("block_on_bear_regime") and bear_regime:
+                market_regime_blocked = True
                     
             if not market_regime_blocked:
                 for sym, df in bulk_data.items():
@@ -1077,8 +1197,11 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                 primary = sorted((c for c in new_candidates if not c["confirmed"]), key=lambda c: c["alpha_score"], reverse=True)
                 new_candidates = confirmed[:MAX_CONFIRMED_SIGNALS] + primary[:MAX_PRIMARY_SIGNALS]
             
-            total_equity = cash + sum(p['shares'] * p['current_price'] for p in open_positions.values())
-            max_alloc_per_trade = total_equity * MAX_WEIGHT_PER_TRADE * risk_multiplier
+            hedge_equity = 0.0
+            if hedge_position is not None and n_curr is not None:
+                hedge_equity = hedge_position['margin_cash'] + (hedge_position['entry_price'] - n_curr) * hedge_position['shares']
+            total_equity = cash + sum(p['shares'] * p['current_price'] for p in open_positions.values()) + hedge_equity
+            max_alloc_per_trade = total_equity * (MAX_WEIGHT_PER_TRADE * max_weight_multiplier) * risk_multiplier
             max_per_sector = arch_config.get("max_positions_per_sector")
             
             if "portfolio_cap" in arch_config:
@@ -1175,18 +1298,53 @@ def run_architectural_backtest(arch_config, test_dates, bulk_data, industry_mapp
                             "partial_scaled": False,
                         }
                     
-        total_equity = cash + sum(p['shares'] * p['current_price'] for p in open_positions.values())
+        hedge_equity = 0.0
+        if hedge_position is not None and n_curr is not None:
+            hedge_equity = hedge_position['margin_cash'] + (hedge_position['entry_price'] - n_curr) * hedge_position['shares']
+        total_equity = cash + sum(p['shares'] * p['current_price'] for p in open_positions.values()) + hedge_equity
         daily_equity_curve.append(total_equity)
         
         invested = sum(p['shares'] * p['current_price'] for p in open_positions.values())
+        hedge_val = hedge_position['shares'] * n_curr if hedge_position and n_curr else 0.0
         daily_exposure_log.append({
             "Date": current_date.strftime("%Y-%m-%d"),
             "Total_Equity": total_equity,
             "Invested": invested,
+            "Hedge_Value": hedge_val,
             "Exposure_Pct": invested / total_equity if total_equity > 0 else 0,
             "Num_Positions": len(open_positions),
-            "Risk_Multiplier": risk_multiplier
+            "Risk_Multiplier": risk_multiplier,
+            "Bear_Regime": int(bear_regime)
         })
+        
+    # Terminal unwind for any active hedge
+    if hedge_position is not None:
+        last_date = test_dates[-1]
+        n_last = hedge_position['entry_price']
+        if "NIFTYBEES" in bulk_data and last_date in bulk_data["NIFTYBEES"].index:
+            n_row = bulk_data["NIFTYBEES"].loc[last_date]
+            if isinstance(n_row, pd.DataFrame):
+                n_row = n_row.iloc[-1]
+            n_last = float(n_row['Close'])
+            
+        gross_cash = hedge_position['margin_cash'] + (hedge_position['entry_price'] - n_last) * hedge_position['shares']
+        net_exit_cash = gross_cash - (n_last * hedge_position['shares'] * FRICTION_PCT)
+        cash += net_exit_cash
+        h_pnl = (net_exit_cash - hedge_position['margin_cash']) / hedge_position['margin_cash'] if hedge_position['margin_cash'] > 0 else 0.0
+        trades_log.append({
+            "symbol": "NIFTYBEES_HEDGE",
+            "signal_date": hedge_position['entry_date'],
+            "entry_date": hedge_position['entry_date'],
+            "exit_date": last_date.strftime("%Y-%m-%d"),
+            "entry_price": hedge_position['entry_price'],
+            "exit_price": n_last,
+            "stop_loss": 0.0,
+            "target": 0.0,
+            "shares": hedge_position['shares'],
+            "pnl_pct": h_pnl,
+            "status": "HedgeFinalUnwind"
+        })
+        hedge_position = None
         
     metrics = calculate_metrics(daily_equity_curve, trades_log, test_dates=test_dates)
     metrics["Strategy"] = arch_config["name"]
@@ -1294,7 +1452,7 @@ def main():
             "reward_atr": 4.0
         },
         {
-            "name": "E19_RS1_Mansfield_Positive",
+            "name": "E19_H1_Cash_Preservation_Strict",
             "primary": dual_avwap_strat,
             "primary_momentum": dual_avwap_strat,
             "confirmation_momentum": vol_strat,
@@ -1309,12 +1467,15 @@ def main():
             "bcr_threshold": BCR_THRESHOLD,
             "cash_preservation": True,
             "breadth_threshold": BREADTH_THRESHOLD,
-            "mrs_filter": True,
+            "block_on_bear_regime": True,
+            "defensive_cash_preservation": True,
+            "bear_bcr_threshold": 0.45,
+            "bear_breadth_threshold": 0.35,
             "risk_atr": 2.0,
             "reward_atr": 4.0
         },
         {
-            "name": "E19_RS2_Dual_Period_Alpha",
+            "name": "E19_H2_Nifty_Inverse_Hedge",
             "primary": dual_avwap_strat,
             "primary_momentum": dual_avwap_strat,
             "confirmation_momentum": vol_strat,
@@ -1329,12 +1490,18 @@ def main():
             "bcr_threshold": BCR_THRESHOLD,
             "cash_preservation": True,
             "breadth_threshold": BREADTH_THRESHOLD,
-            "dual_rs_filter": True,
+            "block_on_bear_regime": True,
+            "enable_nifty_hedge": True,
+            "hedge_ratio": 0.50,
+            "bear_bcr_threshold": 0.45,
+            "bear_breadth_threshold": 0.35,
+            "unhedge_breadth_threshold": 0.40,
+            "unhedge_bcr_threshold": 0.50,
             "risk_atr": 2.0,
             "reward_atr": 4.0
         },
         {
-            "name": "E19_RS3_Top_Quintile_Rank",
+            "name": "E19_H3_Dynamic_Risk_Throttling",
             "primary": dual_avwap_strat,
             "primary_momentum": dual_avwap_strat,
             "confirmation_momentum": vol_strat,
@@ -1349,13 +1516,15 @@ def main():
             "bcr_threshold": BCR_THRESHOLD,
             "cash_preservation": True,
             "breadth_threshold": BREADTH_THRESHOLD,
-            "min_rs_outperformance": 0.05,
-            "rank_by_rs": True,
+            "block_on_bear_regime": True,
+            "dynamic_bear_risk_throttling": True,
+            "bear_bcr_threshold": 0.45,
+            "bear_breadth_threshold": 0.35,
             "risk_atr": 2.0,
             "reward_atr": 4.0
         },
         {
-            "name": "E19_RS4_Sector_Cap_2",
+            "name": "E19_H4_Tightened_Stops_Bear",
             "primary": dual_avwap_strat,
             "primary_momentum": dual_avwap_strat,
             "confirmation_momentum": vol_strat,
@@ -1370,12 +1539,15 @@ def main():
             "bcr_threshold": BCR_THRESHOLD,
             "cash_preservation": True,
             "breadth_threshold": BREADTH_THRESHOLD,
-            "max_positions_per_sector": 2,
+            "block_on_bear_regime": True,
+            "tighten_stops_on_bear": True,
+            "bear_bcr_threshold": 0.45,
+            "bear_breadth_threshold": 0.35,
             "risk_atr": 2.0,
             "reward_atr": 4.0
         },
         {
-            "name": "E19_RS5_Mansfield_Plus_Sector_Cap",
+            "name": "E19_H5_Full_Regime_Shield",
             "primary": dual_avwap_strat,
             "primary_momentum": dual_avwap_strat,
             "confirmation_momentum": vol_strat,
@@ -1390,8 +1562,15 @@ def main():
             "bcr_threshold": BCR_THRESHOLD,
             "cash_preservation": True,
             "breadth_threshold": BREADTH_THRESHOLD,
-            "mrs_filter": True,
-            "max_positions_per_sector": 2,
+            "block_on_bear_regime": True,
+            "defensive_cash_preservation": True,
+            "enable_nifty_hedge": True,
+            "hedge_ratio": 0.50,
+            "tighten_stops_on_bear": True,
+            "bear_bcr_threshold": 0.45,
+            "bear_breadth_threshold": 0.35,
+            "unhedge_breadth_threshold": 0.40,
+            "unhedge_bcr_threshold": 0.50,
             "risk_atr": 2.0,
             "reward_atr": 4.0
         }
